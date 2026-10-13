@@ -49,6 +49,7 @@ pub struct EngineMetadataSnapshot {
     pub revision: u64,
     pub load_revisions: [u64; 2],
     pub tracks: [Option<TrackAnalysis>; 2],
+    pub samples: [Option<TrackAnalysis>; 16],
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -87,11 +88,63 @@ pub struct AudioStatus {
     pub routing: AudioRouting,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum LoopBoundary {
     In,
     Out,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ControlTarget {
+    Crossfader,
+    MasterGain,
+    CueGain,
+    CueMix,
+    SamplerGain,
+    ChannelFader { deck: usize },
+    DeckGain { deck: usize },
+    Filter { deck: usize },
+    EqLow { deck: usize },
+    EqMid { deck: usize },
+    EqHigh { deck: usize },
+}
+impl ControlTarget {
+    pub fn deck(self) -> Option<usize> {
+        match self {
+            Self::ChannelFader { deck }
+            | Self::DeckGain { deck }
+            | Self::Filter { deck }
+            | Self::EqLow { deck }
+            | Self::EqMid { deck }
+            | Self::EqHigh { deck } => Some(deck),
+            _ => None,
+        }
+    }
+    pub(crate) fn index(self) -> usize {
+        match self {
+            Self::Crossfader => 0,
+            Self::MasterGain => 1,
+            Self::CueGain => 2,
+            Self::CueMix => 3,
+            Self::SamplerGain => 4,
+            Self::ChannelFader { deck } => 5 + deck * 6,
+            Self::DeckGain { deck } => 6 + deck * 6,
+            Self::Filter { deck } => 7 + deck * 6,
+            Self::EqLow { deck } => 8 + deck * 6,
+            Self::EqMid { deck } => 9 + deck * 6,
+            Self::EqHigh { deck } => 10 + deck * 6,
+        }
+    }
+    fn valid_value(self, value: f32) -> bool {
+        value.is_finite()
+            && match self {
+                Self::Crossfader | Self::Filter { .. } => (-1.0..=1.0).contains(&value),
+                Self::ChannelFader { .. } | Self::CueMix => (0.0..=1.0).contains(&value),
+                _ => (0.0..=2.0).contains(&value),
+            }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -134,6 +187,7 @@ pub struct DeckSnapshot {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EngineSnapshot {
+    pub load_revisions: [u64; 2],
     pub sample_rate: u32,
     pub output_channels: u16,
     pub buffer_frames: u32,
@@ -148,12 +202,23 @@ pub struct EngineSnapshot {
     pub cue_gain: f32,
     pub cue_mix: f32,
     pub sampler_gain: f32,
+    pub sampler_positions_seconds: [Option<f64>; 16],
+    pub active_ramps: [bool; 17],
     pub decks: [DeckSnapshot; 2],
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum EngineCommand {
+    Ramp {
+        target: ControlTarget,
+        value: f32,
+        seconds: f64,
+        clock: Option<usize>,
+        beats: Option<f64>,
+        quantize: Option<f64>,
+    },
+    CancelRamps,
     Play {
         deck: usize,
     },
@@ -189,6 +254,7 @@ pub enum EngineCommand {
     ScrubTo {
         deck: usize,
         seconds: f64,
+        #[schemars(range(min = 8, max = 100))]
         duration_ms: f64,
     },
     ScrubEnd {
@@ -198,6 +264,11 @@ pub enum EngineCommand {
     SetHotCue {
         deck: usize,
         index: usize,
+    },
+    SetHotCuePoint {
+        deck: usize,
+        index: usize,
+        seconds: f64,
     },
     TriggerHotCue {
         deck: usize,
@@ -230,6 +301,7 @@ pub enum EngineCommand {
     },
     SetPitch {
         deck: usize,
+        #[schemars(range(min = -12, max = 12))]
         semitones: f64,
     },
     JogTouch {
@@ -259,6 +331,7 @@ pub enum EngineCommand {
         slot: usize,
     },
     SetSamplerGain {
+        #[schemars(range(min = 0, max = 2))]
         gain: f32,
     },
     SetKeylock {
@@ -271,6 +344,7 @@ pub enum EngineCommand {
     },
     SetTempo {
         deck: usize,
+        #[schemars(range(min = -90, max = 100))]
         percent: f64,
     },
     Jog {
@@ -294,28 +368,37 @@ pub enum EngineCommand {
     },
     SetDeckGain {
         deck: usize,
+        #[schemars(range(min = 0, max = 2))]
         gain: f32,
     },
     SetEq {
         deck: usize,
+        #[schemars(range(min = 0, max = 2))]
         low: f32,
+        #[schemars(range(min = 0, max = 2))]
         mid: f32,
+        #[schemars(range(min = 0, max = 2))]
         high: f32,
     },
     SetFilter {
         deck: usize,
+        #[schemars(range(min = -1, max = 1))]
         amount: f32,
     },
     SetCrossfader {
+        #[schemars(range(min = -1, max = 1))]
         position: f32,
     },
     SetMasterGain {
+        #[schemars(range(min = 0, max = 2))]
         gain: f32,
     },
     SetCueMix {
+        #[schemars(range(min = 0, max = 1))]
         mix: f32,
     },
     SetCueGain {
+        #[schemars(range(min = 0, max = 2))]
         gain: f32,
     },
     SetHeadphoneCue {
@@ -324,11 +407,14 @@ pub enum EngineCommand {
     },
     SetFx {
         deck: usize,
+        #[schemars(range(min = 0, max = 1))]
         echo: f32,
+        #[schemars(range(min = 0, max = 1))]
         reverb: f32,
     },
     SetBpm {
         deck: usize,
+        #[schemars(range(min = 30, max = 300))]
         bpm: f64,
     },
     SetBeatgrid {
@@ -337,9 +423,10 @@ pub enum EngineCommand {
     },
 }
 impl EngineCommand {
-    pub(crate) fn validate(&self) -> Result<(), String> {
+    pub fn deck(&self) -> Option<usize> {
         use EngineCommand::*;
-        let deck = match self {
+        match self {
+            Ramp { target, clock, .. } => target.deck().or(*clock),
             Play { deck }
             | Pause { deck }
             | TogglePlay { deck }
@@ -349,6 +436,7 @@ impl EngineCommand {
             | ScrubTo { deck, .. }
             | ScrubEnd { deck, .. }
             | SetHotCue { deck, .. }
+            | SetHotCuePoint { deck, .. }
             | TriggerHotCue { deck, .. }
             | ToggleActiveLoop { deck }
             | SetLoop { deck, .. }
@@ -383,11 +471,36 @@ impl EngineCommand {
             | MemoryCuePrevious { deck }
             | RestoreMemoryCues { deck, .. } => Some(*deck),
             _ => None,
-        };
+        }
+    }
+    pub fn validate(&self) -> Result<(), String> {
+        use EngineCommand::*;
+        let deck = self.deck();
         if deck.is_some_and(|d| d > 1) {
             return Err("Deck must be 0 or 1".into());
         }
         match self {
+            Ramp {
+                target,
+                value,
+                seconds,
+                clock,
+                beats,
+                quantize,
+            } if target.deck().is_some_and(|d| d > 1)
+                || clock.is_some_and(|d| d > 1)
+                || !target.valid_value(*value)
+                || !seconds.is_finite()
+                || !(0.001..=3600.0).contains(seconds)
+                || beats.is_some_and(|b| !b.is_finite() || !(0.001..=256.0).contains(&b))
+                || quantize.is_some_and(|b| !b.is_finite() || !(0.001..=256.0).contains(&b))
+                || (beats.is_some() || quantize.is_some()) && clock.is_none() =>
+            {
+                return Err(
+                    "Ramp requires a valid target/value, duration and optional deck beat clock"
+                        .into(),
+                );
+            }
             TriggerSample { slot } | StopSample { slot } if *slot >= 16 => {
                 return Err("Sample slot must be 0..15".into())
             }
@@ -396,7 +509,10 @@ impl EngineCommand {
             {
                 return Err("Memory cue times must be finite and positive".into())
             }
-            SetHotCue { index, .. } | TriggerHotCue { index, .. } | ClearHotCue { index, .. }
+            SetHotCue { index, .. }
+            | SetHotCuePoint { index, .. }
+            | TriggerHotCue { index, .. }
+            | ClearHotCue { index, .. }
                 if *index >= 8 =>
             {
                 return Err("Hot cue index must be 0..7".into())
@@ -412,6 +528,7 @@ impl EngineCommand {
                 return Err("Scrub target must be finite and duration must be 8..100 ms".into())
             }
             Seek { seconds, .. }
+            | SetHotCuePoint { seconds, .. }
             | ScrubEnd { seconds, .. }
             | Jog {
                 delta_seconds: seconds,

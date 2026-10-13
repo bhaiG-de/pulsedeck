@@ -1,0 +1,190 @@
+{
+  "validated_at_utc": "2026-10-13T23:00:00.234808+00:00",
+  "architecture": "Shell agent skills over existing CLI; no MCP, new analysis subsystem or hardcoded DJ engine",
+  "skills": [
+    {
+      "skill": "pulsedeck-track-inspection",
+      "result": "passed",
+      "logged_cli_invocations": 21,
+      "report": "artifacts/skill-trials/track-inspection.json",
+      "trial_adjustment": "Preserved seeded cue and 33s paused playhead; observed bass arrival near16s; raw bins straddle range boundaries; confidence is a score and entry8s offers only4 provisional bars before16s."
+    },
+    {
+      "skill": "pulsedeck-set-preparation",
+      "result": "passed",
+      "logged_cli_invocations": 17,
+      "report": "artifacts/skill-trials/set-preparation.json",
+      "trial_adjustment": "Verified saved order via playlist.track_ids rather than sorted membership query; duplicate replacement preserved prior order; missing keys/mood remain unknown; estimated overlap runtime is conditional."
+    },
+    {
+      "skill": "pulsedeck-prepare-next-track",
+      "result": "passed",
+      "logged_cli_invocations": 21,
+      "report": "artifacts/skill-trials/prepare-next-track.json",
+      "trial_adjustment": "Protected advancing A while B loaded/matched/prepared under guards; sync may seek; cue_enabled does not establish discrete headphone output; no transition started."
+    },
+    {
+      "skill": "pulsedeck-transition",
+      "result": "passed",
+      "logged_cli_invocations": 59,
+      "report": "artifacts/skill-trials/transition.json",
+      "trial_adjustment": "Read-only 16-bar plan then short native bass/fader transition; endpoints verified before outgoing pause; clock cancellation/manual movement may stop ramps before targets; IPC timing is approximate."
+    },
+    {
+      "skill": "pulsedeck-session-dj",
+      "result": "passed",
+      "logged_cli_invocations": 48,
+      "report": "artifacts/skill-trials/session-dj.json",
+      "trial_adjustment": "Continuous playback survived failed incoming load/job; job cancellation left native ramp active; automation stop cancelled it and preserved playback plus partially reached knob values."
+    },
+    {
+      "skill": "pulsedeck-recording-and-export",
+      "result": "passed",
+      "logged_cli_invocations": 33,
+      "report": "artifacts/skill-trials/recording-and-export.json",
+      "trial_adjustment": "Finalized silent float WAV/no drops; explicit overwrite and partial import verified; XML has limited meter/annotation fidelity and library/source cue representations can disagree."
+    },
+    {
+      "skill": "pulsedeck-setup-and-troubleshooting",
+      "result": "passed",
+      "logged_cli_invocations": 51,
+      "report": "artifacts/skill-trials/setup-and-troubleshooting.json",
+      "trial_adjustment": "Diagnosed state under silence; failed audio restart stopped renderer while cached audio status stayedrunning; restored known-good route; no discrete headphone path on two-channeldevice; inspected auth/MIDI prerequisites."
+    }
+  ],
+  "independent_two_track_workflow": {
+    "result": "passed",
+    "checks": [
+      "live discovery, schema availability and muted isolated runtime",
+      "existing band evidence shows a reduced-bass entry candidate with original timestamps",
+      "ordered local playlist verified by saved membership order",
+      "guarded incoming preparation while outgoing deck advances",
+      "persisted cue preserves position; stale readiness and ramp guards reject",
+      "short native bass/fader handover completes before outgoing pause",
+      "eligible mix finalizes silent WAV and explicit-path library XML",
+      "takeover cancels native ramp while preserving current playback and silence"
+    ],
+    "logged_cli_invocations": 85,
+    "report": "artifacts/skill-trials/workflow-1791932256-99854/workflow.json",
+    "plan": {
+      "sources": [
+        "local:1",
+        "local:2"
+      ],
+      "load_revisions": [
+        1,
+        1
+      ],
+      "outgoing_region_seconds": [
+        80,
+        96
+      ],
+      "incoming_entry_seconds": 16,
+      "meter_assumption": "provisional 4/4; waveform does not prove downbeat",
+      "overlap_bars": 1,
+      "overlap_beats": 4,
+      "nominal_overlap_seconds": 2,
+      "strategy": "short technical handover; reduced-bass outgoing region and stable incoming pulse hypothesis",
+      "exact_phrase_start_claimed": false
+    }
+  },
+  "product_validation": {
+    "rust_tests_passed": 128,
+    "frontend_tests_passed": 43,
+    "strict_clippy": "passed",
+    "frontend_production_build": "passed",
+    "macos_bundle": "passed",
+    "original_cli_coverage": "complete",
+    "catalog_methods": 81
+  },
+  "skill_packaging": {
+    "official_frontmatter_validation": "7 passed",
+    "portable_installation": "passed: seven self-contained copies, valid relative references, overwrite refusal preserves existing files",
+    "shell_example_blocks": "37 parse successfully; behavioral evidence is in dedicated live trials"
+  },
+  "supporting_changes": [
+    "Bounded track.inspect overview/range over existing analysis, preserving timestamps and full array access",
+    "Readiness source guard verified before/during/after waiting",
+    "Cue broadcasts use observed loaded-source revisions and expose already-persisted metadata on partial failure",
+    "Native per-deck ramps cancel when target source changes even with a different clock deck",
+    "Corrected nullable integer cue routing schema"
+  ],
+  "remaining_verification": [
+    "Audible meter/downbeat/phrase judgment, perceived loudness, bass/vocal/key clashes, effect tails and pitch artifacts",
+    "Real master/headphone routing and physical MIDI hardware",
+    "Live Spotify authorization/playback and source policy behavior",
+    "A full-length autonomous set with user-selected music"
+  ],
+  "known_migration_limit": "XML import can update library cue arrays while existing source-backed cues retain older data; skill verifies both and only reconciles explicitly requested markers with fresh guards. XML annotation labels and actual meter/downbeat do not round-trip fully.",
+  "blind_tests": {
+    "protocol": "Fresh subagents forked with no conversation history; natural-language tasks plus runtime binding and skill paths; app source/tests/helpers/databases/audio/prior reports/UI prohibited. Operated using skill content and CLI JSON only.",
+    "prepare": {
+      "result": "passed",
+      "report": "artifacts/blind-tests/prepare.json",
+      "summary": "B prepared under guards, A preserved and advancing at completion; only5.79s left on A; headphones correctly reported unconfigured."
+    },
+    "takeover": {
+      "result": "passed",
+      "report": "artifacts/blind-tests/takeover.json",
+      "summary": "Only mutation automation.stop; ramps stopped, recording kept running, source jobs idle; detected position revision change and did not overwrite it.",
+      "harness_note": "A pending harness seek completed after cancellation released a waiting operation; tester noticed the change without being told its cause."
+    },
+    "genre": {
+      "result": "correctly blocked before playback",
+      "report": "artifacts/blind-tests/genre.json",
+      "summary": "No observed Afro house identity/playlist/provider, only288s unidentified material; no claim of completed30min set or invented genre."
+    },
+    "set_initial": {
+      "result": "partial failure",
+      "report": "artifacts/blind-tests/set.json",
+      "actual_elapsed_seconds": 144.86,
+      "target_seconds": 120,
+      "played": [
+        "Pulse Intro",
+        "Rising Pulse"
+      ],
+      "omitted": [
+        "Final Pulse"
+      ],
+      "summary": "Cross-exec monotonic origin changed; bass exchange late and target overrun25s; agent reported actual incompletion."
+    },
+    "skill_revision": "Session procedure now requires persistent verified frame/UTC baseline, recomputing elapsed and positions before phases, dropping expired actions, reporting overruns and honoring requested pause ending. Observed 32s-planned/53s-actual overlap documented; short source-guarded control batches recommended for known phases, with adaptive observations and endpoint checks.",
+    "set_retest": {
+      "result": "bounded success with timing and track-count limits",
+      "report": "artifacts/blind-tests/set-retest.json",
+      "actual_elapsed_seconds": 127.8,
+      "target_seconds": 120,
+      "played": [
+        "Pulse Intro",
+        "Rising Pulse"
+      ],
+      "prepared_but_skipped": [
+        "Final Pulse"
+      ],
+      "summary": "Stable elapsed baseline, one long blend and bass exchange; expired third entry abandoned; stop applied and both decks paused; no active jobs/ramps; final state independently verified.",
+      "audible_verification": false,
+      "instrumentation_errors": [
+        {
+          "operation": "After successful jobs list recording, log wrapper elapsed-summary printing treated the list result as a dict and raised AttributeError. CLI command itself exited0 and returned empty jobs; both pause commands had already succeeded. Corrected wrapper and ran final status.",
+          "error": "AttributeError: list object has no attribute get"
+        }
+      ],
+      "actual_overlap_seconds": 53.25866666666667,
+      "planned_overlap_seconds": 32,
+      "remaining_limit": "Sequential model/CLI observation latency extended the overlap; native ramp durations do not equal whole-transition duration."
+    },
+    "thirty_minute_performance_verified": false,
+    "tested_agents_received_app_source_context": false,
+    "blind_cli_invocations_logged": 145
+  },
+  "post_rebase_validation": {
+    "verified_at_utc": "2026-10-13T23:27:36.440085+00:00",
+    "upstream_commit": "3a83f1a5954c43807dee9b798c3a573216877da8",
+    "rust_tests_passed": 131,
+    "frontend_tests_passed": 43,
+    "strict_clippy": "passed",
+    "frontend_production_build": "passed",
+    "format_coverage_and_skill_packaging": "passed",
+    "rebase_conflicts": false
+  }
+}

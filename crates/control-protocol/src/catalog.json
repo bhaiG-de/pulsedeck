@@ -1,0 +1,1778 @@
+[
+  {
+    "command": "status",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "status",
+    "example_cli": "pulsedeckctl call status --args '{}' --json"
+  },
+  {
+    "command": "state.get",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "state get",
+    "example_cli": "pulsedeckctl call state.get --args '{}' --json"
+  },
+  {
+    "command": "app.state",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "app state",
+    "example_cli": "pulsedeckctl call app.state --args '{}' --json"
+  },
+  {
+    "command": "app.activity",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "app activity",
+    "example_cli": "pulsedeckctl call app.activity --args '{}' --json"
+  },
+  {
+    "command": "engine.snapshot",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "engine snapshot",
+    "example_cli": "pulsedeckctl call engine.snapshot --args '{}' --json"
+  },
+  {
+    "command": "engine.transport",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "engine transport",
+    "example_cli": "pulsedeckctl call engine.transport --args '{}' --json"
+  },
+  {
+    "command": "engine.metadata",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "engine metadata",
+    "example_cli": "pulsedeckctl call engine.metadata --args '{}' --json"
+  },
+  {
+    "command": "engine.command",
+    "example_args": {
+      "command": {
+        "type": "play",
+        "deck": "A"
+      }
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "command": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string"
+            },
+            "deck": {
+              "type": "string"
+            }
+          }
+        },
+        "bands": {
+          "type": "object"
+        },
+        "effects": {
+          "type": "object"
+        },
+        "snap": {
+          "type": "string",
+          "enum": [
+            "beat",
+            "off"
+          ]
+        }
+      },
+      "additionalProperties": true,
+      "required": []
+    },
+    "description": "engine command",
+    "example_cli": "pulsedeckctl call engine.command --args '{\"command\":{\"type\":\"play\",\"deck\":\"A\"}}' --json"
+  },
+  {
+    "command": "deck.load",
+    "example_args": {
+      "deck": "A",
+      "track": "local:42"
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "deck": {
+          "type": [
+            "integer",
+            "string"
+          ],
+          "enum": [
+            "A",
+            "B",
+            0,
+            1
+          ]
+        },
+        "track": {
+          "type": [
+            "string",
+            "integer"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "uri": {
+          "type": "string"
+        },
+        "demo": {
+          "type": "boolean"
+        },
+        "replace_playing": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "deck"
+      ]
+    },
+    "description": "deck load",
+    "example_cli": "pulsedeckctl call deck.load --args '{\"deck\":\"A\",\"track\":\"local:42\"}' --json"
+  },
+  {
+    "command": "deck.demo",
+    "example_args": {
+      "deck": "A"
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "deck": {
+          "type": [
+            "integer",
+            "string"
+          ],
+          "enum": [
+            "A",
+            "B",
+            0,
+            1
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "deck"
+      ]
+    },
+    "description": "deck demo",
+    "example_cli": "pulsedeckctl call deck.demo --args '{\"deck\":\"A\"}' --json"
+  },
+  {
+    "command": "deck.instant_double",
+    "example_args": {
+      "deck": "B"
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "deck": {
+          "type": [
+            "integer",
+            "string"
+          ],
+          "enum": [
+            "A",
+            "B",
+            0,
+            1
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "deck"
+      ]
+    },
+    "description": "deck instant_double",
+    "example_cli": "pulsedeckctl call deck.instant_double --args '{\"deck\":\"B\"}' --json"
+  },
+  {
+    "command": "deck.unload",
+    "example_args": {
+      "deck": "A"
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "deck": {
+          "type": [
+            "integer",
+            "string"
+          ],
+          "enum": [
+            "A",
+            "B",
+            0,
+            1
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "deck"
+      ]
+    },
+    "description": "deck unload",
+    "example_cli": "pulsedeckctl call deck.unload --args '{\"deck\":\"A\"}' --json"
+  },
+  {
+    "command": "deck.load.cancel",
+    "example_args": {
+      "deck": "A"
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "deck": {
+          "type": [
+            "integer",
+            "string"
+          ],
+          "enum": [
+            "A",
+            "B",
+            0,
+            1
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "deck"
+      ]
+    },
+    "description": "deck load cancel",
+    "example_cli": "pulsedeckctl call deck.load.cancel --args '{\"deck\":\"A\"}' --json"
+  },
+  {
+    "command": "deck.analyze",
+    "example_args": {
+      "deck": "A"
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "deck": {
+          "type": [
+            "integer",
+            "string"
+          ],
+          "enum": [
+            "A",
+            "B",
+            0,
+            1
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "deck"
+      ]
+    },
+    "description": "deck analyze",
+    "example_cli": "pulsedeckctl call deck.analyze --args '{\"deck\":\"A\"}' --json"
+  },
+  {
+    "command": "engine.wait",
+    "example_args": {
+      "deck": "A"
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "deck": {
+          "type": [
+            "integer",
+            "string"
+          ],
+          "enum": [
+            "A",
+            "B",
+            0,
+            1
+          ]
+        },
+        "ramps": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "engine wait",
+    "example_cli": "pulsedeckctl call engine.wait --args '{\"deck\":\"A\"}' --json"
+  },
+  {
+    "command": "library.import",
+    "example_args": {
+      "paths": [
+        "/music/song.flac"
+      ]
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "paths"
+      ]
+    },
+    "description": "library import",
+    "example_cli": "pulsedeckctl call library.import --args '{\"paths\":[\"/music/song.flac\"]}' --json"
+  },
+  {
+    "command": "library.tracks",
+    "example_args": {
+      "search": "ambient",
+      "sort": "bpm",
+      "limit": 100,
+      "offset": 0
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "search": {
+          "type": "string"
+        },
+        "sort": {
+          "type": "string",
+          "enum": [
+            "title",
+            "bpm",
+            "duration"
+          ]
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "playlist": {
+          "type": [
+            "integer",
+            "string"
+          ]
+        },
+        "waveform": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "library tracks",
+    "example_cli": "pulsedeckctl call library.tracks --args '{\"search\":\"ambient\",\"sort\":\"bpm\",\"limit\":100,\"offset\":0}' --json"
+  },
+  {
+    "command": "library.track",
+    "example_args": {
+      "id": "local:42"
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": [
+            "integer",
+            "string"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id"
+      ]
+    },
+    "description": "library track",
+    "example_cli": "pulsedeckctl call library.track --args '{\"id\":\"local:42\"}' --json"
+  },
+  {
+    "command": "library.remove",
+    "example_args": {
+      "id": "local:42"
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": [
+            "integer",
+            "string"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id"
+      ]
+    },
+    "description": "library remove",
+    "example_cli": "pulsedeckctl call library.remove --args '{\"id\":\"local:42\"}' --json"
+  },
+  {
+    "command": "library.import_xml",
+    "example_args": {
+      "path": "/music/library.xml"
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "path"
+      ]
+    },
+    "description": "library import_xml",
+    "example_cli": "pulsedeckctl call library.import_xml --args '{\"path\":\"/music/library.xml\"}' --json"
+  },
+  {
+    "command": "library.export_xml",
+    "example_args": {
+      "path": "/tmp/export.xml"
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "overwrite": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "path"
+      ]
+    },
+    "description": "library export_xml",
+    "example_cli": "pulsedeckctl call library.export_xml --args '{\"path\":\"/tmp/export.xml\"}' --json"
+  },
+  {
+    "command": "playlist.list",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "playlist list",
+    "example_cli": "pulsedeckctl call playlist.list --args '{}' --json"
+  },
+  {
+    "command": "playlist.create",
+    "example_args": {
+      "name": "Work"
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "local"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ]
+    },
+    "description": "playlist create",
+    "example_cli": "pulsedeckctl call playlist.create --args '{\"name\":\"Work\"}' --json"
+  },
+  {
+    "command": "playlist.add",
+    "example_args": {
+      "playlist": "local:7",
+      "track": "local:42"
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "playlist": {
+          "type": [
+            "integer",
+            "string"
+          ]
+        },
+        "track": {
+          "type": [
+            "integer",
+            "string"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "playlist",
+        "track"
+      ]
+    },
+    "description": "playlist add",
+    "example_cli": "pulsedeckctl call playlist.add --args '{\"playlist\":\"local:7\",\"track\":\"local:42\"}' --json"
+  },
+  {
+    "command": "playlist.edit",
+    "example_args": {
+      "playlist": "local:7",
+      "action": "replace",
+      "tracks": [
+        42,
+        43
+      ]
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "playlist": {
+          "type": [
+            "integer",
+            "string"
+          ]
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "rename",
+            "delete",
+            "remove",
+            "replace"
+          ]
+        },
+        "tracks": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "playlist",
+        "action"
+      ]
+    },
+    "description": "playlist edit",
+    "example_cli": "pulsedeckctl call playlist.edit --args '{\"playlist\":\"local:7\",\"action\":\"replace\",\"tracks\":[42,43]}' --json"
+  },
+  {
+    "command": "cues.get",
+    "example_args": {
+      "source": "local:42"
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "deck": {
+          "type": [
+            "integer",
+            "string"
+          ],
+          "enum": [
+            "A",
+            "B",
+            0,
+            1
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "cues get",
+    "example_cli": "pulsedeckctl call cues.get --args '{\"source\":\"local:42\"}' --json"
+  },
+  {
+    "command": "cues.set",
+    "example_args": {
+      "source": "local:42",
+      "kind": "hot",
+      "index": 0,
+      "seconds": 32.0,
+      "label": "Intro"
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "main",
+            "hot",
+            "memory"
+          ]
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9
+        },
+        "seconds": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "label": {
+          "type": "string"
+        },
+        "deck": {
+          "type": [
+            "integer",
+            "string"
+          ],
+          "enum": [
+            "A",
+            "B",
+            0,
+            1
+          ]
+        },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cues": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "cues set",
+    "example_cli": "pulsedeckctl call cues.set --args '{\"source\":\"local:42\",\"kind\":\"hot\",\"index\":0,\"seconds\":32.0,\"label\":\"Intro\"}' --json"
+  },
+  {
+    "command": "audio.devices",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "audio devices",
+    "example_cli": "pulsedeckctl call audio.devices --args '{}' --json"
+  },
+  {
+    "command": "audio.start",
+    "example_args": {
+      "device_name": null,
+      "buffer_frames": 256,
+      "routing": {
+        "master_left": 0,
+        "master_right": 1,
+        "cue_left": null,
+        "cue_right": null
+      }
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "device_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "buffer_frames": {
+          "type": "integer"
+        },
+        "routing": {
+          "type": "object",
+          "properties": {
+            "master_left": {
+              "type": "integer"
+            },
+            "master_right": {
+              "type": "integer"
+            },
+            "cue_left": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "cue_right": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "audio start",
+    "example_cli": "pulsedeckctl call audio.start --args '{\"device_name\":null,\"buffer_frames\":256,\"routing\":{\"master_left\":0,\"master_right\":1,\"cue_left\":null,\"cue_right\":null}}' --json"
+  },
+  {
+    "command": "audio.stop",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "audio stop",
+    "example_cli": "pulsedeckctl call audio.stop --args '{}' --json"
+  },
+  {
+    "command": "midi.ports",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "midi ports",
+    "example_cli": "pulsedeckctl call midi.ports --args '{}' --json"
+  },
+  {
+    "command": "midi.connect",
+    "example_args": {
+      "input_name": "DDJ-FLX4",
+      "output_name": "DDJ-FLX4"
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "input_name": {
+          "type": "string"
+        },
+        "output_name": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "input_name"
+      ]
+    },
+    "description": "midi connect",
+    "example_cli": "pulsedeckctl call midi.connect --args '{\"input_name\":\"DDJ-FLX4\",\"output_name\":\"DDJ-FLX4\"}' --json"
+  },
+  {
+    "command": "midi.disconnect",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "midi disconnect",
+    "example_cli": "pulsedeckctl call midi.disconnect --args '{}' --json"
+  },
+  {
+    "command": "midi.history",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "midi history",
+    "example_cli": "pulsedeckctl call midi.history --args '{}' --json"
+  },
+  {
+    "command": "controller.state",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "controller state",
+    "example_cli": "pulsedeckctl call controller.state --args '{}' --json"
+  },
+  {
+    "command": "controller.tempo_range",
+    "example_args": {
+      "deck": "A",
+      "range": 6.0
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "deck": {
+          "type": [
+            "integer",
+            "string"
+          ],
+          "enum": [
+            "A",
+            "B",
+            0,
+            1
+          ]
+        },
+        "range": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "deck",
+        "range"
+      ]
+    },
+    "description": "controller tempo_range",
+    "example_cli": "pulsedeckctl call controller.tempo_range --args '{\"deck\":\"A\",\"range\":6.0}' --json"
+  },
+  {
+    "command": "controller.selection",
+    "example_args": {
+      "track_id": 42
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "track_id": {
+          "type": [
+            "integer",
+            "string"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "track_id"
+      ]
+    },
+    "description": "controller selection",
+    "example_cli": "pulsedeckctl call controller.selection --args '{\"track_id\":42}' --json"
+  },
+  {
+    "command": "controller.context",
+    "example_args": {
+      "track_ids": [
+        42,
+        43
+      ]
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "track_ids": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "track_ids"
+      ]
+    },
+    "description": "controller context",
+    "example_cli": "pulsedeckctl call controller.context --args '{\"track_ids\":[42,43]}' --json"
+  },
+  {
+    "command": "controller.browser_active",
+    "example_args": {
+      "active": true
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "active": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "active"
+      ]
+    },
+    "description": "controller browser_active",
+    "example_cli": "pulsedeckctl call controller.browser_active --args '{\"active\":true}' --json"
+  },
+  {
+    "command": "controller.action",
+    "example_args": {
+      "action": {
+        "type": "button",
+        "deck": 0,
+        "button": "play",
+        "pressed": true,
+        "shifted": false
+      }
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": true,
+      "required": []
+    },
+    "description": "controller action",
+    "example_cli": "pulsedeckctl call controller.action --args '{\"action\":{\"type\":\"button\",\"deck\":0,\"button\":\"play\",\"pressed\":true,\"shifted\":false}}' --json"
+  },
+  {
+    "command": "mixer.smart_modes",
+    "example_args": {
+      "fader": true,
+      "cfx": false
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "fader": {
+          "type": "boolean"
+        },
+        "cfx": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "mixer smart_modes",
+    "example_cli": "pulsedeckctl call mixer.smart_modes --args '{\"fader\":true,\"cfx\":false}' --json"
+  },
+  {
+    "command": "sampler.load",
+    "example_args": {
+      "slot": 8,
+      "path": "/music/kick.wav"
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "slot": {
+          "type": "integer"
+        },
+        "path": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "slot",
+        "path"
+      ]
+    },
+    "description": "sampler load",
+    "example_cli": "pulsedeckctl call sampler.load --args '{\"slot\":8,\"path\":\"/music/kick.wav\"}' --json"
+  },
+  {
+    "command": "recording.status",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "recording status",
+    "example_cli": "pulsedeckctl call recording.status --args '{}' --json"
+  },
+  {
+    "command": "recording.start",
+    "example_args": {
+      "path": "/tmp/mix.wav"
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "overwrite": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "path"
+      ]
+    },
+    "description": "recording start",
+    "example_cli": "pulsedeckctl call recording.start --args '{\"path\":\"/tmp/mix.wav\"}' --json"
+  },
+  {
+    "command": "recording.stop",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "recording stop",
+    "example_cli": "pulsedeckctl call recording.stop --args '{}' --json"
+  },
+  {
+    "command": "spotify.status",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "spotify status",
+    "example_cli": "pulsedeckctl call spotify.status --args '{}' --json"
+  },
+  {
+    "command": "spotify.configure",
+    "example_args": {
+      "client_id": "00000000000000000000000000000000"
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "client_id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "client_id"
+      ]
+    },
+    "description": "spotify configure",
+    "example_cli": "pulsedeckctl call spotify.configure --args '{\"client_id\":\"00000000000000000000000000000000\"}' --json"
+  },
+  {
+    "command": "spotify.login",
+    "example_args": {
+      "playback": false
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "playback": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "spotify login",
+    "example_cli": "pulsedeckctl call spotify.login --args '{\"playback\":false}' --json"
+  },
+  {
+    "command": "spotify.disconnect",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "spotify disconnect",
+    "example_cli": "pulsedeckctl call spotify.disconnect --args '{}' --json"
+  },
+  {
+    "command": "spotify.native.status",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "spotify native status",
+    "example_cli": "pulsedeckctl call spotify.native.status --args '{}' --json"
+  },
+  {
+    "command": "spotify.native.login",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "spotify native login",
+    "example_cli": "pulsedeckctl call spotify.native.login --args '{}' --json"
+  },
+  {
+    "command": "spotify.native.disconnect",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "spotify native disconnect",
+    "example_cli": "pulsedeckctl call spotify.native.disconnect --args '{}' --json"
+  },
+  {
+    "command": "spotify.playlists",
+    "example_args": {
+      "offset": 0
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "offset": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "spotify playlists",
+    "example_cli": "pulsedeckctl call spotify.playlists --args '{\"offset\":0}' --json"
+  },
+  {
+    "command": "spotify.liked",
+    "example_args": {
+      "offset": 0
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "offset": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "spotify liked",
+    "example_cli": "pulsedeckctl call spotify.liked --args '{\"offset\":0}' --json"
+  },
+  {
+    "command": "spotify.playlist_tracks",
+    "example_args": {
+      "playlist_id": "0000000000000000000000",
+      "offset": 0
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "playlist_id": {
+          "type": "string"
+        },
+        "offset": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "playlist_id"
+      ]
+    },
+    "description": "spotify playlist_tracks",
+    "example_cli": "pulsedeckctl call spotify.playlist_tracks --args '{\"playlist_id\":\"0000000000000000000000\",\"offset\":0}' --json"
+  },
+  {
+    "command": "spotify.album_tracks",
+    "example_args": {
+      "album_id": "0000000000000000000000",
+      "album_name": "Album",
+      "offset": 0
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "album_id": {
+          "type": "string"
+        },
+        "album_name": {
+          "type": "string"
+        },
+        "offset": {
+          "type": "integer"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "album_id"
+      ]
+    },
+    "description": "spotify album_tracks",
+    "example_cli": "pulsedeckctl call spotify.album_tracks --args '{\"album_id\":\"0000000000000000000000\",\"album_name\":\"Album\",\"offset\":0}' --json"
+  },
+  {
+    "command": "spotify.devices",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "spotify devices",
+    "example_cli": "pulsedeckctl call spotify.devices --args '{}' --json"
+  },
+  {
+    "command": "spotify.play",
+    "example_args": {
+      "uri": "spotify:track:0000000000000000000000",
+      "device_id": null
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "uri": {
+          "type": "string"
+        },
+        "device_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "uri"
+      ]
+    },
+    "description": "spotify play",
+    "example_cli": "pulsedeckctl call spotify.play --args '{\"uri\":\"spotify:track:0000000000000000000000\",\"device_id\":null}' --json"
+  },
+  {
+    "command": "spotify.pause",
+    "example_args": {
+      "device_id": null
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "device_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "spotify pause",
+    "example_cli": "pulsedeckctl call spotify.pause --args '{\"device_id\":null}' --json"
+  },
+  {
+    "command": "spotify.analysis.get",
+    "example_args": {
+      "uris": []
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "uris": {
+          "type": "array",
+          "items": {}
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "uris"
+      ]
+    },
+    "description": "spotify analysis get",
+    "example_cli": "pulsedeckctl call spotify.analysis.get --args '{\"uris\":[]}' --json"
+  },
+  {
+    "command": "spotify.analysis.start",
+    "example_args": {
+      "uris": []
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "uris": {
+          "type": "array",
+          "items": {}
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "uris"
+      ]
+    },
+    "description": "spotify analysis start",
+    "example_cli": "pulsedeckctl call spotify.analysis.start --args '{\"uris\":[]}' --json"
+  },
+  {
+    "command": "spotify.analysis.status",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "spotify analysis status",
+    "example_cli": "pulsedeckctl call spotify.analysis.status --args '{}' --json"
+  },
+  {
+    "command": "spotify.analysis.cancel",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "spotify analysis cancel",
+    "example_cli": "pulsedeckctl call spotify.analysis.cancel --args '{}' --json"
+  },
+  {
+    "command": "ui.state",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "ui state",
+    "example_cli": "pulsedeckctl call ui.state --args '{}' --json"
+  },
+  {
+    "command": "ui.call",
+    "example_args": {
+      "target": "app",
+      "action": "theme",
+      "value": "anatomy-dark"
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string"
+        },
+        "value": {}
+      },
+      "additionalProperties": false,
+      "required": [
+        "target",
+        "action"
+      ]
+    },
+    "description": "ui call",
+    "example_cli": "pulsedeckctl call ui.call --args '{\"target\":\"app\",\"action\":\"theme\",\"value\":\"anatomy-dark\"}' --json"
+  },
+  {
+    "command": "events.get",
+    "example_args": {
+      "since": 0
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "since": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "events get",
+    "example_cli": "pulsedeckctl call events.get --args '{\"since\":0}' --json"
+  },
+  {
+    "command": "batch.validate",
+    "example_args": {
+      "steps": [
+        {
+          "command": "state.get"
+        }
+      ]
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "steps"
+      ]
+    },
+    "description": "batch validate",
+    "example_cli": "pulsedeckctl call batch.validate --args '{\"steps\":[{\"command\":\"state.get\"}]}' --json"
+  },
+  {
+    "command": "batch.run",
+    "example_args": {
+      "steps": [
+        {
+          "command": "deck.load",
+          "args": {
+            "deck": "A",
+            "demo": true
+          }
+        },
+        {
+          "command": "engine.command",
+          "args": {
+            "type": "play",
+            "deck": "A"
+          }
+        }
+      ]
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "steps": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "steps"
+      ]
+    },
+    "description": "batch run",
+    "example_cli": "pulsedeckctl call batch.run --args '{\"steps\":[{\"command\":\"deck.load\",\"args\":{\"deck\":\"A\",\"demo\":true}},{\"command\":\"engine.command\",\"args\":{\"type\":\"play\",\"deck\":\"A\"}}]}' --json"
+  },
+  {
+    "command": "jobs.list",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "jobs list",
+    "example_cli": "pulsedeckctl call jobs.list --args '{}' --json"
+  },
+  {
+    "command": "jobs.get",
+    "example_args": {
+      "id": "request-id"
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id"
+      ]
+    },
+    "description": "jobs get",
+    "example_cli": "pulsedeckctl call jobs.get --args '{\"id\":\"request-id\"}' --json"
+  },
+  {
+    "command": "jobs.cancel",
+    "example_args": {
+      "id": "request-id"
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id"
+      ]
+    },
+    "description": "jobs cancel",
+    "example_cli": "pulsedeckctl call jobs.cancel --args '{\"id\":\"request-id\"}' --json"
+  },
+  {
+    "command": "automation.stop",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "automation stop",
+    "example_cli": "pulsedeckctl call automation.stop --args '{}' --json"
+  },
+  {
+    "command": "commands.list",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "commands list",
+    "example_cli": "pulsedeckctl call commands.list --args '{}' --json"
+  },
+  {
+    "command": "capabilities",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "capabilities",
+    "example_cli": "pulsedeckctl call capabilities --args '{}' --json"
+  },
+  {
+    "command": "commands.describe",
+    "example_args": {
+      "name": "deck.load"
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ]
+    },
+    "description": "commands describe",
+    "example_cli": "pulsedeckctl call commands.describe --args '{\"name\":\"deck.load\"}' --json"
+  },
+  {
+    "command": "automation.ramp",
+    "description": "Native timed control ramp with optional beat clock and quantized start",
+    "example_args": {
+      "target": {
+        "type": "crossfader"
+      },
+      "value": 1.0,
+      "clock": "A",
+      "beats": 16.0,
+      "quantize": 4.0
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "target": {
+          "type": "object"
+        },
+        "value": {
+          "type": "number"
+        },
+        "seconds": {
+          "type": "number",
+          "minimum": 0.001,
+          "maximum": 3600
+        },
+        "clock": {
+          "type": [
+            "string",
+            "integer"
+          ]
+        },
+        "beats": {
+          "type": "number",
+          "minimum": 0.001,
+          "maximum": 256
+        },
+        "quantize": {
+          "type": "number",
+          "minimum": 0.001,
+          "maximum": 256
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "target",
+        "value"
+      ]
+    },
+    "example_cli": "pulsedeckctl call automation.ramp --args '{\"target\":{\"type\":\"crossfader\"},\"value\":1.0,\"clock\":\"A\",\"beats\":16.0,\"quantize\":4.0}' --json"
+  },
+  {
+    "command": "app.show",
+    "description": "Show the main desktop window",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "example_cli": "pulsedeckctl call app.show --args '{}' --json"
+  },
+  {
+    "command": "app.hide",
+    "description": "Hide the main window while retaining the runtime",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "example_cli": "pulsedeckctl call app.hide --args '{}' --json"
+  },
+  {
+    "command": "app.stop",
+    "description": "Persist cues, finalize recording and stop the runtime",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "example_cli": "pulsedeckctl call app.stop --args '{}' --json"
+  },
+  {
+    "command": "sampler.state",
+    "description": "Read all 16 sampler slots, names and playback state",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "example_cli": "pulsedeckctl call sampler.state --args '{}' --json"
+  },
+  {
+    "command": "track.inspect",
+    "description": "Read a compact timestamped overview or detailed range from existing stored analysis; exactly one of source or deck. No transport or cue changes.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "deck": {
+          "enum": [
+            "A",
+            "B",
+            0,
+            1
+          ]
+        },
+        "start_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "end_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "points": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 512
+        }
+      },
+      "additionalProperties": false
+    },
+    "example_args": {
+      "deck": "A",
+      "points": 64
+    },
+    "example_cli": "pulsedeckctl call track.inspect --args '{\"deck\":\"A\",\"points\":64}' --json"
+  }
+]

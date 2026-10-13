@@ -61,10 +61,13 @@ export function isBrowserAction(
 ): value is ControllerBrowserAction {
   if (!value || typeof value !== "object") return false;
   const a = value as Record<string, unknown>;
+  if (a.shifted !== undefined && typeof a.shifted !== "boolean") return false;
+  if (a.pressed !== undefined && typeof a.pressed !== "boolean") return false;
   return (
     (a.type === "browse" &&
       typeof a.delta === "number" &&
-      Number.isFinite(a.delta)) ||
+      Number.isFinite(a.delta) &&
+      Number.isInteger(a.delta)) ||
     (a.type === "load" && (a.deck === 0 || a.deck === 1)) ||
     (a.type === "global_button" &&
       (a.button === "browse_press" ||

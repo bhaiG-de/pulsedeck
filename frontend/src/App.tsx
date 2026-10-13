@@ -31,6 +31,15 @@ import {
   Repeat2,
 } from "lucide-react";
 import { isDesktop, native } from "./api";
+import { useControl } from "./control-bridge";
+import {
+  controlString,
+  controlBoolean,
+  controlNumber,
+  controlEnum,
+  controlInteger,
+  controlDraft,
+} from "./control-state";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import {
   AppState,
@@ -477,6 +486,62 @@ function Deck({
   const color = id === 0 ? "#f4b65b" : "#62cbd5";
   const send = (type: string, data: Command = {}) =>
     command({ type, deck: id, ...data });
+  useControl(
+    `deck-${id === 0 ? "A" : "B"}`,
+    {
+      menu: (v) => setMenu(controlBoolean(v)),
+      pads: (v) => setPadMode(controlEnum(v, ["hotcue", "loop", "memory"])),
+      "tempo-range": (v) => {
+        const n = controlNumber(v, 6, 100);
+        if (![6, 10, 16, 100].includes(n))
+          throw new Error("Range must be 6/10/16/100");
+        setRange(n);
+        onTempoRange(id, n);
+      },
+      "grid-editor": (v) => {
+        const open = controlBoolean(v);
+        if (open) {
+          setGridBpm(String(baseBpm || 120));
+          setGridOffset(String(val(deck.beatgrid_offset_seconds)));
+        }
+        setEditGrid(open);
+      },
+      "grid-draft": (v) => {
+        const draft = controlDraft(v, {
+          bpm: (v) => controlNumber(v, 30, 300),
+          offset: (v) => controlNumber(v, 0, duration),
+        });
+        if (draft.bpm !== undefined)
+          setGridBpm(String(controlNumber(draft.bpm, 30, 300)));
+        if (draft.offset !== undefined)
+          setGridOffset(String(controlNumber(draft.offset, 0, duration)));
+      },
+      "grid-half": () =>
+        setGridBpm(String(controlNumber(+gridBpm / 2, 30, 300))),
+      "grid-double": () =>
+        setGridBpm(String(controlNumber(+gridBpm * 2, 30, 300))),
+      "grid-apply": async () => {
+        const bpm = controlNumber(+gridBpm, 30, 300);
+        const offset = controlNumber(+gridOffset, 0, duration);
+        await waveformCommand({ type: "set_bpm", deck: id, bpm });
+        await waveformCommand({
+          type: "set_beatgrid",
+          deck: id,
+          offset_seconds: offset,
+        });
+        setEditGrid(false);
+      },
+      "jog-cancel": finishJog,
+    },
+    {
+      menu,
+      pads: padMode,
+      tempo_range: range,
+      grid_editor: editGrid,
+      grid_draft: { bpm: gridBpm, offset: gridOffset },
+      scratch,
+    },
+  );
   return (
     <section
       className={`deck deck-${id} ${dropTarget ? "drop-target" : ""}`}
@@ -594,6 +659,7 @@ function Deck({
       </div>
       {track && (
         <AnalysisInfo
+          controlTarget={`analysis-${id === 0 ? "A" : "B"}`}
           key={`${track.id}-${track.path}`}
           track={track}
           onReanalyze={() => reanalyze(id)}
@@ -875,7 +941,7 @@ function Deck({
         <div className="tempo-slider">
           <Range
             label="TEMPO"
-            min={Math.min(-range, tempo)}
+            min={Math.max(-90, Math.min(-range, tempo))}
             max={Math.max(range, tempo)}
             step={0.01}
             value={tempo}
@@ -1091,6 +1157,11 @@ function Mixer({
   controllerSurface?: ControllerSurface;
 }) {
   const [fxType, setFxType] = useState<"echo" | "reverb">("echo");
+  useControl(
+    "mixer",
+    { "fx-view": (v) => setFxType(controlEnum(v, ["echo", "reverb"])) },
+    { fx_view: fxType },
+  );
   return (
     <section className="mixer">
       <div className="mixer-title">
@@ -1513,6 +1584,12 @@ export default function App() {
             );
             if (cancelled) return;
             trackMetadata.current = metadata.tracks;
+            if (metadata.samples)
+              setSampleNames(
+                metadata.samples.map(
+                  (sample, i) => sample?.title || `Sample ${i + 1}`,
+                ),
+              );
             metadataRevision.current = metadata.revision;
           }
           if (!cancelled) {
@@ -1574,6 +1651,23 @@ export default function App() {
       }),
     [fail],
   );
+  useEffect(() => {
+    if (!isDesktop) return;
+    let disposed = false;
+    let stop: UnlistenFn | undefined;
+    listen("library-updated", () => {
+      void refresh();
+    })
+      .then((unlisten) => {
+        if (disposed) unlisten();
+        else stop = unlisten;
+      })
+      .catch(fail);
+    return () => {
+      disposed = true;
+      stop?.();
+    };
+  }, [refresh, fail]);
   const command = useCallback(
     (c: Command) => {
       native("engine_command", { command: c }).catch(fail);
@@ -2166,6 +2260,180 @@ export default function App() {
       setAudioChanging(false);
     }
   }
+  useControl(
+    "app",
+    {
+      theme: (v) =>
+        setTheme(
+          controlEnum(v, ["hardware-dark", "anatomy-light", "anatomy-dark"]),
+        ),
+      source: (v) => setLibrarySource(controlEnum(v, ["local", "spotify"])),
+      browser: (v) => setDrawerOpen(controlBoolean(v)),
+      "browser-toggle": () => setDrawerOpen((v) => !v),
+      search: (v) => setSearch(controlString(v)),
+      sort: (v) => setSort(controlEnum(v, ["title", "bpm", "duration"])),
+      selection: async (v) => {
+        const raw =
+          typeof v === "number"
+            ? v
+            : Number(controlString(v).replace(/^local:/, ""));
+        const track = visible.find((t) => t.id === raw);
+        if (!track) throw new Error("Track is not in the visible browser");
+        setSelection(track.id);
+        setLocalCollectionFocus(false);
+        await native("set_controller_selection", { track_id: track.id });
+      },
+      collection: (v) => {
+        if (v === null || v === "all") {
+          setPlaylist(null);
+          return;
+        }
+        const raw =
+          typeof v === "number"
+            ? v
+            : Number(controlString(v).replace(/^local:/, ""));
+        if (!playlists.some((p) => p.id === raw))
+          throw new Error("Playlist not found");
+        setPlaylist(raw);
+        setLocalCollectionFocus(true);
+      },
+      navigation: (v) =>
+        navigate(
+          controlEnum(v, [
+            "rotate",
+            "press",
+            "back",
+            "open",
+            "close",
+            "playlists",
+            "tracks",
+          ]),
+        ),
+      "controller-browser": (v) => {
+        if (!isBrowserAction(v)) throw new Error("Invalid browser action");
+        return controllerHandler.current(v);
+      },
+      zoom: (v) => setVisibleBeats(controlNumber(v, 8, 128)),
+      snap: (v) => setSnapSeek(controlBoolean(v)),
+      sampler: (v) => setShowSampler(controlBoolean(v)),
+      "sampler-bank": (v) => {
+        const n = controlNumber(v, 1, 2);
+        if (!Number.isInteger(n)) throw new Error("Bank must be 1 or 2");
+        setSamplerBank(n - 1);
+      },
+      "notice-dismiss": () => setNotice(null),
+      "playlist-form": (v) => setNewPlaylist(controlBoolean(v)),
+      "playlist-name": (v) => setPlaylistName(controlString(v)),
+      "playlist-submit": async () => {
+        await native("create_playlist", { name: playlistName });
+        setNewPlaylist(false);
+        setPlaylistName("");
+        await refresh();
+      },
+      settings: async (v) => {
+        const open = controlBoolean(v);
+        if (open) await openSettings();
+        else setSettings(false);
+      },
+      "settings-tab": (v) =>
+        setSettingsTab(
+          controlEnum(v, [
+            "appearance",
+            "audio",
+            "midi",
+            "library",
+            "spotify",
+            "roadmap",
+          ]),
+        ),
+      "audio-draft": (v) => {
+        const d = controlDraft(v, {
+          device: controlString,
+          buffer: (v) => controlInteger(v, 16, 8192),
+          master_left: (v) => controlInteger(v, 0, 63),
+          master_right: (v) => controlInteger(v, 0, 63),
+          cue_left: (v) => controlInteger(v, 0, 63),
+          cue_right: (v) => controlInteger(v, 0, 63),
+          cue_route: controlBoolean,
+        });
+        audioSettingsTouched.current = true;
+        if (d.device !== undefined) setDevice(controlString(d.device));
+        if (d.buffer !== undefined)
+          setBuffer(controlNumber(d.buffer, 16, 8192));
+        if (d.master_left !== undefined)
+          setMasterL(controlNumber(d.master_left, 0, 63));
+        if (d.master_right !== undefined)
+          setMasterR(controlNumber(d.master_right, 0, 63));
+        if (d.cue_left !== undefined) setCueL(controlNumber(d.cue_left, 0, 63));
+        if (d.cue_right !== undefined)
+          setCueR(controlNumber(d.cue_right, 0, 63));
+        if (d.cue_route !== undefined) setCueRoute(controlBoolean(d.cue_route));
+      },
+      "audio-apply": async () => {
+        await native("start_audio", {
+          device_name: device || null,
+          buffer_frames: buffer,
+          routing: {
+            master_left: masterL,
+            master_right: masterR,
+            cue_left: cueRoute ? cueL : null,
+            cue_right: cueRoute ? cueR : null,
+          },
+        });
+        await refresh();
+      },
+      "midi-draft": (v) => {
+        const d = controlDraft(v, {
+          input: controlString,
+          output: controlString,
+        });
+        if (d.input !== undefined) setMidiInput(controlString(d.input));
+        if (d.output !== undefined) setMidiOutput(controlString(d.output));
+      },
+      "midi-apply": async () => {
+        setMidi(
+          await native("connect_midi", {
+            input_name: midiInput,
+            output_name: midiOutput || null,
+          }),
+        );
+      },
+      "ports-refresh": refreshPorts,
+      refresh,
+      "import-dialog": importTracks,
+      "recording-dialog": toggleRecording,
+    },
+    {
+      theme,
+      source: librarySource,
+      browser: drawerOpen,
+      navigation: browserNavigation,
+      search,
+      sort,
+      selection,
+      collection: playlist,
+      visible_track_ids: visible.map((t) => t.id),
+      zoom: visibleBeats,
+      snap: snapSeek,
+      sampler: showSampler,
+      sampler_bank: samplerBank + 1,
+      settings,
+      settings_tab: settingsTab,
+      playlist_form: newPlaylist,
+      playlist_name: playlistName,
+      notice,
+      audio_draft: {
+        device,
+        buffer,
+        master_left: masterL,
+        master_right: masterR,
+        cue_left: cueL,
+        cue_right: cueR,
+        cue_route: cueRoute,
+      },
+      midi_draft: { input: midiInput, output: midiOutput },
+    },
+  );
   return (
     <div className="app-shell">
       <header className="topbar">

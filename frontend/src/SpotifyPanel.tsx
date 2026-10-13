@@ -15,6 +15,8 @@ import {
   X,
 } from "lucide-react";
 import { isDesktop, native } from "./api";
+import { useControl } from "./control-bridge";
+import { controlString, controlBoolean, controlObject } from "./control-state";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { spotifyTrackId, spotifyWidgetUrl } from "./spotify-links";
 import {
@@ -370,7 +372,7 @@ function SpotifyPanel({
     }
   }, [fail]);
   const loadPlaylists = useCallback(
-    async (offset = 0) => {
+    async (offset = 0, throwErrors = false) => {
       setLoading(true);
       try {
         const page = await native<SpotifyPage<SpotifyPlaylist>>(
@@ -382,6 +384,7 @@ function SpotifyPanel({
         setPlaylistOffset(page.next_offset);
       } catch (e) {
         fail(e);
+        if (throwErrors) throw e;
       } finally {
         setLoading(false);
       }
@@ -398,6 +401,7 @@ function SpotifyPanel({
     playlist: SpotifyPlaylist | "liked",
     offset = 0,
     enterTracks = true,
+    throwErrors = false,
   ) {
     if (collectionFetchTimer.current !== null)
       clearTimeout(collectionFetchTimer.current);
@@ -442,6 +446,7 @@ function SpotifyPanel({
       return page.items;
     } catch (e) {
       if (generation.current === request) fail(e);
+      if (throwErrors) throw e;
     } finally {
       if (generation.current === request) setLoading(false);
     }
@@ -624,6 +629,152 @@ function SpotifyPanel({
     }
   }
   const setup = settingsOnly || showSetup || !status.connected;
+  useControl(
+    settingsOnly ? "spotify-settings" : "spotify-browser",
+    {
+      setup: (v) => setShowSetup(controlBoolean(v)),
+      "client-id": (v) => setClientId(controlString(v)),
+      configure: async () => {
+        await native("spotify_configure", { clientId: clientId.trim() });
+        await refreshStatus();
+      },
+      login: async () => {
+        setAuthorization(
+          await native("spotify_begin_login", { playback: false }),
+        );
+        await refreshStatus();
+      },
+      "native-login": async () => {
+        setAuthorization(await native("spotify_native_begin_login"));
+        await refreshStatus();
+      },
+      disconnect: async () => {
+        await native("spotify_disconnect");
+        await refreshStatus();
+      },
+      "native-disconnect": async () => {
+        await native("spotify_native_disconnect");
+        await refreshStatus();
+      },
+      "error-dismiss": () => setError(""),
+      "status-refresh": refreshStatus,
+      "playlists-refresh": () => loadPlaylists(0, true),
+      "playlists-more": () => {
+        if (playlistOffset === null) throw new Error("No further playlists");
+        return loadPlaylists(playlistOffset, true);
+      },
+      collection: (v) => {
+        const id = controlString(v);
+        const chosen =
+          id === "liked"
+            ? "liked"
+            : playlists.find((p) => p.id === id.replace(/^playlist:/, ""));
+        if (!chosen)
+          throw new Error("Collection not found in loaded playlists");
+        return openPlaylist(chosen, 0, true, true);
+      },
+      album: (v) => {
+        const album = controlObject(v);
+        return openPlaylist(
+          {
+            id: controlString(album.id),
+            name: controlString(album.name ?? "Album"),
+            total: null,
+            external_url: "",
+            collaborative: false,
+            is_album: true,
+          },
+          0,
+          true,
+          true,
+        );
+      },
+      "tracks-refresh": () => {
+        if (!selectedPlaylist) throw new Error("Choose a collection");
+        return openPlaylist(selectedPlaylist, 0, false, true);
+      },
+      "tracks-more": () => {
+        if (!selectedPlaylist || trackOffset === null)
+          throw new Error("No further tracks");
+        return openPlaylist(selectedPlaylist, trackOffset, false, true);
+      },
+      selection: (v) => {
+        const uri = controlString(v);
+        if (!tracks.some((t) => t.uri === uri))
+          throw new Error("Track is not in loaded browser");
+        setBrowserSelection(uri);
+        setCollectionFocus(false);
+      },
+      focus: (v) => {
+        const target = controlString(v);
+        if (target !== "playlists" && target !== "tracks")
+          throw new Error("Focus must be playlists or tracks");
+        setCollectionFocus(target === "playlists");
+      },
+      "auto-analyze": (v) => setAutoAnalyze(controlBoolean(v)),
+      analyze: async () => {
+        const uris = analysisPage
+          .filter((t) => t.available && !t.is_local)
+          .slice(0, 50)
+          .map((t) => t.uri);
+        setBatch(await native("analyze_spotify_page", { uris }));
+      },
+      "analysis-cancel": () => native("cancel_spotify_analysis"),
+      device: (v) => {
+        const id = controlString(v);
+        if (id && !devices.some((d) => d.id === id))
+          throw new Error("Connect device not found");
+        setDeviceId(id);
+      },
+      "devices-refresh": refreshDevices,
+      play: async (v) => {
+        const uri = controlString(v);
+        await native("spotify_play", { uri, deviceId: deviceId || null });
+        setPlayingUri(uri);
+      },
+      pause: async () => {
+        await native("spotify_pause", { deviceId: deviceId || null });
+        setPlayingUri("");
+      },
+      "widget-link": (v) => setWidgetLink(controlString(v)),
+      widget: (v) => {
+        if (v === null || v === false) {
+          setWidgetTrack(null);
+          return;
+        }
+        const uri = controlString(v);
+        const id = spotifyTrackId(uri);
+        if (!id) throw new Error("Invalid Spotify track link");
+        setWidgetTrack({ id, title: "Spotify track player" });
+      },
+      "widget-submit": () => {
+        const id = spotifyTrackId(widgetLink);
+        if (!id) throw new Error("Invalid Spotify track link");
+        setWidgetTrack({ id, title: "Spotify track player" });
+      },
+      "controller-browser": (v) =>
+        browserHandler.current(v as ControllerBrowserAction),
+    },
+    {
+      setup: showSetup,
+      client_id: clientId,
+      error,
+      collection: selectedPlaylist === "liked" ? "liked" : selectedPlaylist?.id,
+      selection: browserSelection,
+      focus: collectionFocus ? "playlists" : "tracks",
+      auto_analyze: autoAnalyze,
+      device: deviceId,
+      playing_uri: playingUri,
+      widget: widgetTrack,
+      widget_link: widgetLink,
+      playlists: playlists.map((p) => ({ id: p.id, name: p.name })),
+      playlist_offset: playlistOffset,
+      track_uris: tracks.map((t) => t.uri),
+      track_offset: trackOffset,
+      analysis_page: analysisPageNumber,
+      batch,
+    },
+  );
   return (
     <section
       ref={browserRoot}

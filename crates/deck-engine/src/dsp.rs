@@ -1,6 +1,6 @@
 use crate::{
     decode::TrackData,
-    model::{EngineCommand, LoopBoundary},
+    model::{ControlTarget, EngineCommand, LoopBoundary},
 };
 use std::sync::Arc;
 
@@ -370,7 +370,22 @@ impl Deck {
     }
 }
 
+#[derive(Clone, Copy)]
+struct ControlRamp {
+    target: ControlTarget,
+    from: f32,
+    to: f32,
+    start: u64,
+    end: u64,
+    clock: Option<usize>,
+    source_revision: Option<u64>,
+    target_revision: Option<u64>,
+    position_revision: Option<u64>,
+}
 pub(crate) struct Mixer {
+    pub applied_fence: u64,
+    pub load_revisions: [u64; 2],
+    ramps: [Option<ControlRamp>; 17],
     pub decks: [Deck; 2],
     pub sample_rate: u32,
     pub master_gain: Smooth,
@@ -390,6 +405,9 @@ pub(crate) struct Mixer {
 impl Mixer {
     pub fn new() -> Self {
         Self {
+            applied_fence: 0,
+            load_revisions: [0; 2],
+            ramps: [None; 17],
             decks: [Deck::new(), Deck::new()],
             sample_rate: 48_000,
             master_gain: Smooth::new(0.8),
@@ -528,7 +546,72 @@ impl Mixer {
     }
     pub fn command(&mut self, command: EngineCommand) {
         use EngineCommand::*;
+        match &command {
+            SetCrossfader { .. } => self.ramps[0] = None,
+            SetMasterGain { .. } => self.ramps[1] = None,
+            SetCueGain { .. } => self.ramps[2] = None,
+            SetCueMix { .. } => self.ramps[3] = None,
+            SetSamplerGain { .. } => self.ramps[4] = None,
+            SetChannelFader { deck, .. } => {
+                self.ramps[ControlTarget::ChannelFader { deck: *deck }.index()] = None
+            }
+            SetDeckGain { deck, .. } => {
+                self.ramps[ControlTarget::DeckGain { deck: *deck }.index()] = None
+            }
+            SetFilter { deck, .. } => {
+                self.ramps[ControlTarget::Filter { deck: *deck }.index()] = None
+            }
+            SetEq { deck, .. } => {
+                for t in [
+                    ControlTarget::EqLow { deck: *deck },
+                    ControlTarget::EqMid { deck: *deck },
+                    ControlTarget::EqHigh { deck: *deck },
+                ] {
+                    self.ramps[t.index()] = None;
+                }
+            }
+            _ => {}
+        }
         match command {
+            Ramp {
+                target,
+                value,
+                seconds,
+                clock,
+                beats,
+                quantize,
+            } => {
+                let mut duration = seconds;
+                let mut delay = 0.0;
+                if let Some(deck) = clock {
+                    let d = &self.decks[deck];
+                    let period = 60.0 / d.bpm.unwrap_or(120.0);
+                    if let Some(beats) = beats {
+                        duration = beats * period / d.rate();
+                    }
+                    if let Some(quantize) = quantize {
+                        let position = (d.seconds() - d.grid_offset) / period;
+                        let next = (position / quantize).ceil() * quantize;
+                        delay = ((next - position) * period / d.rate()).max(0.0);
+                    }
+                }
+                let from = self.target_value(target);
+                let start = self.rendered_frames + (delay * self.sample_rate as f64).round() as u64;
+                let frames = (duration * self.sample_rate as f64).round().max(1.0) as u64;
+                let guard = clock.or(target.deck());
+                self.ramps[target.index()] = Some(ControlRamp {
+                    target,
+                    from,
+                    to: value,
+                    start,
+                    end: start + frames,
+                    clock,
+                    source_revision: guard.map(|d| self.load_revisions[d]),
+                    target_revision: target.deck().map(|d| self.load_revisions[d]),
+                    position_revision: clock.map(|d| self.decks[d].position_revision),
+                });
+            }
+            CancelRamps => self.ramps.fill(None),
             Play { deck } => {
                 let d = &mut self.decks[deck];
                 if d.track.is_some() {
@@ -561,6 +644,14 @@ impl Mixer {
                 d.cue = seconds.clamp(0.0, d.duration_frames() / d.sample_rate());
             }
             RestoreHotCues { deck, cues } => self.decks[deck].hot_cues = cues,
+            SetHotCuePoint {
+                deck,
+                index,
+                seconds,
+            } => {
+                let d = &mut self.decks[deck];
+                d.hot_cues[index] = Some(seconds.clamp(0.0, d.duration_frames() / d.sample_rate()));
+            }
             CuePress { deck, pressed } => {
                 let d = &mut self.decks[deck];
                 if pressed {
@@ -687,7 +778,13 @@ impl Mixer {
                 }
                 d.attack = 0.0;
             }
-            RestoreMemoryCues { deck, cues } => self.decks[deck].memory_cues = cues,
+            RestoreMemoryCues { deck, mut cues } => {
+                cues.sort_unstable_by(|a, b| {
+                    a.unwrap_or(f64::INFINITY)
+                        .total_cmp(&b.unwrap_or(f64::INFINITY))
+                });
+                self.decks[deck].memory_cues = cues;
+            }
             MemoryCueSave { deck } => {
                 let d = &mut self.decks[deck];
                 let time = d.seconds();
@@ -890,8 +987,61 @@ impl Mixer {
             } => self.decks[deck].grid_offset = offset_seconds,
         }
     }
+    fn target_mut(&mut self, target: ControlTarget) -> &mut Smooth {
+        match target {
+            ControlTarget::Crossfader => &mut self.crossfader,
+            ControlTarget::MasterGain => &mut self.master_gain,
+            ControlTarget::CueGain => &mut self.cue_gain,
+            ControlTarget::CueMix => &mut self.cue_mix,
+            ControlTarget::SamplerGain => &mut self.sampler_gain,
+            ControlTarget::ChannelFader { deck } => &mut self.decks[deck].channel_fader,
+            ControlTarget::DeckGain { deck } => &mut self.decks[deck].gain,
+            ControlTarget::Filter { deck } => &mut self.decks[deck].filter,
+            ControlTarget::EqLow { deck } => &mut self.decks[deck].eq[0],
+            ControlTarget::EqMid { deck } => &mut self.decks[deck].eq[1],
+            ControlTarget::EqHigh { deck } => &mut self.decks[deck].eq[2],
+        }
+    }
+    fn target_value(&mut self, target: ControlTarget) -> f32 {
+        self.target_mut(target).target
+    }
+    pub fn active_ramps(&self) -> [bool; 17] {
+        self.ramps.map(|r| r.is_some())
+    }
+    fn advance_ramps(&mut self) {
+        for i in 0..self.ramps.len() {
+            let Some(ramp) = self.ramps[i] else {
+                continue;
+            };
+            let guard = ramp.clock.or(ramp.target.deck());
+            if guard.is_some_and(|d| Some(self.load_revisions[d]) != ramp.source_revision)
+                || ramp
+                    .target
+                    .deck()
+                    .is_some_and(|d| Some(self.load_revisions[d]) != ramp.target_revision)
+                || ramp.clock.is_some_and(|d| {
+                    !self.decks[d].playing
+                        || Some(self.decks[d].position_revision) != ramp.position_revision
+                })
+            {
+                self.ramps[i] = None;
+                continue;
+            }
+            if self.rendered_frames < ramp.start {
+                continue;
+            }
+            let progress = ((self.rendered_frames - ramp.start) as f64
+                / (ramp.end - ramp.start) as f64)
+                .min(1.0) as f32;
+            self.target_mut(ramp.target).target = ramp.from + (ramp.to - ramp.from) * progress;
+            if progress >= 1.0 {
+                self.ramps[i] = None;
+            }
+        }
+    }
     #[inline]
     pub fn frame(&mut self) -> ([f32; 2], [f32; 2]) {
+        self.advance_ramps();
         let leader_phase = (self.decks[self.master_deck].seconds()
             - self.decks[self.master_deck].grid_offset)
             * self.decks[self.master_deck].bpm.unwrap_or(120.0)

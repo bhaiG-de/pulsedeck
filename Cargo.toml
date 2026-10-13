@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/deck-engine", "crates/flx4-midi", "crates/audio-analysis", "crates/spotify-playback", "src-tauri"]
+members = ["crates/deck-engine", "crates/flx4-midi", "crates/audio-analysis", "crates/spotify-playback", "crates/control-protocol", "crates/pulsedeck-cli", "src-tauri"]
 resolver = "2"
 exclude = ["vendor/cpal"]
 

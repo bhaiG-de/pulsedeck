@@ -190,6 +190,7 @@ pub async fn load_spotify_track(
                 cached,
             )?;
             crate::spotify_analysis::store(&app, &analysis)?;
+            crate::control::restore_cues(&app, deck, &analysis.path)?;
             Ok(analysis)
         })();
         state

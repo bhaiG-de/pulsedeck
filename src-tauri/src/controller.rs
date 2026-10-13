@@ -18,7 +18,7 @@ pub struct ControlState {
     loop_beats: [f64; 2],
     pub sync: [bool; 2],
     pub master: usize,
-    fx_depth: f32,
+    fx_depth: [f32; 2],
     fx_target: usize,
     fx_kind: [usize; 2],
     fx_enabled: [bool; 2],
@@ -49,7 +49,7 @@ impl Default for ControlState {
             loop_beats: [4.; 2],
             sync: [false; 2],
             master: 0,
-            fx_depth: 0.5,
+            fx_depth: [0.5; 2],
             fx_target: 0,
             fx_kind: [0; 2],
             fx_enabled: [false; 2],
@@ -94,6 +94,42 @@ pub struct ControllerSurface {
     pub smart_cfx_preset: &'static str,
 }
 impl ControlState {
+    pub fn observe(&mut self, command: &EngineCommand, derive_fx: bool) {
+        match command {
+            EngineCommand::SetEq {
+                deck,
+                low,
+                mid,
+                high,
+            } => self.eq[*deck] = [*low, *mid, *high],
+            EngineCommand::SetDeckGain { deck, gain } => self.trim[*deck] = *gain,
+            EngineCommand::SetChannelFader { deck, value } => self.fader[*deck] = *value,
+            EngineCommand::SetSync { deck, enabled } => self.sync[*deck] = *enabled,
+            EngineCommand::SetMaster { deck } => self.master = *deck,
+            EngineCommand::SetFx { deck, echo, reverb } if derive_fx => {
+                self.fx_enabled[*deck] = *echo > 0.0 || *reverb > 0.0;
+                if *echo > 0.0 && *reverb == 0.0 {
+                    self.fx_kind[*deck] = 0;
+                }
+                if *reverb > 0.0 && *echo == 0.0 {
+                    self.fx_kind[*deck] = 1;
+                }
+                if self.fx_enabled[*deck] {
+                    self.fx_depth[*deck] = echo.max(*reverb);
+                }
+            }
+            EngineCommand::SetFxBeat { deck, beats } => {
+                if let Some(i) = FX_BEATS.iter().position(|b| (b - beats).abs() < 1e-8) {
+                    self.fx_beat_index[*deck] = i;
+                }
+            }
+            EngineCommand::SetLoop {
+                deck,
+                beats: Some(beats),
+            } => self.loop_beats[*deck] = *beats,
+            _ => {}
+        }
+    }
     pub fn release_jogs(&mut self, engine: &deck_engine::EngineHandle) {
         for deck in 0..2 {
             if self.jog_held[deck] {
@@ -114,7 +150,7 @@ impl ControlState {
             fx_name: self.fx_kind.map(|k| ["Echo", "Reverb", "Filter"][k]),
             fx_enabled: self.fx_enabled,
             fx_beats: self.fx_beat_index.map(|i| FX_BEATS[i]),
-            fx_depth: self.fx_depth,
+            fx_depth: self.fx_depth[self.fx_target],
             fx_target: self.fx_target,
             smart_cfx_preset: ["Filter + Echo", "Filter + Reverb"][self.smart_cfx_preset],
         }
@@ -152,7 +188,7 @@ impl ControlState {
     }
     fn fx_commands(&self, deck: usize) -> Vec<EngineCommand> {
         let depth = if self.fx_enabled[deck] {
-            self.fx_depth
+            self.fx_depth[deck]
         } else {
             0.
         };
@@ -172,7 +208,7 @@ impl ControlState {
             result.push(EngineCommand::SetFilter {
                 deck,
                 amount: if self.fx_enabled[deck] {
-                    self.fx_depth
+                    self.fx_depth[deck]
                 } else {
                     0.
                 },
@@ -182,12 +218,12 @@ impl ControlState {
     }
 }
 
-pub fn handle(app: &tauri::AppHandle, action: ControllerAction) {
+pub fn handle(app: &tauri::AppHandle, action: ControllerAction) -> Result<(), String> {
     let state = app.state::<AppState>();
     let _ = app.emit("controller_action", &action);
     let mut control = match state.controller.lock() {
         Ok(c) => c,
-        Err(_) => return,
+        Err(_) => return Err("Controller state unavailable".into()),
     };
     let snap = state.engine.transport_snapshot();
     let mut commands = Vec::new();
@@ -357,7 +393,8 @@ pub fn handle(app: &tauri::AppHandle, action: ControllerAction) {
                 match knob {
                     Knob::Tempo => commands.push(EngineCommand::SetTempo {
                         deck,
-                        percent: (value as f64 - 0.5) * 2. * control.range[deck],
+                        percent: ((value as f64 - 0.5) * 2. * control.range[deck])
+                            .clamp(-90.0, 100.0),
                     }),
                     Knob::Trim => {
                         control.trim[deck] = value * 2.;
@@ -407,7 +444,8 @@ pub fn handle(app: &tauri::AppHandle, action: ControllerAction) {
                         }
                     }
                     Knob::FxDepth => {
-                        control.fx_depth = value;
+                        let target = control.fx_target;
+                        control.fx_depth[target] = value;
                         commands.extend(control.fx_commands(control.fx_target));
                     }
                     _ => {}
@@ -442,7 +480,10 @@ pub fn handle(app: &tauri::AppHandle, action: ControllerAction) {
                     Knob::HeadphoneGain => {
                         commands.push(EngineCommand::SetCueGain { gain: value * 2. })
                     }
-                    Knob::FxDepth => control.fx_depth = value,
+                    Knob::FxDepth => {
+                        let target = control.fx_target;
+                        control.fx_depth[target] = value;
+                    }
                     _ => {}
                 }
             }
@@ -713,7 +754,8 @@ pub fn handle(app: &tauri::AppHandle, action: ControllerAction) {
             if control.fx_kind[deck] == 2 {
                 commands.push(EngineCommand::SetFilter { deck, amount: 0. });
             }
-            control.fx_kind[deck] = (control.fx_kind[deck] as i16 + delta).rem_euclid(3) as usize;
+            control.fx_kind[deck] =
+                (control.fx_kind[deck] as i32 + delta as i32).rem_euclid(3) as usize;
             commands.extend(control.fx_commands(deck));
         }
         ControllerAction::FxBeat { delta, shifted, .. } => {
@@ -729,8 +771,8 @@ pub fn handle(app: &tauri::AppHandle, action: ControllerAction) {
                     commands.push(EngineCommand::SetBpm { deck, bpm });
                 }
             } else {
-                control.fx_beat_index[deck] = (control.fx_beat_index[deck] as i16 + delta)
-                    .clamp(0, FX_BEATS.len() as i16 - 1)
+                control.fx_beat_index[deck] = (control.fx_beat_index[deck] as i32 + delta as i32)
+                    .clamp(0, FX_BEATS.len() as i32 - 1)
                     as usize;
                 commands.extend(control.fx_commands(deck));
             }
@@ -758,19 +800,18 @@ pub fn handle(app: &tauri::AppHandle, action: ControllerAction) {
         let _ = app.emit("controller_surface", surface);
     }
     if let Some((deck, bpm)) = manual_bpm {
-        if let Err(e) = crate::engine_command(
+        crate::engine_command_inner(
             app.clone(),
             app.state::<AppState>(),
             EngineCommand::SetBpm { deck, bpm },
-        ) {
-            state.message(e);
-        }
+            false,
+            None,
+        )?;
     }
     for command in commands {
-        if let Err(e) = state.engine.command(command) {
-            state.message(e);
-        }
+        crate::engine_command_inner(app.clone(), app.state(), command, false, None)?;
     }
+    Ok(())
 }
 
 pub fn feedback(
@@ -825,7 +866,7 @@ mod tests {
         assert!(control.set_range(2, 6.).is_err());
         assert_eq!(control.surface().tempo_ranges, [6., 100.]);
         control.fx_kind[1] = 2;
-        control.fx_depth = 0.8;
+        control.fx_depth[1] = 0.8;
         assert!(control.fx_commands(1).iter().any(|c| matches!(c,
             EngineCommand::SetFilter { deck: 1, amount } if *amount == 0.)));
         control.fx_enabled[1] = true;

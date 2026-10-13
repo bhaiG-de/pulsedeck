@@ -1,0 +1,12 @@
+[package]
+name = "pulsedeck-cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "pulsedeckctl"
+path = "src/main.rs"
+
+[dependencies]
+control-protocol = { path = "../control-protocol" }
+serde_json = "1"

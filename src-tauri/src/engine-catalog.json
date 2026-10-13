@@ -1,0 +1,427 @@
+[
+  {
+    "type": "play",
+    "example": {
+      "type": "play",
+      "deck": 0
+    }
+  },
+  {
+    "type": "pause",
+    "example": {
+      "type": "pause",
+      "deck": 0
+    }
+  },
+  {
+    "type": "toggle_play",
+    "example": {
+      "type": "toggle_play",
+      "deck": 0
+    }
+  },
+  {
+    "type": "cue",
+    "example": {
+      "type": "cue",
+      "deck": 0
+    }
+  },
+  {
+    "type": "set_cue",
+    "example": {
+      "type": "set_cue",
+      "deck": 0
+    }
+  },
+  {
+    "type": "set_cue_point",
+    "example": {
+      "type": "set_cue_point",
+      "deck": 0,
+      "seconds": 0.0
+    }
+  },
+  {
+    "type": "restore_hot_cues",
+    "example": {
+      "type": "restore_hot_cues",
+      "deck": 0,
+      "cues": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    }
+  },
+  {
+    "type": "cue_press",
+    "example": {
+      "type": "cue_press",
+      "deck": 0,
+      "pressed": false
+    }
+  },
+  {
+    "type": "seek",
+    "example": {
+      "type": "seek",
+      "deck": 0,
+      "seconds": 0.0
+    }
+  },
+  {
+    "type": "scrub_to",
+    "example": {
+      "type": "scrub_to",
+      "deck": 0,
+      "seconds": 0.0,
+      "duration_ms": 16.0
+    }
+  },
+  {
+    "type": "scrub_end",
+    "example": {
+      "type": "scrub_end",
+      "deck": 0,
+      "seconds": 0.0
+    }
+  },
+  {
+    "type": "set_hot_cue",
+    "example": {
+      "type": "set_hot_cue",
+      "deck": 0,
+      "index": 0
+    }
+  },
+  {
+    "type": "set_hot_cue_point",
+    "example": {
+      "type": "set_hot_cue_point",
+      "deck": 0,
+      "index": 0,
+      "seconds": 0.0
+    }
+  },
+  {
+    "type": "trigger_hot_cue",
+    "example": {
+      "type": "trigger_hot_cue",
+      "deck": 0,
+      "index": 0
+    }
+  },
+  {
+    "type": "toggle_active_loop",
+    "example": {
+      "type": "toggle_active_loop",
+      "deck": 0
+    }
+  },
+  {
+    "type": "set_loop",
+    "example": {
+      "type": "set_loop",
+      "deck": 0,
+      "beats": 4.0
+    }
+  },
+  {
+    "type": "set_loop_edit",
+    "example": {
+      "type": "set_loop_edit",
+      "deck": 0,
+      "boundary": null
+    }
+  },
+  {
+    "type": "set_fx_beat",
+    "example": {
+      "type": "set_fx_beat",
+      "deck": 0,
+      "beats": 0.5
+    }
+  },
+  {
+    "type": "loop_in",
+    "example": {
+      "type": "loop_in",
+      "deck": 0
+    }
+  },
+  {
+    "type": "loop_out",
+    "example": {
+      "type": "loop_out",
+      "deck": 0
+    }
+  },
+  {
+    "type": "clear_hot_cue",
+    "example": {
+      "type": "clear_hot_cue",
+      "deck": 0,
+      "index": 0
+    }
+  },
+  {
+    "type": "set_pitch",
+    "example": {
+      "type": "set_pitch",
+      "deck": 0,
+      "semitones": 0.0
+    }
+  },
+  {
+    "type": "jog_touch",
+    "example": {
+      "type": "jog_touch",
+      "deck": 0,
+      "touched": false
+    }
+  },
+  {
+    "type": "memory_cue_save",
+    "example": {
+      "type": "memory_cue_save",
+      "deck": 0
+    }
+  },
+  {
+    "type": "memory_cue_delete",
+    "example": {
+      "type": "memory_cue_delete",
+      "deck": 0
+    }
+  },
+  {
+    "type": "memory_cue_next",
+    "example": {
+      "type": "memory_cue_next",
+      "deck": 0
+    }
+  },
+  {
+    "type": "memory_cue_previous",
+    "example": {
+      "type": "memory_cue_previous",
+      "deck": 0
+    }
+  },
+  {
+    "type": "restore_memory_cues",
+    "example": {
+      "type": "restore_memory_cues",
+      "deck": 0,
+      "cues": [
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null
+      ]
+    }
+  },
+  {
+    "type": "trigger_sample",
+    "example": {
+      "type": "trigger_sample",
+      "slot": 0
+    }
+  },
+  {
+    "type": "stop_sample",
+    "example": {
+      "type": "stop_sample",
+      "slot": 0
+    }
+  },
+  {
+    "type": "set_sampler_gain",
+    "example": {
+      "type": "set_sampler_gain",
+      "gain": 0.0
+    }
+  },
+  {
+    "type": "set_keylock",
+    "example": {
+      "type": "set_keylock",
+      "deck": 0,
+      "enabled": false
+    }
+  },
+  {
+    "type": "beat_jump",
+    "example": {
+      "type": "beat_jump",
+      "deck": 0,
+      "beats": 0.0
+    }
+  },
+  {
+    "type": "set_tempo",
+    "example": {
+      "type": "set_tempo",
+      "deck": 0,
+      "percent": 0.0
+    }
+  },
+  {
+    "type": "jog",
+    "example": {
+      "type": "jog",
+      "deck": 0,
+      "delta_seconds": 0.0,
+      "scratch": false
+    }
+  },
+  {
+    "type": "sync",
+    "example": {
+      "type": "sync",
+      "deck": 0
+    }
+  },
+  {
+    "type": "set_sync",
+    "example": {
+      "type": "set_sync",
+      "deck": 0,
+      "enabled": false
+    }
+  },
+  {
+    "type": "set_master",
+    "example": {
+      "type": "set_master",
+      "deck": 0
+    }
+  },
+  {
+    "type": "set_channel_fader",
+    "example": {
+      "type": "set_channel_fader",
+      "deck": 0,
+      "value": 0.0
+    }
+  },
+  {
+    "type": "set_deck_gain",
+    "example": {
+      "type": "set_deck_gain",
+      "deck": 0,
+      "gain": 0.0
+    }
+  },
+  {
+    "type": "set_eq",
+    "example": {
+      "type": "set_eq",
+      "deck": 0,
+      "low": 0.0,
+      "mid": 0.0,
+      "high": 0.0
+    }
+  },
+  {
+    "type": "set_filter",
+    "example": {
+      "type": "set_filter",
+      "deck": 0,
+      "amount": 0.0
+    }
+  },
+  {
+    "type": "set_crossfader",
+    "example": {
+      "type": "set_crossfader",
+      "position": 0.0
+    }
+  },
+  {
+    "type": "set_master_gain",
+    "example": {
+      "type": "set_master_gain",
+      "gain": 0.0
+    }
+  },
+  {
+    "type": "set_cue_mix",
+    "example": {
+      "type": "set_cue_mix",
+      "mix": 0.0
+    }
+  },
+  {
+    "type": "set_cue_gain",
+    "example": {
+      "type": "set_cue_gain",
+      "gain": 0.0
+    }
+  },
+  {
+    "type": "set_headphone_cue",
+    "example": {
+      "type": "set_headphone_cue",
+      "deck": 0,
+      "enabled": false
+    }
+  },
+  {
+    "type": "set_fx",
+    "example": {
+      "type": "set_fx",
+      "deck": 0,
+      "echo": 0.0,
+      "reverb": 0.0
+    }
+  },
+  {
+    "type": "set_bpm",
+    "example": {
+      "type": "set_bpm",
+      "deck": 0,
+      "bpm": 120.0
+    }
+  },
+  {
+    "type": "set_beatgrid",
+    "example": {
+      "type": "set_beatgrid",
+      "deck": 0,
+      "offset_seconds": 0.0
+    }
+  },
+  {
+    "type": "cancel_ramps",
+    "example": {
+      "type": "cancel_ramps"
+    }
+  },
+  {
+    "type": "ramp",
+    "example": {
+      "type": "ramp",
+      "target": {
+        "type": "crossfader"
+      },
+      "value": 1.0,
+      "seconds": 1.0,
+      "clock": null,
+      "beats": null,
+      "quantize": null
+    }
+  }
+]

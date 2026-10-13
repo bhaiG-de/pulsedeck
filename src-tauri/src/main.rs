@@ -1,12 +1,14 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod audio_preferences;
+mod control;
 mod controller;
 mod library;
 mod spotify;
 mod spotify_analysis;
 mod spotify_decks;
 mod spotify_vault;
+mod track_inspection;
 
 use deck_engine::{
     AudioDeviceInfo, AudioRouting, AudioStatus, EngineCommand, EngineHandle, EngineSnapshot,
@@ -544,12 +546,27 @@ fn engine_command(
     state: State<'_, AppState>,
     command: EngineCommand,
 ) -> Result<(), String> {
+    engine_command_inner(app, state, command, true, None)
+}
+fn engine_command_inner(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    command: EngineCommand,
+    smart_modes: bool,
+    expected_revision: Option<u64>,
+) -> Result<(), String> {
+    if command
+        .deck()
+        .is_some_and(|d| expected_revision.is_some_and(|r| state.engine.load_revision(d) != r))
+    {
+        return Err("Loaded source revision conflict".into());
+    }
     if let EngineCommand::SetCrossfader { position } = command {
         if !position.is_finite() || !(-1.0..=1.0).contains(&position) {
             return Err("Crossfader position must be between -1 and 1".into());
         }
         let smart = state.controller.lock().map_err(|_| poisoned())?.smart_fader;
-        if smart {
+        if smart && smart_modes {
             controller::handle(
                 &app,
                 flx4_midi::ControllerAction::Knob {
@@ -558,7 +575,7 @@ fn engine_command(
                     raw: ((position + 1.) * 0.5 * 16383.) as u16,
                     value: (position + 1.) * 0.5,
                 },
-            );
+            )?;
             return Ok(());
         }
     }
@@ -567,7 +584,7 @@ fn engine_command(
             return Err("Choose deck 0/1 and a filter amount between -1 and 1".into());
         }
         let smart = state.controller.lock().map_err(|_| poisoned())?.smart_cfx;
-        if smart {
+        if smart && smart_modes {
             controller::handle(
                 &app,
                 flx4_midi::ControllerAction::Knob {
@@ -576,7 +593,7 @@ fn engine_command(
                     raw: ((amount + 1.) * 0.5 * 16383.) as u16,
                     value: (amount + 1.) * 0.5,
                 },
-            );
+            )?;
             return Ok(());
         }
     }
@@ -606,7 +623,14 @@ fn engine_command(
     } else {
         None
     };
-    state.engine.command(command)?;
+    state
+        .engine
+        .command_for_revision(command.clone(), expected_revision)?;
+    state
+        .controller
+        .lock()
+        .map_err(|_| poisoned())?
+        .observe(&command, smart_modes);
     if let Some((mut track, offset)) = manual_grid {
         if track.path.starts_with("spotify:") {
             let previous = state
@@ -868,8 +892,8 @@ async fn choose_sample(
     app: tauri::AppHandle,
     slot: usize,
 ) -> Result<Option<TrackAnalysis>, String> {
-    if slot >= 8 {
-        return Err("Sample slot must be 0 through 7".into());
+    if slot >= 16 {
+        return Err("Sample slot must be 0 through 15".into());
     }
     tauri::async_runtime::spawn_blocking(move || {
         let Some(file) = app
@@ -894,17 +918,24 @@ async fn choose_sample(
 }
 
 #[tauri::command]
-async fn import_rekordbox_xml(app: tauri::AppHandle) -> Result<Vec<TrackRecord>, String> {
+async fn import_rekordbox_xml(
+    app: tauri::AppHandle,
+    path: Option<String>,
+) -> Result<Vec<TrackRecord>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let Some(file) = app
-            .dialog()
-            .file()
-            .add_filter("rekordbox XML", &["xml"])
-            .blocking_pick_file()
-        else {
-            return Ok(vec![]);
+        let path = if let Some(path) = path {
+            std::path::PathBuf::from(path)
+        } else {
+            let Some(file) = app
+                .dialog()
+                .file()
+                .add_filter("rekordbox XML", &["xml"])
+                .blocking_pick_file()
+            else {
+                return Ok(vec![]);
+            };
+            file.into_path().map_err(|e| e.to_string())?
         };
-        let path = file.into_path().map_err(|e| e.to_string())?;
         let xml = library::parse_rekordbox_xml(&path)?;
         let state = app.state::<AppState>();
         if state.import_busy.swap(true, Ordering::AcqRel) {
@@ -1094,21 +1125,46 @@ fn main() {
         }
         return;
     }
+    let mut context = tauri::generate_context!();
+    if std::env::var_os("PULSEDECK_ISOLATED").is_some_and(|v| v == "1") {
+        for window in &mut context.config_mut().app.windows {
+            // A dedicated WKWebView store keeps test UI preferences separate.
+            let mut identifier = [0u8; 16];
+            identifier[..8].copy_from_slice(b"PDTEST01");
+            identifier[8..12].copy_from_slice(&std::process::id().to_be_bytes());
+            window.data_store_identifier = Some(identifier);
+        }
+    }
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            let isolated = std::env::var_os("PULSEDECK_ISOLATED").is_some_and(|v| v == "1");
+            let data_dir = match std::env::var_os("PULSEDECK_DATA_DIR") {
+                Some(path) => std::path::PathBuf::from(path),
+                None if isolated => {
+                    return Err(
+                        std::io::Error::other("Isolated mode requires PULSEDECK_DATA_DIR").into(),
+                    )
+                }
+                None => app.path().app_data_dir()?,
+            };
+            std::fs::create_dir_all(&data_dir)?;
             let (spotify_library, spotify_native) = spotify::SpotifyService::new_pair(
-                app.path().app_data_dir()?.join("spotify.json"),
-                app.path().app_data_dir()?.join("spotify-native.json"),
+                data_dir.join("spotify.json"),
+                data_dir.join("spotify-native.json"),
             )
             .map_err(std::io::Error::other)?;
             app.manage(spotify_library);
             app.manage(spotify_native);
             let engine = Arc::new(EngineHandle::new().map_err(std::io::Error::other)?);
-            let library = Library::open(&app.path().app_data_dir()?.join("library.sqlite3"))
-                .map_err(std::io::Error::other)?;
+            let library =
+                Library::open(&data_dir.join("library.sqlite3")).map_err(std::io::Error::other)?;
             let handle = app.handle().clone();
-            let midi = MidiController::new(move |action| controller::handle(&handle, action));
+            let midi = MidiController::new(move |action| {
+                if let Err(e) = controller::handle(&handle, action) {
+                    handle.state::<AppState>().message(e);
+                }
+            });
             app.manage(AppState {
                 engine: engine.clone(),
                 library: Mutex::new(library),
@@ -1120,18 +1176,22 @@ fn main() {
                 spotify_analysis: spotify_analysis::BatchService::default(),
                 messages: Mutex::new(vec![]),
                 controller: Mutex::new(controller::ControlState::default()),
-                midi_autoconnect: AtomicBool::new(true),
+                midi_autoconnect: AtomicBool::new(!isolated),
                 audio_status: Mutex::new(None),
                 audio_devices: Mutex::new(vec![]),
-                audio_discovering: AtomicBool::new(true),
+                audio_discovering: AtomicBool::new(!isolated),
                 audio_operation: Mutex::new(()),
                 audio_generation: AtomicU64::new(0),
-                audio_preferences_path: app.path().app_data_dir()?.join("audio.json"),
+                audio_preferences_path: data_dir.join("audio.json"),
             });
+            control::start(app.handle()).map_err(std::io::Error::other)?;
             let audio_app = app.handle().clone();
             std::thread::Builder::new()
                 .name("pulsedeck-audio-startup".into())
                 .spawn(move || {
+                    if isolated {
+                        return;
+                    }
                     let audio_devices = deck_engine::devices().unwrap_or_default();
                     let state = audio_app.state::<AppState>();
                     if let Ok(mut cache) = state.audio_devices.lock() {
@@ -1257,7 +1317,14 @@ fn main() {
                             let _ = midi.feedback(feedback);
                         }
                         if let Ok(lib) = state.library.try_lock() {
+                            let mut skip = [false; 2];
                             for (index, deck) in snap.decks.iter().enumerate() {
+                                if snap.load_revisions[index] != source_revisions[index] {
+                                    continue;
+                                }
+                                if skip[index] {
+                                    continue;
+                                }
                                 if let Some(path) = &track_paths[index] {
                                     let value = (
                                         path.clone(),
@@ -1270,14 +1337,54 @@ fn main() {
                                     let same_track = previous[index]
                                         .as_ref()
                                         .is_some_and(|old| old.0 == value.0);
-                                    if same_track && previous[index].as_ref() != Some(&value) {
-                                        let _ = lib.metadata(
-                                            &value.0,
-                                            None,
-                                            Some(value.1.to_vec()),
-                                            None,
-                                        );
-                                        let _ = lib.memory(&value.0, &value.2, value.3);
+                                    let cue_changed = previous[index].as_ref().is_some_and(|old| {
+                                        old.1 != value.1 || old.2 != value.2 || old.3 != value.3
+                                    });
+                                    if same_track && cue_changed {
+                                        let saved =
+                                            lib.source_cues(path).and_then(|(_, mut cues)| {
+                                                cues.hot_cues = value.1;
+                                                cues.update_memory(value.2);
+                                                cues.cue_seconds = value.3;
+                                                lib.save_source_cues(path, &cues, None)
+                                            });
+                                        if let Err(error) = saved {
+                                            state.message(format!(
+                                                "Cue persistence failed: {error}"
+                                            ));
+                                        } else {
+                                            let other = 1 - index;
+                                            if track_paths[other].as_ref() == Some(path) {
+                                                let update = state
+                                                    .engine
+                                                    .command(EngineCommand::RestoreHotCues {
+                                                        deck: other,
+                                                        cues: value.1,
+                                                    })
+                                                    .and_then(|()| {
+                                                        state.engine.command(
+                                                            EngineCommand::RestoreMemoryCues {
+                                                                deck: other,
+                                                                cues: value.2,
+                                                            },
+                                                        )
+                                                    })
+                                                    .and_then(|()| {
+                                                        state.engine.command(
+                                                            EngineCommand::SetCuePoint {
+                                                                deck: other,
+                                                                seconds: value.3,
+                                                            },
+                                                        )
+                                                    });
+                                                if let Err(e) = update {
+                                                    state.message(e);
+                                                } else {
+                                                    previous[other] = Some(value.clone());
+                                                    skip[other] = true;
+                                                }
+                                            }
+                                        }
                                     }
                                     previous[index] = Some(value);
                                 }
@@ -1288,6 +1395,9 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            control::control_request,
+            control::ui_reply,
+            control::ui_publish,
             get_app_state,
             get_engine_snapshot,
             get_engine_transport,
@@ -1343,6 +1453,6 @@ fn main() {
             spotify::spotify_native_begin_login,
             spotify::spotify_native_disconnect
         ])
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("PulseDeck could not start");
 }

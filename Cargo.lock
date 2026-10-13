@@ -496,6 +496,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
 
 [[package]]
+name = "control-protocol"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cookie"
 version = "0.18.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -812,6 +822,7 @@ dependencies = [
  "audio-analysis",
  "cpal",
  "rtrb",
+ "schemars 0.8.22",
  "serde",
  "serde_json",
  "symphonia",
@@ -1183,6 +1194,7 @@ version = "0.1.0"
 dependencies = [
  "crossbeam-channel",
  "midir",
+ "schemars 0.8.22",
  "serde",
 ]
 
@@ -3580,6 +3592,7 @@ version = "0.1.0"
 dependencies = [
  "audio-analysis",
  "base64 0.22.1",
+ "control-protocol",
  "deck-engine",
  "flx4-midi",
  "keyring",
@@ -3588,6 +3601,7 @@ dependencies = [
  "rand 0.8.8",
  "reqwest 0.12.28",
  "rusqlite",
+ "schemars 0.8.22",
  "security-framework 3.7.0",
  "serde",
  "serde_json",
@@ -3597,6 +3611,14 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-dialog",
  "url",
+]
+
+[[package]]
+name = "pulsedeck-cli"
+version = "0.1.0"
+dependencies = [
+ "control-protocol",
+ "serde_json",
 ]
 
 [[package]]

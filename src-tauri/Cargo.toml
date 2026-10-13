@@ -8,6 +8,8 @@ edition = "2021"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+control-protocol = { path = "../crates/control-protocol" }
+schemars = "0.8.22"
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }

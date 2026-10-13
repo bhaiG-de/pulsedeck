@@ -8,7 +8,8 @@
     "tauri": "tauri",
     "desktop": "tauri dev",
     "package": "tauri build",
-    "test": "bash tools/rust-env.sh cargo test --workspace"
+    "test": "bash tools/test-all.sh",
+    "cli": "bash tools/rust-env.sh cargo run --quiet -p pulsedeck-cli --"
   },
   "devDependencies": {"@tauri-apps/cli": "^2.9.0"}
 }

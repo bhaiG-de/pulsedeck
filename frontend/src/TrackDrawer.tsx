@@ -6,6 +6,8 @@ import {
   useState,
 } from "react";
 import { X } from "lucide-react";
+import { useControl } from "./control-bridge";
+import { controlNumber } from "./control-state";
 
 /** Nonmodal so tracks can be dragged onto the live decks behind the sheet. */
 export default function TrackDrawer({
@@ -32,6 +34,24 @@ export default function TrackDrawer({
   const gesture = useRef<{ y: number; height: number } | null>(null);
   const [height, setHeight] = useState(70);
   const [dragging, setDragging] = useState(false);
+  useControl(
+    "drawer",
+    {
+      height: (v) => {
+        const n = controlNumber(v, 10, 72);
+        setHeight(n);
+        if (n < 18) onClose();
+      },
+      "height-snap": () =>
+        setHeight(
+          [28, 44, 70].reduce((best, snap) =>
+            Math.abs(snap - height) < Math.abs(best - height) ? snap : best,
+          ),
+        ),
+      close: onClose,
+    },
+    { open, height, dragging },
+  );
   useEffect(() => {
     const element = sheet.current;
     const hadFocus = element?.contains(document.activeElement);

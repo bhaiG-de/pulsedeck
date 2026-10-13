@@ -1,0 +1,4 @@
+interface:
+  display_name: "Track Inspection"
+  short_description: "Inspect track evidence and prepare cue candidates"
+  default_prompt: "Use $pulsedeck-track-inspection to handle the requested PulseDeck task through the CLI and verify the result."

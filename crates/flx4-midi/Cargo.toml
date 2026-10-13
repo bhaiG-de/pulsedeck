@@ -6,6 +6,7 @@ license = "MIT"
 description = "Independently authored DDJ-FLX4 public MIDI profile and native adapter"
 
 [dependencies]
+schemars = "0.8.22"
 midir = "0.10"
 serde = { version = "1", features = ["derive"] }
 crossbeam-channel = "0.5"
