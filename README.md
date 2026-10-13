@@ -70,7 +70,7 @@ Audio output is independent of MIDI: MacBook speakers are the initial output and
 
 ## Interface and controller browsing
 
-The performance view fills the window with a responsive grid: header, stacked waveforms, decks/mixer and library footer. The dark instrument theme continues through library tables, drawers, settings, analysis popovers and notifications. Only library and settings content scroll.
+The performance view fills the window with a responsive grid: header, stacked waveforms, decks/mixer and library footer. Settings → Appearance offers Hardware Dark, Anatomy Light and Anatomy Dark. Shared semantic tokens style the decks, mixer, library tables, drawers, settings, analysis popovers and notifications. Themes apply immediately, persist locally across restarts and preserve the three-band waveform colors. Anatomy palettes are adapted from [Anatomy](https://skills.wheresryan.sh/anatomy). Only library and settings content scroll.
 
 Turn the browse knob on the main view to focus the library footer. Press to open playlists, press again to enter songs, then press to return through playlists and the close control. Press the close control to return to the footer. Turning on playlists starts a fresh inward selection path. Shift/Back moves outward one level.
 

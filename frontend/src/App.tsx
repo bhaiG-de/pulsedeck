@@ -55,6 +55,13 @@ import {
 import { BAND_COLORS, HOT_CUE_COLORS } from "./waveform-data";
 import SpotifyPanel, { type SpotifyTrack } from "./SpotifyPanel";
 import {
+  THEMES,
+  applyTheme,
+  readTheme,
+  saveTheme,
+  type ThemeId,
+} from "./theme";
+import {
   browseIndex,
   isBrowserAction,
   isInstantDouble,
@@ -1269,6 +1276,11 @@ function Mixer({
   );
 }
 export default function App() {
+  const [theme, setTheme] = useState<ThemeId>(readTheme);
+  useEffect(() => {
+    applyTheme(theme);
+    saveTheme(theme);
+  }, [theme]);
   const [smartModes, setSmartModes] = useState<AppState["smart_modes"]>();
   const [recording, setRecording] = useState<RecordingStatus>({});
   const [sourceJobs, setSourceJobs] = useState<
@@ -2808,7 +2820,14 @@ export default function App() {
               </button>
             </div>
             <div className="settings-tabs">
-              {["audio", "midi", "library", "spotify", "roadmap"].map((t) => (
+              {[
+                "appearance",
+                "audio",
+                "midi",
+                "library",
+                "spotify",
+                "roadmap",
+              ].map((t) => (
                 <button
                   key={t}
                   className={settingsTab === t ? "selected" : ""}
@@ -2821,6 +2840,92 @@ export default function App() {
               ))}
             </div>
             <div className="settings-body">
+              {settingsTab === "appearance" && (
+                <section
+                  className="appearance-settings"
+                  aria-label="Appearance"
+                >
+                  <div className="settings-section-title">
+                    <Disc3 size={18} />
+                    <div>
+                      <h3>Instrument theme</h3>
+                      <p>
+                        Changes apply immediately and restore when you reopen
+                        PulseDeck.
+                      </p>
+                    </div>
+                  </div>
+                  <div
+                    className="theme-options"
+                    role="radiogroup"
+                    aria-label="Application theme"
+                  >
+                    {THEMES.map((option) => (
+                      <button
+                        key={option.id}
+                        role="radio"
+                        aria-checked={theme === option.id}
+                        tabIndex={theme === option.id ? 0 : -1}
+                        onKeyDown={(event) => {
+                          const direction = [
+                            "ArrowRight",
+                            "ArrowDown",
+                          ].includes(event.key)
+                            ? 1
+                            : ["ArrowLeft", "ArrowUp"].includes(event.key)
+                              ? -1
+                              : 0;
+                          if (
+                            !direction &&
+                            event.key !== "Home" &&
+                            event.key !== "End"
+                          )
+                            return;
+                          event.preventDefault();
+                          const index = THEMES.findIndex(
+                            (item) => item.id === option.id,
+                          );
+                          const next =
+                            event.key === "Home"
+                              ? THEMES[0]
+                              : event.key === "End"
+                                ? THEMES[THEMES.length - 1]
+                                : THEMES[
+                                    (index + direction + THEMES.length) %
+                                      THEMES.length
+                                  ];
+                          setTheme(next.id);
+                          event.currentTarget.parentElement
+                            ?.querySelector<HTMLButtonElement>(
+                              `[data-theme="${next.id}"]`,
+                            )
+                            ?.focus();
+                        }}
+                        data-theme={option.id}
+                        className={`theme-option ${theme === option.id ? "is-selected" : ""}`}
+                        onClick={() => setTheme(option.id)}
+                      >
+                        <span className="theme-preview" aria-hidden="true">
+                          <i />
+                          <i />
+                          <i />
+                          <b />
+                        </span>
+                        <span>
+                          <strong>{option.name}</strong>
+                          <small>{option.description}</small>
+                        </span>
+                        {theme === option.id && <Check size={16} />}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="help-text">
+                    Anatomy uses a palette of shaded surfaces and engraved
+                    lines. Frequency bands and cue colors stay consistent across
+                    themes.
+                  </p>
+                </section>
+              )}
               {settingsTab === "audio" && (
                 <>
                   <div className="settings-section-title">

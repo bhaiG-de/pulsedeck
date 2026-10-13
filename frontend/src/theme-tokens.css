@@ -1,0 +1,358 @@
+/* Application semantic tokens. Components consume roles, never a theme's palette. */
+:root,
+[data-theme="hardware-dark"] {
+  --color-app-bg: #131313;
+  --color-panel: #272727;
+  --color-case-top: #373737;
+  --color-well: #171717;
+  --color-control-top: #454545;
+  --color-control-bottom: #323232;
+  --color-hover: #505050;
+  --color-border: #505050;
+  --color-edge: #696969;
+  --color-text-strong: #efefeb;
+  --color-text: #d4d4cd;
+  --color-text-muted: #a6a6a0;
+  --color-ink: #191919;
+  --color-key-top: #efefea;
+  --color-key-bottom: #b4b4b4;
+  --color-accent: #ff8a3d;
+  --color-accent-text: #ffae77;
+  --color-accent-top: #ed8b43;
+  --color-accent-bottom: #c96728;
+  --color-deck-a: #ff8a3d;
+  --color-deck-b: #79cbd0;
+  --color-selected: #3b342f;
+  --color-focus-halo: #ff8a3d18;
+  --color-success: #a7c8a8;
+  --color-success-bg: #292f28;
+  --color-error: #ebc3b9;
+  --color-error-bg: #342727;
+  --color-warning: #e0b48a;
+  --color-track: #0d0e0e;
+  --color-backdrop: #080808b8;
+  --color-grain: #ffffff05;
+  --color-waveform: #080b0f;
+  --material-highlight: #ffffff15;
+  --material-shadow: #00000055;
+  --material-metal-highlight: #e0e0e066;
+  --material-glow: #e0e0e02b;
+  --font-label: "Space Grotesk", sans-serif;
+  --radius-panel: 5px;
+}
+
+/* Anatomy palette, adapted from https://skills.wheresryan.sh/anatomy.
+   All 26 source tokens remain available to future themed components. */
+[data-theme="anatomy-light"] {
+  color-scheme: light;
+  --anatomy-card: #fbfbfa;
+  --anatomy-paper: #fbfbfa;
+  --anatomy-top: #ffffff;
+  --anatomy-shade-0: #dcdcd9;
+  --anatomy-shade-1: #e5e5e2;
+  --anatomy-shade-2: #ededea;
+  --anatomy-shade-3: #f4f4f1;
+  --anatomy-face: #ffffff;
+  --anatomy-lit-top: #ffffff;
+  --anatomy-lit-shade: #eeeeeb;
+  --anatomy-hi: #26262a;
+  --anatomy-mid: #8a8a8f;
+  --anatomy-lo: #b4b4b8;
+  --anatomy-faint: #d4d4d6;
+  --anatomy-dot: #3a3a3e;
+  --anatomy-halo: #8a8a80;
+  --anatomy-lit: #000000;
+  --anatomy-red: #e5484d;
+  --anatomy-green: #30a46c;
+  --anatomy-blue: #3e63dd;
+  --anatomy-text: #57575a;
+  --anatomy-muted: #8c8c90;
+  --anatomy-strong: #18181a;
+  --anatomy-weight: 0.6px;
+  --anatomy-halo-opacity: 0.32;
+  --anatomy-mono: ui-monospace;
+  --color-border: var(--anatomy-lo);
+  --color-edge: var(--anatomy-mid);
+  --color-accent: #3e63dd;
+  --color-accent-text: #3151b8;
+  --color-accent-top: #6d89e5;
+  --color-accent-bottom: #3e63dd;
+  --color-deck-a: #ad560b;
+  --color-deck-b: #08767d;
+  --color-ink: #ffffff;
+  --color-key-top: #ffffff;
+  --color-key-bottom: #e5e5e2;
+  --color-success: #237a50;
+  --color-error: #b52b35;
+  --color-warning: #8b591b;
+  --color-track: #b4b4b8;
+  --material-highlight: #ffffffa0;
+  --material-shadow: #26262a18;
+  --material-metal-highlight: #ffffffcc;
+}
+[data-theme="anatomy-dark"] {
+  color-scheme: dark;
+  --anatomy-card: #131313;
+  --anatomy-paper: #131313;
+  --anatomy-top: #1c1c1c;
+  --anatomy-shade-0: #0f0f0f;
+  --anatomy-shade-1: #121212;
+  --anatomy-shade-2: #151515;
+  --anatomy-shade-3: #181818;
+  --anatomy-face: #1b1b1b;
+  --anatomy-lit-top: #262626;
+  --anatomy-lit-shade: #1d1d1d;
+  --anatomy-hi: #d4d4d4;
+  --anatomy-mid: #6a6a6a;
+  --anatomy-lo: #3e3e3e;
+  --anatomy-faint: #2a2a2a;
+  --anatomy-dot: #e6e6e6;
+  --anatomy-halo: #050505;
+  --anatomy-lit: #ffffff;
+  --anatomy-red: #ff6b6b;
+  --anatomy-green: #6be0a0;
+  --anatomy-blue: #6b9bff;
+  --anatomy-text: #a3a3a3;
+  --anatomy-muted: #6e6e6e;
+  --anatomy-strong: #e6e6e6;
+  --anatomy-weight: 0.6px;
+  --anatomy-halo-opacity: 0.9;
+  --anatomy-mono: ui-monospace;
+  --color-border: var(--anatomy-lo);
+  --color-edge: var(--anatomy-mid);
+  --color-accent: #6b9bff;
+  --color-accent-text: #9abaff;
+  --color-accent-top: #91b4ff;
+  --color-accent-bottom: #6b9bff;
+  --color-deck-a: #ffb46b;
+  --color-deck-b: #82d8db;
+  --color-ink: #131313;
+  --color-key-top: #d4d4d4;
+  --color-key-bottom: #a3a3a3;
+  --color-success: #6be0a0;
+  --color-error: #ff9ba0;
+  --color-warning: #d5b988;
+  --color-track: #0f0f0f;
+  --material-highlight: #ffffff0c;
+  --material-shadow: #00000080;
+  --material-metal-highlight: #ffffff30;
+}
+[data-theme^="anatomy-"] {
+  --color-app-bg: var(--anatomy-paper);
+  --color-panel: var(--anatomy-shade-3);
+  --color-case-top: var(--anatomy-face);
+  --color-well: var(--anatomy-shade-1);
+  --color-control-top: var(--anatomy-lit-top);
+  --color-control-bottom: var(--anatomy-lit-shade);
+  --color-hover: var(--anatomy-top);
+  --color-text-strong: var(--anatomy-strong);
+  --color-text: var(--anatomy-text);
+  /* Source muted is intentionally faint; use text for small functional labels. */
+  --color-text-muted: var(--anatomy-text);
+  --color-selected: color-mix(
+    in srgb,
+    var(--color-accent) 12%,
+    var(--anatomy-face)
+  );
+  --color-focus-halo: color-mix(in srgb, var(--color-accent) 14%, transparent);
+  --color-success-bg: color-mix(
+    in srgb,
+    var(--color-success) 8%,
+    var(--anatomy-paper)
+  );
+  --color-error-bg: color-mix(
+    in srgb,
+    var(--color-error) 8%,
+    var(--anatomy-paper)
+  );
+  --color-grain: transparent;
+  --material-glow: transparent;
+  --font-label: var(--anatomy-mono), monospace;
+  --radius-panel: 3px;
+}
+
+/* Legacy components use these aliases while adopting semantic roles. */
+:root {
+  --amber: var(--color-deck-a);
+  --cyan: var(--color-deck-b);
+  --muted: var(--color-text-muted);
+}
+.app-shell {
+  --line: var(--color-border);
+  --muted: var(--color-text-muted);
+  --panel: var(--color-panel);
+  --glass: var(--color-well);
+  --accent: var(--color-accent);
+  color: var(--color-text);
+}
+.app-shell :is(.deck, .mixer) {
+  border-radius: var(--radius-panel);
+}
+.app-shell :is(button, input, select):focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+.app-shell
+  :is(
+    .topbar,
+    .settings-tabs,
+    .browser-pane-heading,
+    .preview-caption,
+    .deck-footer,
+    .statusbar
+  ) {
+  font-family: var(--font-label);
+}
+.app-shell .settings-tabs {
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+.app-shell .settings-tabs button {
+  white-space: nowrap;
+}
+.app-shell .stacked-waveforms :is(.waveform-lane, .deck-waveform) {
+  background: var(--color-waveform);
+}
+.app-shell .topbar :is(.icon-button, .quiet-button, select),
+.app-shell :is(.grid-pill, .range-pill) {
+  color: var(--color-text);
+  background: var(--color-control-bottom);
+  border-color: var(--color-border);
+}
+.app-shell .brand-mark {
+  color: var(--color-ink);
+}
+/* Neutral metallic keys need their own foreground in the light palette. */
+[data-theme="anatomy-light"]
+  .app-shell
+  :is(.import-button, .transport .play, .drawer-footer > button),
+[data-theme="anatomy-light"] .performance-area .deck-badge {
+  color: var(--anatomy-strong);
+}
+[data-theme="anatomy-light"] .performance-area .deck-badge {
+  background: var(--anatomy-top);
+}
+
+.theme-options {
+  display: grid;
+  gap: 12px;
+  margin: 20px 0;
+}
+.app-shell .settings-body .theme-option {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr) 20px;
+  align-items: center;
+  gap: 16px;
+  padding: 12px;
+  text-align: left;
+  /* Each card previews its own palette; selection uses the current app accent. */
+  background: linear-gradient(var(--color-control-top), var(--color-panel));
+  color: var(--color-text-strong);
+  border: 1px solid var(--line);
+  box-shadow: none;
+}
+.app-shell .settings-body .theme-option:hover:not(:disabled) {
+  background: linear-gradient(var(--color-hover), var(--color-panel));
+}
+.app-shell .theme-option.is-selected {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.theme-option > span:nth-child(2) {
+  display: grid;
+  gap: 5px;
+}
+.theme-option strong {
+  font-size: 14px;
+  font-weight: 500;
+}
+.theme-option small {
+  font-size: 11px;
+  line-height: 1.5;
+  opacity: 0.8;
+}
+.theme-option > svg {
+  color: var(--accent);
+}
+.theme-preview {
+  display: grid;
+  grid-template-columns: 1fr 12px 1fr;
+  grid-template-rows: 14px 30px;
+  gap: 5px;
+  padding: 8px;
+  background: var(--color-panel);
+  border: 1px solid var(--color-edge);
+  border-radius: 3px;
+}
+.theme-preview i:first-child {
+  grid-column: 1 / -1;
+  background: var(--color-well);
+  border-top: 2px solid var(--color-accent);
+}
+.theme-preview i:nth-child(2),
+.theme-preview b {
+  border-radius: 50%;
+  background: linear-gradient(
+    135deg,
+    var(--color-control-top),
+    var(--color-well)
+  );
+  border: 1px solid var(--color-edge);
+}
+.theme-preview i:nth-child(3) {
+  background: var(--color-control-bottom);
+}
+
+.app-shell .connected {
+  color: var(--color-success) !important;
+}
+.app-shell :is(.connected .tiny-dot, .tiny-dot.live) {
+  background: var(--color-success);
+}
+.app-shell
+  :is(
+    .connection-chip,
+    .controller-chip,
+    .source-select,
+    .linked-zoom span,
+    .linked-zoom .reset-wave-zoom,
+    .waveform-alignment,
+    .snap-seek,
+    .spotify-analysis-toolbar small
+  ) {
+  color: var(--color-text-muted);
+}
+.app-shell .phase-gauge {
+  border-color: var(--color-border);
+}
+.app-shell .phase-center {
+  background: var(--color-text);
+}
+.app-shell .phase-dot {
+  background: var(--color-warning);
+}
+.app-shell .phase-dot.aligned {
+  background: var(--color-success);
+}
+.app-shell .tempo-difference {
+  border-color: var(--color-border);
+}
+.app-shell .snap-seek.enabled {
+  color: var(--color-accent-text);
+  background: var(--color-selected);
+  border-color: var(--color-accent);
+}
+.app-shell .controller-fx-status b {
+  color: var(--color-text-strong);
+}
+.app-shell :is(.spotify-analysis-error, .import-errors) {
+  color: var(--color-error);
+}
+.app-shell .cached-tempo small {
+  color: var(--color-warning);
+}
+.app-shell .pads button.set[style] {
+  background: color-mix(in srgb, var(--cue-color) 14%, var(--color-panel));
+  border-color: color-mix(in srgb, var(--cue-color) 55%, var(--color-border));
+  border-bottom-color: var(--cue-color);
+}
