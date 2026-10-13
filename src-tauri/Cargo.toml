@@ -1,0 +1,31 @@
+[package]
+name = "pulsedeck"
+version = "0.1.0"
+description = "Native Rust DJ performance engine and Tauri desktop interface"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+quick-xml = { version = "0.37", features = ["serialize"] }
+url = "2"
+deck-engine = { path = "../crates/deck-engine" }
+audio-analysis = { path = "../crates/audio-analysis" }
+flx4-midi = { path = "../crates/flx4-midi" }
+spotify-playback = { path = "../crates/spotify-playback" }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+sha2 = "0.10"
+base64 = "0.22"
+rand = "0.8"
+keyring = { version = "3", features = ["apple-native"] }
+open = "5"
+
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3.7.0"

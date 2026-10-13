@@ -1,0 +1,10 @@
+[package]
+name = "audio-analysis"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Bounded offline tempo, tonal key and frequency-band waveform analysis"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+rustfft = "6.4.1"

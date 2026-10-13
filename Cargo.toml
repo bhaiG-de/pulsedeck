@@ -1,0 +1,12 @@
+[workspace]
+members = ["crates/deck-engine", "crates/flx4-midi", "crates/audio-analysis", "crates/spotify-playback", "src-tauri"]
+resolver = "2"
+exclude = ["vendor/cpal"]
+
+[patch.crates-io]
+cpal = { path = "vendor/cpal" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"

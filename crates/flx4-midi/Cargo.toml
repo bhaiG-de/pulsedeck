@@ -1,0 +1,11 @@
+[package]
+name = "flx4-midi"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Independently authored DDJ-FLX4 public MIDI profile and native adapter"
+
+[dependencies]
+midir = "0.10"
+serde = { version = "1", features = ["derive"] }
+crossbeam-channel = "0.5"

@@ -1,0 +1,19 @@
+# DDJ-FLX4 MIDI adapter
+
+Independently authored protocol profile based on AlphaTheta's public DDJ-FLX4 MIDI message list v1.0 (`research/flx4-reference/DDJ-FLX4_MIDI_message_List_E1.pdf`). It uses `midir`, which uses CoreMIDI on macOS. No custom kernel driver, copied vendor CSV, SysEx configuration, or undocumented selector is included.
+
+- `list_ports()` discovers exact input/output names. Names must be unique. The adapter never opens a port automatically.
+- `MidiController::new(callback)` stores an application command callback. `connect(input_name, optional_output_name)`, `disconnect()` and `reconnect()` manage handles. A selected output enables feedback but sends nothing until `feedback()` or explicit `set_vinyl_mode()`.
+- CoreMIDI callbacks copy into a fixed 64-byte packet and enqueue using `try_send` into a bounded 2048-message queue. A dedicated worker parses the controls, calls application commands, captures the latest 256 raw packets, and sends LEDs. The application callback should submit engine commands rather than perform slow work.
+- `Flx4Parser::feed()` replays captured packets without attached hardware. Deck and pad indexes are zero-based. Rotary jog values preserve signed counts around 64. The browser uses the separate signed 7-bit encoding. High-resolution knobs emit only once their documented MSB/LSB pair is complete, retaining the 14-bit raw value and normalized float.
+- Shifted note identifiers and pad MIDI channels are distinct. Mode-specific pad messages determine pad mode directly; selecting a mode does not reinterpret unrelated received messages.
+- `FeedbackSnapshot` provides transport, cue, sync/master, looping, headphone cue, mode buttons, eight hot-cue LEDs and channel meters. Meter scale is normalized display policy, not a measured dB calibration. Public loaded illumination is an edge-triggered pulse. Feedback is queued, deduplicated and sent off the CoreMIDI/audio callback.
+- `status()` reports open connections, counters, parser mode, output errors. `connected` means an OS handle is open; it cannot prove a USB device remains physically present. Refresh ports and reconnect explicitly after plugging/unplugging. Dropped-message count is visible; overflow may miss controls and must be checked during hardware stress tests.
+
+Normal loop half/double note values 0x12/0x13 are corroborated by shipped controller declarations and their behavior by the official hardware diagram, though they are omitted from the public MIDI sheet. Hardware observation remains necessary. Shifted memory left/right deletes/saves a cue, long SYNC press sets master, and shifted SYNC selects tempo range; no unsupported master LED write is emitted.
+
+The official PDF contains an FX-depth mismatch between the decimal channel and status. This implementation follows documented status B4 and supports B5 for bank 2, corroborated by shipped rekordbox declarations. The public PDF assigns shifted tempo to the same CC pair as normal tempo; the shipped mapping also names a CC5 alternate. This adapter follows the public pair until hardware captures resolve that difference. BEAT SYNC emits only on physical release according to the official footnote, so a received sync message is treated as one trigger regardless of velocity.
+
+Mapped events are an application contract, not a claim that every advanced feature is implemented. Sampler, keyboard, key shift, Pad FX and smart-feature buttons produce typed commands for the application. No controller was detected during development; endpoint enumeration and physical controls/LEDs remain unvalidated until the user resolves USB recognition.
+
+Run `bash tools/rust-env.sh cargo test -p flx4-midi` from the project root. Tests cover full 14-bit values, control/deck routing, touch/scratch/bend, pad mode/channel/shift/release distinction, sync semantics, browser encoding, malformed packets and documented LED messages.

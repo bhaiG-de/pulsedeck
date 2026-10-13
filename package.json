@@ -1,0 +1,14 @@
+{
+  "name": "pulsedeck",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build",
+    "tauri": "tauri",
+    "desktop": "tauri dev",
+    "package": "tauri build",
+    "test": "bash tools/rust-env.sh cargo test --workspace"
+  },
+  "devDependencies": {"@tauri-apps/cli": "^2.9.0"}
+}

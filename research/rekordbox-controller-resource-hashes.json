@@ -1,0 +1,80 @@
+{
+  "evidence_type": "shell filesystem observations; not REA Evidence",
+  "resources": [
+    {
+      "path": "/Applications/rekordbox 7/rekordbox.app/Contents/Resources/MidiMappings/DDJ-FLX4.midi.csv",
+      "size_bytes": 17540,
+      "sha256": "f0ad95f8bd843bcec42e4de0041fd6f847cb86b1b7d0001270cb838c2a05ba09"
+    },
+    {
+      "path": "/Applications/rekordbox 7/rekordbox.app/Contents/Resources/locale/spanish.lang",
+      "size_bytes": 549041,
+      "sha256": "8d94af21955a568b03290eb1cc3b5d1885c92057b6102246d82d0c1244db9374"
+    },
+    {
+      "path": "/Applications/rekordbox 7/rekordbox.app/Contents/Resources/locale/english.lang",
+      "size_bytes": 741,
+      "sha256": "0659c9dc8b0e2054899d330eb8cad3daed967237a0d9ee26b64dc658587881ef"
+    },
+    {
+      "path": "/Applications/rekordbox 7/rekordbox.app/Contents/Resources/pad/Mode.pad.csv",
+      "size_bytes": 3072,
+      "sha256": "2012a0d2e3ddb2eaab6a079a6aa0e83fb045673ad3ca56c050204addfd4af031"
+    },
+    {
+      "path": "/Applications/rekordbox 7/rekordbox.app/Contents/Resources/pad/PadFx1.pad.csv",
+      "size_bytes": 391,
+      "sha256": "1310da58ca738b201e8f3315a657f50a6355d9f6ad2424d9b007722264d1032f"
+    },
+    {
+      "path": "/Applications/rekordbox 7/rekordbox.app/Contents/Resources/pad/PadFx2.pad.csv",
+      "size_bytes": 391,
+      "sha256": "870ed3eed370c8e2d63b357885ac42ec7938939312ead11e02f8f3741ca4d40d"
+    },
+    {
+      "path": "/Applications/rekordbox 7/rekordbox.app/Contents/Resources/pad/BeatJump.pad.csv",
+      "size_bytes": 1076,
+      "sha256": "794d56c353d7c9d8ac6c4177f346aa58eefc24fd7631f42c1ccb5c8d0d657cef"
+    },
+    {
+      "path": "/Applications/rekordbox 7/rekordbox.app/Contents/Resources/pad/BeatLoop.pad.csv",
+      "size_bytes": 440,
+      "sha256": "dc5b056ef9c51aa6a1f2cfa288a6d8356dcc04f03c0dfccde678b731ffe55ebb"
+    },
+    {
+      "path": "/Applications/rekordbox 7/rekordbox.app/Contents/Resources/pad/Keyboard.pad.csv",
+      "size_bytes": 431,
+      "sha256": "94f597b9ae1a86e2247df2b859440a2eea38ef467b37cf731360a1cf803f441d"
+    },
+    {
+      "path": "/Applications/rekordbox 7/rekordbox.app/Contents/Resources/pad/KeyShift.pad.csv",
+      "size_bytes": 1054,
+      "sha256": "5b46b1ddaca75c8bdd176afbc51b9d4a61cd182a27c962431caf72a83a600ca3"
+    },
+    {
+      "path": "/Applications/rekordbox 7/rekordbox.app/Contents/Resources/pad/Stems.pad.csv",
+      "size_bytes": 249,
+      "sha256": "8681d70fc353f31e94bcf85f8d862ddca3e510dd232810819405430ccb7d5f84"
+    },
+    {
+      "path": "/Applications/rekordbox 7/rekordbox.app/Contents/Resources/product.db",
+      "size_bytes": 24576,
+      "sha256": "2adbe76870948257ec6b5cf50ce14e73dd8b3c1f67d746e38bd59bb6789e623e"
+    },
+    {
+      "path": "/Applications/rekordbox 7/rekordbox.app/Contents/Resources/master.db",
+      "size_bytes": 4096,
+      "sha256": "1189720ca094b3d53d468933a7791ed23464fc5e70bf74a01b265670e435ce1f"
+    },
+    {
+      "path": "/Applications/rekordbox 7/rekordbox.app/Contents/Resources/MERGE FX.zip",
+      "size_bytes": 11031543,
+      "sha256": "2914fdb9007b0ba0ca50ab21794d2eab1d6efe866c2f6f029281af1c216377c7"
+    },
+    {
+      "path": "/Applications/rekordbox 7/rekordbox.app/Contents/Resources/skins/simplemixer.xml",
+      "size_bytes": 19336,
+      "sha256": "2d9b579d471716ba4bb0cb7f42af80a0ff1837b7a0a5c83c0200033b0aba4e56"
+    }
+  ]
+}

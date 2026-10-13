@@ -1,0 +1,15 @@
+[package]
+name = "deck-engine"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+symphonia = { version = "0.5", features = ["all"] }
+cpal = "0.15.3"
+rtrb = "0.3"
+audio-analysis = { path = "../audio-analysis" }
+
+[dev-dependencies]
+serde_json = "1"

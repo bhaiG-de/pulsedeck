@@ -1,0 +1,946 @@
+/* Charcoal instrument enclosure, glass readouts and raised mechanical keys. */
+:root {
+  --amber: #ff782d;
+  --cyan: #6bd0d2;
+  --muted: #989898;
+}
+body {
+  background: #131313;
+  color: #e5e5e5;
+}
+.app-shell {
+  background: radial-gradient(ellipse at 50% 0, #252525, #131313 75%);
+}
+.app-shell .topbar {
+  background: linear-gradient(#2d2d2d, #222222);
+  border-bottom: 1px solid #464646;
+  box-shadow:
+    inset 0 1px #ffffff0b,
+    0 2px 8px #0006;
+}
+.topbar .brand strong {
+  font-weight: 500;
+  letter-spacing: -1px;
+}
+.topbar .brand-mark {
+  background: #ff782d;
+  color: #1b1b1b;
+  border-radius: 3px;
+}
+.topbar .version {
+  color: #bcbcbc;
+  border-color: #575757;
+  border-radius: 2px;
+}
+.topbar button,
+.topbar select {
+  border-radius: 3px;
+}
+.topbar .import-button {
+  background: #d3d3d3;
+  border-color: #f0f0f0;
+  color: #1f1f1f;
+  box-shadow:
+    inset 0 1px #fff7,
+    0 2px 0 #0b0b0b;
+}
+.app-shell .waveform-tools {
+  background: #2b2b2b;
+  border-color: #4f4f4f;
+}
+.app-shell .stacked-waveforms {
+  border-radius: 4px;
+  border-color: #4c4c4c;
+  box-shadow:
+    0 2px 0 #090909,
+    inset 0 1px #ffffff0c;
+}
+.waveform-tools button {
+  border-radius: 2px;
+  background: #383838;
+  border-color: #5a5a5a;
+}
+.app-shell .performance-area > .deck,
+.app-shell .performance-area > .mixer {
+  background:
+    radial-gradient(#ffffff06 0.6px, transparent 0.9px) 0 0 / 4px 4px,
+    linear-gradient(135deg, #373737, #2b2b2b 55%, #252525);
+  border: 1px solid #565656;
+  border-radius: 5px;
+  box-shadow:
+    inset 0 1px #ffffff19,
+    inset 0 -2px #111111,
+    0 3px 8px #0006;
+}
+.performance-area .deck-0 {
+  --deck-color: #ff8a3d !important;
+}
+.performance-area .deck-1 {
+  --deck-color: #79cbd0 !important;
+}
+.performance-area .deck:before,
+.performance-area .deck:after {
+  content: "";
+  position: absolute;
+  top: 8px;
+  width: 5px;
+  height: 5px;
+  border: 1px solid #151515;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #0f0f0f 43%, #696969 48%, #181818 57%);
+  box-shadow: 0 1px #ffffff18;
+  pointer-events: none;
+}
+.performance-area .deck:before {
+  left: 8px;
+}
+.performance-area .deck:after {
+  right: 8px;
+}
+.performance-area .deck-heading {
+  padding: 10px 15px 6px;
+  gap: 9px;
+}
+.performance-area .deck-heading .deck-badge {
+  border-radius: 2px;
+  background: var(--deck-color);
+  color: #1b1b1b;
+  border: 1px solid color-mix(in srgb, var(--deck-color) 70%, white);
+  font-weight: 600;
+  box-shadow:
+    inset 0 1px #fff4,
+    0 2px 0 #161616;
+}
+.performance-area .track-heading strong {
+  font-weight: 500;
+  color: #efefef;
+}
+.performance-area .track-heading > span {
+  color: #ababab;
+}
+.performance-area .deck-info {
+  margin: 0 12px;
+  padding: 6px 10px;
+  background: linear-gradient(115deg, #232323, #101010 60%);
+  border: 1px solid #0b0b0b;
+  border-top-color: #090909;
+  border-radius: 3px;
+  box-shadow:
+    inset 0 2px 5px #000b,
+    0 1px #ffffff19;
+}
+.performance-area .tempo-readout strong,
+.performance-area .time-readout strong,
+.performance-area .key-readout strong {
+  font-family: "Space Grotesk", monospace;
+  font-weight: 400;
+  letter-spacing: -1px;
+  font-variant-numeric: tabular-nums;
+  color: #ebebeb;
+  text-shadow: 0 0 8px #e0e0e02b;
+}
+.performance-area .tempo-readout strong {
+  color: var(--deck-color);
+  text-shadow: 0 0 9px color-mix(in srgb, var(--deck-color) 25%, transparent);
+}
+.performance-area .key-readout {
+  border-color: #484848;
+}
+.performance-area .tempo-readout > span,
+.performance-area .key-readout > span,
+.performance-area .time-readout > span,
+.performance-area .tempo-readout em {
+  color: #a4a4a4;
+}
+.performance-area .analysis-strip {
+  margin: 3px 12px 0;
+  padding: 3px 0;
+  background: transparent;
+  border: 0;
+}
+.performance-area .analysis-chip {
+  color: #aeaeae;
+}
+.performance-area .analysis-chip.uncertain {
+  color: #c8a570;
+}
+.performance-area .deck-track-preview {
+  padding-top: 3px;
+}
+.performance-area .deck-track-preview .overview {
+  background: #141414;
+  border: 1px solid #131313;
+  box-shadow:
+    inset 0 2px 4px #0008,
+    0 1px #ffffff14;
+  border-radius: 2px;
+  height: clamp(22px, 6cqh, 34px);
+}
+.performance-area .preview-caption {
+  color: #a5a5a5;
+}
+.performance-area .deck-controls {
+  padding: 5px 14px;
+}
+.performance-area .jog {
+  --jog-size: clamp(86px, 22cqh, 130px);
+  width: var(--jog-size);
+  height: var(--jog-size);
+  min-height: var(--jog-size);
+  max-width: none;
+  padding: 5px;
+  border: 1px solid #0b0b0b;
+  background: linear-gradient(
+    145deg,
+    #757575,
+    #393939 30%,
+    #191919 75%,
+    #7a7a7a
+  );
+  box-shadow:
+    0 3px 6px #0008,
+    inset 0 1px #bfbfbf88;
+}
+.performance-area .jog-surface {
+  border: 1px solid #111111;
+  background: repeating-radial-gradient(circle, #2d2d2d 0 1px, #1b1b1b 2px 4px);
+  box-shadow: inset 0 2px 6px #000b;
+}
+.performance-area .jog-center {
+  border: 1px solid #5b5b5b;
+  background: radial-gradient(ellipse at 30% 20%, #3b3b3b, #1c1c1c 70%);
+  box-shadow:
+    inset 0 1px #ffffff0e,
+    0 2px 4px #0008;
+}
+.performance-area .jog-center strong {
+  color: #e4e4e4;
+  font-size: clamp(14px, 3.3cqh, 21px);
+}
+.performance-area .jog-center > span {
+  color: #adadad;
+}
+.performance-area .jog-surface > i {
+  background: transparent;
+  height: 100%;
+  width: 2px;
+}
+.performance-area .jog-surface.touching {
+  border-color: var(--deck-color);
+}
+.performance-area .load-menu > button,
+.performance-area .transport button,
+.performance-area .sync-row button,
+.performance-area .beat-jump button,
+.performance-area .pads button,
+.performance-area .memory-controls button,
+.performance-area .reanalyze-button,
+.performance-area .headphone-button,
+.performance-area .fx-selector {
+  border: 1px solid #141414;
+  border-top-color: #666666;
+  border-radius: 3px;
+  background: linear-gradient(#454545, #323232);
+  box-shadow:
+    inset 0 1px #ffffff15,
+    inset 0 -1px #ffffff06,
+    0 3px 0 #141414,
+    0 4px 5px #0006;
+  color: #dbdbdb;
+}
+.performance-area button:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow:
+    inset 0 2px 4px #0006,
+    0 1px 0 #151515;
+}
+.performance-area button:disabled {
+  opacity: 0.46;
+}
+.performance-area .transport .cue {
+  background: linear-gradient(#ed8b43, #c96728);
+  border-top-color: #ffb47b;
+  color: #191919;
+  font-weight: 700;
+}
+.performance-area .transport .play {
+  background: linear-gradient(#d5d5d5, #b4b4b4);
+  border-top-color: #f2f2f2;
+  color: #1e1e1e;
+}
+.performance-area .transport .play.active {
+  background: linear-gradient(#ff9445, #e5681f);
+  color: #191919;
+}
+.performance-area .master-on,
+.performance-area .sync-on {
+  color: #ff9b54 !important;
+}
+.performance-area .set-cue,
+.performance-area .beat-jump > span,
+.performance-area .range-control > span {
+  color: #a6a6a6;
+}
+.performance-area .controller-pad-mode {
+  color: #c6c6c6;
+  font-size: 7px;
+  letter-spacing: 1px;
+}
+.performance-area .pads-heading {
+  padding-top: 3px;
+  padding-bottom: 4px;
+}
+.performance-area .tabs button {
+  color: #b0b0b0;
+  font-size: 8px;
+}
+.performance-area .tabs button.selected {
+  color: var(--deck-color);
+}
+.performance-area .pads {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 5px 7px;
+  padding-bottom: 9px;
+}
+.performance-area .pads button {
+  height: clamp(28px, 7cqh, 38px);
+  flex-direction: row;
+  justify-content: space-between;
+  padding: 5px 9px;
+}
+.performance-area .pads button > span {
+  color: #e1e1e1;
+  font-size: 13px;
+  font-weight: 400;
+}
+.performance-area .pads button small {
+  color: #a3a3a3;
+  font-size: 7px;
+}
+.performance-area .pads button.set {
+  border-top-color: var(--cue-color, var(--deck-color));
+  box-shadow:
+    inset 0 1px #fff1,
+    0 3px 0 #141414,
+    0 0 7px
+      color-mix(in srgb, var(--cue-color, var(--deck-color)) 20%, transparent);
+}
+.performance-area .deck-footer {
+  background: #262626;
+  border-color: #5a5a5a;
+  border-radius: 0 0 4px 4px;
+}
+.performance-area .deck-footer button {
+  color: #b9b9b9;
+}
+.performance-area .deck-footer select {
+  background: #3a3a3a;
+  border-color: #686868;
+  color: #e4e4e4;
+  border-radius: 2px;
+}
+.performance-area .mixer-title {
+  color: #dadada;
+}
+.performance-area .controller-fx-status {
+  color: #a9a9a9;
+}
+.performance-area .channel .knob {
+  background: linear-gradient(140deg, #696969, #2c2c2c 40%, #1c1c1c);
+  border: 1px solid #151515;
+  box-shadow:
+    inset 0 1px #e0e0e066,
+    0 3px 4px #0008;
+}
+.performance-area .knob:before {
+  border-color: #717171;
+  border-bottom-color: transparent;
+  inset: -3px;
+}
+.performance-area .knob i {
+  background: #eeeeee;
+}
+.performance-area .channel .knob-control > span:last-child {
+  color: #bbbbbb;
+  letter-spacing: 0.5px;
+}
+.performance-area .channel-label {
+  font-family: "Space Grotesk", sans-serif;
+  color: #ff8a3d;
+}
+.performance-area .channel-1 .channel-label {
+  color: #79cbd0;
+}
+.performance-area .master-controls .knob {
+  background: linear-gradient(140deg, #505050, #212121);
+  border-color: #151515;
+  box-shadow:
+    inset 0 1px #e4e4e444,
+    0 2px 3px #0008;
+}
+.performance-area .master-controls .knob-control:first-child .knob {
+  background: linear-gradient(145deg, #ff9c58, #d25b13 75%);
+}
+.performance-area .master-controls .knob-control > span:last-child {
+  color: #bababa;
+}
+.performance-area .crossfader > div {
+  color: #bababa;
+}
+.performance-area .master-controls,
+.performance-area .fx-row {
+  border-top-color: #5e5e5e;
+}
+.performance-area .fx-selector {
+  box-shadow: none;
+  background: #252525;
+  border-top-color: #545454;
+}
+.performance-area input[type="range"] {
+  accent-color: #dbdbdb;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  background: transparent;
+  height: 16px;
+  padding: 0;
+}
+.performance-area input[type="range"]::-webkit-slider-runnable-track {
+  height: 5px;
+  border: 1px solid #555;
+  border-radius: 2px;
+  background: #0d0e0e;
+  box-shadow: inset 0 1px 2px #000b;
+}
+.performance-area input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 19px;
+  height: 12px;
+  margin-top: -4px;
+  border: 1px solid #aaa;
+  border-radius: 2px;
+  background: linear-gradient(#ddd, #aaa 48%, #eee 49%, #bbb 60%, #888);
+  box-shadow: 0 2px 3px #0009;
+}
+.performance-area .range-control.vertical input::-webkit-slider-runnable-track {
+  width: 5px;
+  height: 100%;
+}
+.performance-area .range-control.vertical input::-webkit-slider-thumb {
+  margin-top: 0;
+  margin-left: -8px;
+}
+.performance-area .range-control.vertical input {
+  width: 22px;
+}
+.performance-area .fader-row .range-control.vertical input {
+  height: 100%;
+}
+.performance-area .knob input[type="range"] {
+  height: 32px;
+}
+.app-shell .browser-dock {
+  background: linear-gradient(#2e2e2e, #272727);
+  border-color: #5c5c5c;
+}
+.app-shell .dock-actions button {
+  background: #3a3a3a;
+  border: 1px solid #656565;
+  border-radius: 3px;
+  color: #e0e0e0;
+  box-shadow:
+    inset 0 1px #ffffff11,
+    0 2px 0 #151515;
+}
+.app-shell .statusbar {
+  background: #1a1a1a;
+  color: #989898;
+}
+.app-shell .browser-dock > span {
+  color: #a9a9a9;
+}
+.app-shell .dock-audio {
+  color: #bfbfbf;
+}
+.controller-focused {
+  outline: 2px solid #ff8a3d !important;
+  outline-offset: 3px;
+  box-shadow: 0 0 0 5px #ff8a3d18 !important;
+}
+.track-drawer .controller-focused {
+  background: #3a3a3a;
+  color: #ffb47c;
+}
+.track-drawer .pane-active {
+  box-shadow: inset 0 2px #ff8a3d;
+}
+.track-drawer .pane-active > .browser-pane-heading {
+  color: #ffb47c;
+}
+.track-drawer [data-browser-pane]:focus,
+.track-drawer [data-browser-id]:focus,
+.track-drawer [data-local-collection]:focus {
+  outline: 1px solid #ff8a3d;
+  outline-offset: -2px;
+}
+@media (max-height: 820px) {
+  .performance-area .deck-heading {
+    padding-top: 8px;
+    padding-bottom: 4px;
+  }
+  .performance-area .deck-info {
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+  .performance-area .deck-controls {
+    padding-top: 3px;
+    padding-bottom: 3px;
+  }
+  .performance-area .jog {
+    --jog-size: clamp(84px, 20cqh, 108px);
+  }
+  .performance-area .pads button {
+    height: 28px;
+  }
+}
+
+/* The same instrument materials continue through every supporting surface. */
+.app-shell {
+  --line: #464646;
+  --muted: #a4a4a4;
+  --panel: #2c2c2c;
+  --glass: #151515;
+  --accent: #ff8a3d;
+}
+.app-shell
+  :is(
+    .track-drawer,
+    .settings-modal,
+    .analysis-popover,
+    .dropdown,
+    .grid-editor,
+    .sampler-strip
+  ) {
+  background:
+    radial-gradient(#ffffff05 0.6px, transparent 1px) 0 0 / 4px 4px,
+    linear-gradient(135deg, #353535, #272727);
+  border-color: #565656;
+  color: #dedede;
+  border-radius: 6px;
+  box-shadow:
+    inset 0 1px #ffffff18,
+    0 15px 45px #0009;
+}
+.app-shell .track-drawer {
+  border-radius: 9px 9px 0 0;
+}
+.app-shell .modal-backdrop {
+  background: #080808b8;
+}
+.app-shell
+  :is(
+    .modal-heading,
+    .settings-tabs,
+    .settings-bottom,
+    .routing-block,
+    .transition-presets,
+    .drawer-heading,
+    .drawer-footer,
+    .controller-browser-split,
+    .controller-playlists-pane,
+    .library-toolbar,
+    .library-footer,
+    .spotify-heading
+  ) {
+  border-color: #4b4b4b;
+}
+.app-shell
+  :is(
+    .modal-heading h2,
+    .drawer-heading h2,
+    .library-toolbar h2,
+    .spotify-title h2,
+    .spotify-list-heading h3,
+    .settings-section-title h3,
+    .analysis-popover h4
+  ) {
+  color: #f0efe9;
+  font-weight: 500;
+}
+.app-shell
+  :is(
+    .modal-heading p,
+    .drawer-heading p,
+    .drawer-footer > span,
+    .settings-section-title p,
+    .help-text,
+    .field,
+    .readout,
+    .routing-block h4,
+    .transition-presets h4,
+    .checkbox,
+    .spotify-title p,
+    .spotify-steps,
+    .spotify-loading,
+    .spotify-empty,
+    .analysis-popover p,
+    .analysis-popover h5,
+    .bpm-candidates span,
+    .track-cell span,
+    .library-toolbar > div > span
+  ) {
+  color: #b1b1ab;
+}
+.app-shell .settings-section-title {
+  color: #ff8a3d;
+}
+.app-shell :is(input:not([type="range"]), select, .search, .readout) {
+  background: linear-gradient(#171717, #222222);
+  border-color: #555;
+  border-radius: 3px;
+  color: #e0e0da;
+  box-shadow:
+    inset 0 2px 3px #0007,
+    0 1px #ffffff0c;
+}
+.app-shell .search input {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+.app-shell input::placeholder {
+  color: #85857f;
+}
+.app-shell
+  :is(
+    input[type="checkbox"],
+    input[type="radio"],
+    .spotify-analysis-toolbar input
+  ) {
+  accent-color: #ff8a3d;
+}
+.app-shell
+  :is(
+    .settings-body button,
+    .track-drawer button,
+    .analysis-popover button,
+    .grid-editor button,
+    .dropdown button,
+    .sampler-strip button
+  ) {
+  background: linear-gradient(#414141, #303030);
+  color: #e1e1da;
+  border-color: #171717;
+  border-top-color: #606060;
+  border-radius: 3px;
+  box-shadow:
+    inset 0 1px #ffffff15,
+    0 2px 0 #151515;
+}
+.app-shell
+  :is(
+    .settings-body button,
+    .track-drawer button,
+    .analysis-popover button,
+    .grid-editor button,
+    .dropdown button,
+    .sampler-strip button
+  ):hover:not(:disabled) {
+  background: linear-gradient(#505050, #3b3b3b);
+}
+.app-shell
+  :is(
+    .settings-body button,
+    .track-drawer button,
+    .analysis-popover button,
+    .grid-editor button,
+    .dropdown button,
+    .sampler-strip button
+  ):active:not(:disabled) {
+  box-shadow: inset 0 2px 4px #0008;
+  transform: translateY(1px);
+}
+.app-shell :is(.settings-modal, .track-drawer) .icon-button {
+  background: #252525;
+  color: #bfbfb9;
+  border: 1px solid #525252;
+  border-radius: 3px;
+  box-shadow: none;
+}
+.app-shell .settings-tabs button {
+  background: transparent;
+  color: #adada8;
+  border: 0;
+  border-radius: 0;
+}
+.app-shell .settings-tabs button.selected {
+  color: #ff9b5d;
+  border-bottom: 2px solid #ff8a3d;
+}
+.app-shell
+  :is(
+    .settings-body .import-button,
+    .settings-body .spotify-primary,
+    .drawer-footer > button
+  ) {
+  background: linear-gradient(#efefea, #bdbdb7);
+  border-color: #e5e5dc;
+  color: #20201d;
+}
+.app-shell
+  :is(
+    .device-status,
+    .migration-card,
+    .spotify-setup,
+    .spotify-player-bar,
+    .spotify-widget-card,
+    .analysis-current,
+    .key-candidates > div
+  ) {
+  background: #222;
+  border-color: #515151;
+  border-radius: 4px;
+  color: #bcbcb4;
+  box-shadow: inset 0 1px 3px #0003;
+}
+.app-shell
+  :is(
+    .device-status strong,
+    .migration-card h3,
+    .analysis-current strong,
+    .bpm-candidates strong
+  ) {
+  color: #eeeeea;
+}
+.app-shell
+  :is(
+    .device-status span:not(.tiny-dot),
+    .analysis-current > span,
+    .migration-card p
+  ) {
+  color: #a6a6a0;
+}
+.app-shell .spotify-settings .spotify-setup {
+  background: transparent;
+  box-shadow: none;
+}
+.app-shell :is(.spotify-boundary, .spotify-auth-note) {
+  background: #262626;
+  border-color: #535353;
+  color: #bdbdb5;
+  border-radius: 3px;
+}
+.app-shell .spotify-auth-note {
+  border-left: 3px solid #83bb96;
+}
+.app-shell .spotify-boundary svg {
+  color: #c5c5bd;
+}
+.app-shell :is(.spotify-error, .import-errors, .toast.error) {
+  background: #342727;
+  border-color: #976b61;
+  color: #ebc3b9;
+  border-radius: 4px;
+}
+.app-shell .toast {
+  background: #292b28;
+  border-color: #68765f;
+  color: #d2ddc8;
+  border-radius: 4px;
+}
+.app-shell .toast button {
+  background: transparent;
+  box-shadow: none;
+}
+.app-shell
+  :is(.spotify-steps a, .spotify-auth-note button, .spotify-widget-card a) {
+  color: #ffae77;
+}
+.app-shell :is(.spotify-steps code, .settings-body code) {
+  background: #171717;
+  color: #dfdfd6;
+  border: 1px solid #484848;
+  border-radius: 2px;
+}
+.app-shell .drawer-swipe-handle span {
+  background: #777771;
+  box-shadow: 0 1px #ffffff17;
+}
+.app-shell .drawer-swipe-handle:hover span {
+  background: #b1b1a9;
+}
+.app-shell :is(.spotify-panel, .library-panel) {
+  color: #d2d2ca;
+  background: transparent;
+}
+.app-shell .controller-playlists-pane {
+  background: #222;
+}
+.app-shell .controller-tracks-pane {
+  background: #292929;
+}
+.app-shell .browser-pane-heading {
+  color: #b8b8b0;
+}
+.app-shell .controller-playlists-pane > button {
+  background: linear-gradient(#353535, #2d2d2d);
+  border: 1px solid #535353;
+  color: #d8d8ce;
+  box-shadow: inset 0 1px #ffffff0c;
+}
+.app-shell .controller-playlists-pane > button span {
+  color: #a7a79d;
+}
+.app-shell .controller-playlists-pane .controller-selected {
+  background: #44362c;
+  border-color: #f59656;
+  box-shadow: inset 3px 0 #ff8a3d;
+}
+.app-shell .pane-active {
+  box-shadow: inset 0 2px #ff8a3d;
+}
+.app-shell .pane-active > .browser-pane-heading {
+  color: #ffae77;
+}
+.app-shell .track-table {
+  color: #d4d4cd;
+  background: #242424;
+}
+.app-shell .spotify-tracks {
+  background: #242424;
+  border-color: #4b4b4b;
+  border-radius: 4px;
+}
+.app-shell .track-table thead {
+  background: #252525;
+}
+.app-shell .track-table th {
+  background: #252525;
+  color: #aaa;
+  border-color: #454545;
+}
+.app-shell .track-table td {
+  border-color: #3a3a3a;
+  background: #242424;
+}
+.app-shell .spotify-tracks .track-cell > svg {
+  color: #c3b3a8;
+}
+.app-shell .track-table .numeric {
+  color: #d0d0c8;
+  font-variant-numeric: tabular-nums;
+}
+.app-shell .track-table tr:hover {
+  background: #343434;
+}
+.app-shell .track-table-wrapper {
+  background: #202020;
+  border-color: #4b4b4b;
+}
+.app-shell .library-footer {
+  background: #292929;
+  border-color: #4b4b4b;
+}
+.app-shell .track-table tr:hover td {
+  background: #343434;
+}
+.app-shell .track-table tr.selected td,
+.app-shell .track-table tr.controller-selected td {
+  background: #3b342f;
+}
+.app-shell .search kbd {
+  border-color: #555;
+  color: #aaa;
+}
+.app-shell .track-table tr.selected,
+.app-shell .track-table tr.controller-selected {
+  background: #3b342f;
+  box-shadow: inset 3px 0 #ff8a3d;
+}
+.app-shell
+  :is(
+    .track-number,
+    .album-link,
+    .spotify-analysis-toolbar,
+    .library-footer,
+    .spotify-list-heading > span
+  ) {
+  color: #aaa;
+}
+.app-shell .track-cell strong {
+  color: #e9e9df;
+}
+.app-shell .track-art {
+  background: #343434;
+  border-color: #555;
+  color: #ffad75;
+  border-radius: 3px;
+}
+.app-shell .key-tag {
+  background: #373737;
+  color: #d8d8cf;
+  border-color: #555;
+  border-radius: 2px;
+}
+.app-shell .album-link {
+  background: transparent !important;
+  border: 0;
+  box-shadow: none !important;
+  color: #b0b0a6;
+}
+.app-shell .album-link:hover {
+  color: #ffae77;
+}
+.app-shell .spotify-track-actions button,
+.app-shell .load-buttons button {
+  background: #393939;
+  border-color: #626262;
+  color: #ddd;
+  box-shadow:
+    inset 0 1px #ffffff0a,
+    0 2px 0 #171717;
+}
+.app-shell
+  .spotify-track-actions
+  button[title="Prepare audio for native deck A"],
+.app-shell .load-buttons .load-a {
+  color: #ffb07b;
+}
+.app-shell
+  .spotify-track-actions
+  button[title="Prepare audio for native deck B"],
+.app-shell .load-buttons .load-b {
+  color: #91d5d6;
+}
+.app-shell .analysis-current {
+  background: #151515;
+  box-shadow: inset 0 2px 5px #0008;
+}
+.app-shell .analysis-popover .analysis-caution {
+  color: #e0b48a;
+}
+.app-shell .grid-editor label {
+  color: #bcbcb3;
+}
+.app-shell .dropdown {
+  overflow-y: auto;
+  max-height: 40dvh;
+}
+.app-shell .sampler-label {
+  color: #ffae77;
+}
+.app-shell .sample-slot > button:first-child {
+  color: #e0e0d8;
+  border-color: #555;
+}
+.app-shell .sample-slot > button:first-child span {
+  color: #ffad75;
+}
+.app-shell .controller-focused {
+  outline-color: #ff8a3d;
+}
+.app-shell .track-drawer .controller-focused {
+  background: #53351f;
+  color: #ffb47c;
+}
