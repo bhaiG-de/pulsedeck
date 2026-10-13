@@ -53,6 +53,7 @@ import {
   type EngineMetadata,
 } from "./engine-state";
 import { BAND_COLORS, HOT_CUE_COLORS } from "./waveform-data";
+import AnatomyDial from "./AnatomyDial";
 import SpotifyPanel, { type SpotifyTrack } from "./SpotifyPanel";
 import {
   THEMES,
@@ -156,6 +157,7 @@ function Knob({
           onChange={(e) => onChange(+e.target.value)}
           onDoubleClick={() => onChange(reset)}
         />
+        <AnatomyDial />
         <i />
       </span>
       <span>{label}</span>
@@ -778,6 +780,7 @@ function Deck({
           }}
         >
           <div className={`jog-surface ${scratch ? "touching" : ""}`}>
+            <AnatomyDial platter />
             <div className="jog-center">
               <strong>{bpm ? bpm.toFixed(2) : "—"}</strong>
               <span>BPM</span>

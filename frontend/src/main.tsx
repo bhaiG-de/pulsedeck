@@ -12,6 +12,7 @@ import "./styles.css";
 import "./performance-layout.css";
 import "./performance-skin.css";
 import "./theme-tokens.css";
+import "./anatomy-components.css";
 import { applyTheme, readTheme } from "./theme";
 applyTheme(readTheme());
 ReactDOM.createRoot(document.getElementById("root")!).render(
