@@ -140,6 +140,18 @@ function SpotifyPanel({
   const [widgetLink, setWidgetLink] = useState("");
   const [clientId, setClientId] = useState("");
   const [error, setError] = useState("");
+  // A load may come from row buttons, a controller or drag-and-drop. A fresh
+  // preparation supersedes the old drawer failure on every path; a new failure
+  // is reported after this preparation ends.
+  useEffect(() => {
+    if (deckJobs[0]?.preparing || deckJobs[1]?.preparing) setError("");
+  }, [
+    deckJobs[0]?.preparing,
+    deckJobs[0]?.uri,
+    deckJobs[1]?.preparing,
+    deckJobs[1]?.uri,
+  ]);
+
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
   const [showSetup, setShowSetup] = useState(settingsOnly);

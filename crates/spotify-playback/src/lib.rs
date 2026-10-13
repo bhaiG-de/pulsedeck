@@ -3,6 +3,8 @@
 //! This library's custom sink only accepts normally decoded floating-point PCM.
 //! Run it in an isolated child: upstream Session can exit on a non-Premium account.
 
+mod diagnostics;
+
 use librespot_core::{authentication::Credentials, Session, SessionConfig, SpotifyUri};
 use librespot_metadata::audio::item::{AudioItem, UniqueFields};
 use librespot_playback::{
@@ -415,24 +417,28 @@ async fn worker_prepare(request: &PrepareRequest, output: Arc<Output>) -> Result
         return Err("Spotify metadata exceeded the preparation limit".into());
     }
     output.record(METADATA, &bytes)?;
-    let sink_output = output.clone();
-    let player = Player::new(
-        PlayerConfig {
-            bitrate: Bitrate::Bitrate320,
-            normalisation: false,
-            passthrough: false,
-            gapless: false,
-            ..PlayerConfig::default()
-        },
-        session.clone(),
-        Box::new(NoOpVolume),
-        move || {
-            Box::new(MemorySink {
-                output: sink_output,
-            })
-        },
-    );
+    let make_player = || {
+        let sink_output = output.clone();
+        Player::new(
+            PlayerConfig {
+                bitrate: Bitrate::Bitrate320,
+                normalisation: false,
+                passthrough: false,
+                gapless: false,
+                ..PlayerConfig::default()
+            },
+            session.clone(),
+            Box::new(NoOpVolume),
+            move || {
+                Box::new(MemorySink {
+                    output: sink_output,
+                })
+            },
+        )
+    };
+    let mut player = make_player();
     let mut events = player.get_player_event_channel();
+    let mut retry_attempts = 0;
     player.load(track.clone(), true, 0);
     let result = loop {
         if let Some(error) = output
@@ -450,14 +456,47 @@ async fn worker_prepare(request: &PrepareRequest, output: Arc<Output>) -> Result
             Ok(Some(PlayerEvent::EndOfTrack { track_id, .. })) if track_id == track => {
                 let frames = output.frames.load(Ordering::Acquire) as usize;
                 let checked = validate_integrity(frames, &info, request.expected_duration_ms);
-                if let Err(error) = checked { break Err(error); }
-                let complete = serde_json::to_vec(&Completion { frames: frames as u64, sample_rate: SAMPLE_RATE }).map_err(|_| "Could not encode playback completion".to_string())?;
+                if let Err(error) = checked {
+                    break Err(error);
+                }
+                let complete = serde_json::to_vec(&Completion {
+                    frames: frames as u64,
+                    sample_rate: SAMPLE_RATE,
+                })
+                .map_err(|_| "Could not encode playback completion".to_string())?;
                 break output.record(COMPLETE, &complete);
             }
-            Ok(Some(PlayerEvent::Unavailable { .. })) => break Err("Spotify normal playback could not load this track using your application's account/token. The provider refused or could not supply audio.".into()),
-            Ok(Some(PlayerEvent::TrackChanged { audio_item })) if audio_item.uri != request.track_uri => break Err("Spotify selected a different source; it was not loaded into the deck".into()),
-            Ok(None) => break Err("Spotify's playback worker stopped before the track was complete".into()),
-            _ => {},
+            Ok(Some(PlayerEvent::Unavailable { track_id, .. })) if track_id == track => {
+                if diagnostics::retryable_before_audio(
+                    output.frames.load(Ordering::Acquire),
+                    retry_attempts,
+                ) {
+                    // Retry an upstream metadata/delivery request or key timeout with the
+                    // same accepted session. No credential/format fallback, and
+                    // never append a second stream after PCM has started.
+                    player.stop();
+                    drop(player);
+                    retry_attempts += 1;
+                    tokio::time::sleep(Duration::from_millis(750)).await;
+                    diagnostics::reset();
+                    player = make_player();
+                    events = player.get_player_event_channel();
+                    player.load(track.clone(), true, 0);
+                    continue;
+                }
+                break Err(diagnostics::unavailable_error());
+            }
+            Ok(Some(PlayerEvent::TrackChanged { audio_item }))
+                if audio_item.uri != request.track_uri =>
+            {
+                break Err(
+                    "Spotify selected a different source; it was not loaded into the deck".into(),
+                )
+            }
+            Ok(None) => {
+                break Err("Spotify's playback worker stopped before the track was complete".into())
+            }
+            _ => {}
         }
     };
     player.stop();
@@ -470,6 +509,7 @@ async fn worker_prepare(request: &PrepareRequest, output: Arc<Output>) -> Result
 /// logging initialization. JSON input holds the user's native token; only framed
 /// metadata / normal decoded PCM / sanitized errors are written to stdout.
 pub fn run_worker_from_stdio() -> Result<(), String> {
+    diagnostics::install();
     let output = Arc::new(Output {
         writer: Mutex::new(BufWriter::new(std::io::stdout())),
         frames: AtomicU64::new(0),

@@ -4676,6 +4676,7 @@ dependencies = [
  "librespot-core",
  "librespot-metadata",
  "librespot-playback",
+ "log",
  "serde",
  "serde_json",
  "tokio",

@@ -19,6 +19,8 @@ Settings → Spotify accepts your own public Spotify developer Client ID. Regist
 Load A/B prepares full-track stereo PCM in RAM before native transport begins. Preparation is capped at256 MiB /about12m40s pertrack and120s; recording is disabled while these sources are loaded. No saved audio/export, vendor credential extraction or custom protected transport is implemented. See [adapter details](crates/spotify-playback/README.md) and [authentication diagnosis](research/spotify-authentication.md).
 
 
+Native load failures report credential-safe metadata, delivery, format, decoder or playback-key stages. Metadata/delivery failures and playback-key timeouts get one delayed retry within the preparation deadline, using the same authorized session and only before any PCM has arrived. Old drawer errors clear when a new deck preparation starts.
+
 ## Develop and validate
 
 Rust, Node/npm and the macOS Command Line Tools are required. Install Rust with rustup and use your standard Cargo installation. If a local toolchain exists under `.toolchain`, the wrapper uses it without changing your shell profile; local toolchains are not part of the repository.
