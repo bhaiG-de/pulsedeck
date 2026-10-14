@@ -12,6 +12,8 @@ pub struct TrackRecord {
     pub path: String,
     pub title: String,
     pub artist: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
     pub duration_seconds: f64,
     pub bpm: f64,
     pub key: Option<String>,
@@ -148,6 +150,7 @@ impl Library {
             ("camelot", "TEXT"),
             ("key_confidence", "REAL"),
             ("analysis_json", "TEXT NOT NULL DEFAULT '{}'"),
+            ("tags", "TEXT NOT NULL DEFAULT '[]'"),
         ] {
             if !columns.contains(name) {
                 db.execute(
@@ -199,7 +202,7 @@ impl Library {
     }
 
     pub fn tracks(&self) -> Result<Vec<TrackRecord>, String> {
-        let mut stmt = self.db.prepare("SELECT id,path,title,artist,duration_seconds,bpm,key_name,sample_rate,waveform,added_at,hot_cues,beatgrid_offset_seconds,memory_cues,cue_seconds,camelot,key_confidence,analysis_json FROM tracks ORDER BY added_at DESC,id DESC").map_err(|e| e.to_string())?;
+        let mut stmt = self.db.prepare("SELECT id,path,title,artist,duration_seconds,bpm,key_name,sample_rate,waveform,added_at,hot_cues,beatgrid_offset_seconds,memory_cues,cue_seconds,camelot,key_confidence,analysis_json,tags FROM tracks ORDER BY added_at DESC,id DESC").map_err(|e| e.to_string())?;
         let rows = stmt.query_map([], Self::row).map_err(|e| e.to_string())?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())
@@ -211,6 +214,7 @@ impl Library {
             path: row.get(1)?,
             title: row.get(2)?,
             artist: row.get(3)?,
+            tags: serde_json::from_str(&row.get::<_, String>(17)?).unwrap_or_default(),
             duration_seconds: row.get(4)?,
             bpm: row.get(5)?,
             key: row.get(6)?,
@@ -230,7 +234,7 @@ impl Library {
     }
 
     pub fn track_by_path(&self, path: &str) -> Result<Option<TrackRecord>, String> {
-        self.db.query_row("SELECT id,path,title,artist,duration_seconds,bpm,key_name,sample_rate,waveform,added_at,hot_cues,beatgrid_offset_seconds,memory_cues,cue_seconds,camelot,key_confidence,analysis_json FROM tracks WHERE path=?1",[path],Self::row).optional().map_err(|e|e.to_string())
+        self.db.query_row("SELECT id,path,title,artist,duration_seconds,bpm,key_name,sample_rate,waveform,added_at,hot_cues,beatgrid_offset_seconds,memory_cues,cue_seconds,camelot,key_confidence,analysis_json,tags FROM tracks WHERE path=?1",[path],Self::row).optional().map_err(|e|e.to_string())
     }
 
     pub fn upsert(&self, track: &TrackRecord) -> Result<TrackRecord, String> {
@@ -265,11 +269,11 @@ impl Library {
             .map_err(|e| e.to_string())?
             .as_millis()
             .to_string();
-        self.db.execute("INSERT INTO tracks(path,title,artist,duration_seconds,bpm,key_name,sample_rate,waveform,added_at,camelot,key_confidence,analysis_json,beatgrid_offset_seconds)
-          VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)
+        self.db.execute("INSERT INTO tracks(path,title,artist,duration_seconds,bpm,key_name,sample_rate,waveform,added_at,camelot,key_confidence,analysis_json,beatgrid_offset_seconds,tags)
+          VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)
           ON CONFLICT(path) DO UPDATE SET title=excluded.title,artist=excluded.artist,duration_seconds=excluded.duration_seconds,
           bpm=excluded.bpm,key_name=excluded.key_name,sample_rate=excluded.sample_rate,waveform=excluded.waveform,camelot=excluded.camelot,key_confidence=excluded.key_confidence,analysis_json=excluded.analysis_json,beatgrid_offset_seconds=excluded.beatgrid_offset_seconds",
-          params![track.path,track.title,track.artist,track.duration_seconds,bpm,track.key,track.sample_rate,waveform,now,track.camelot,track.key_confidence,analysis_json,grid_offset]).map_err(|e|e.to_string())?;
+          params![track.path,track.title,track.artist,track.duration_seconds,bpm,track.key,track.sample_rate,waveform,now,track.camelot,track.key_confidence,analysis_json,grid_offset,serde_json::to_string(&track.tags).map_err(|e|e.to_string())?]).map_err(|e|e.to_string())?;
         self.track_by_path(&track.path)?
             .ok_or_else(|| "Imported track was not found".to_string())
     }
@@ -279,6 +283,38 @@ impl Library {
             .execute("DELETE FROM tracks WHERE id=?1", [id])
             .map_err(|e| e.to_string())?;
         Ok(()) // Original music files are never removed.
+    }
+
+    pub fn set_tags(&self, id: i64, tags: Vec<String>) -> Result<TrackRecord, String> {
+        if tags.len() > 32 {
+            return Err("Invalid tags: use at most 32 tags per song".into());
+        }
+        let mut normalized = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for tag in tags {
+            let tag = tag.trim();
+            if tag.chars().count() > 128 {
+                return Err("Invalid tag: use at most 128 characters".into());
+            }
+            if !tag.is_empty() && seen.insert(tag.to_lowercase()) {
+                normalized.push(tag.to_owned());
+            }
+        }
+        if self
+            .db
+            .execute(
+                "UPDATE tracks SET tags=?1 WHERE id=?2",
+                params![
+                    serde_json::to_string(&normalized).map_err(|e| e.to_string())?,
+                    id
+                ],
+            )
+            .map_err(|e| e.to_string())?
+            == 0
+        {
+            return Err("Track not found".into());
+        }
+        self.db.query_row("SELECT id,path,title,artist,duration_seconds,bpm,key_name,sample_rate,waveform,added_at,hot_cues,beatgrid_offset_seconds,memory_cues,cue_seconds,camelot,key_confidence,analysis_json,tags FROM tracks WHERE id=?1", [id], Self::row).map_err(|e| e.to_string())
     }
 
     pub fn metadata(
@@ -709,6 +745,40 @@ pub fn export_xml(tracks: &[TrackRecord], playlists: &[Playlist]) -> Result<Stri
 mod tests {
     use super::*;
     #[test]
+    fn song_tags_survive_reimport_and_restart_without_changing_track_metadata() {
+        let path = std::env::temp_dir().join(format!("pd-tags-{}.sqlite", std::process::id()));
+        let lib = Library::open(&path).unwrap();
+        let saved = lib.upsert(&track()).unwrap();
+        assert!(saved.tags.is_empty());
+        let tagged = lib
+            .set_tags(
+                saved.id,
+                vec![
+                    " Afro house ".into(),
+                    "chill vibe".into(),
+                    "AFRO HOUSE".into(),
+                    " ".into(),
+                    "café".into(),
+                ],
+            )
+            .unwrap();
+        assert_eq!(tagged.tags, ["Afro house", "chill vibe", "café"]);
+        assert_eq!(tagged.bpm, saved.bpm);
+        assert_eq!(tagged.hot_cues, saved.hot_cues);
+        assert!(lib.set_tags(saved.id, vec!["x".repeat(129)]).is_err());
+        assert!(lib.set_tags(-1, vec![]).is_err());
+        assert_eq!(lib.upsert(&track()).unwrap().tags, tagged.tags);
+        drop(lib);
+        let lib = Library::open(&path).unwrap();
+        assert_eq!(
+            lib.track_by_path(&saved.path).unwrap().unwrap().tags,
+            tagged.tags
+        );
+        assert!(lib.set_tags(saved.id, vec![]).unwrap().tags.is_empty());
+        drop(lib);
+        let _ = std::fs::remove_file(path);
+    }
+    #[test]
     fn source_cues_are_durable_for_local_and_spotify_and_reject_stale_edits() {
         let root = std::env::temp_dir().join(format!("pd-cues-{}.sqlite", std::process::id()));
         let lib = Library::open(&root).unwrap();
@@ -775,6 +845,7 @@ mod tests {
             path: "/tmp/Music & beats/song.wav".into(),
             title: "A & B <mix>".into(),
             artist: "DJ".into(),
+            tags: Vec::new(),
             duration_seconds: 90.,
             bpm: 120.,
             key: Some("Am".into()),

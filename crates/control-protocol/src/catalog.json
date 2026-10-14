@@ -1774,5 +1774,41 @@
       "points": 64
     },
     "example_cli": "pulsedeckctl call track.inspect --args '{\"deck\":\"A\",\"points\":64}' --json"
+  },
+  {
+    "command": "library.set_tags",
+    "description": "Replace free-form local song tags; trims empty values and deduplicates case-insensitively. Tags persist through reimport/reanalysis.",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": [
+            "integer",
+            "string"
+          ]
+        },
+        "tags": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "type": "string",
+            "maxLength": 128
+          }
+        }
+      },
+      "required": [
+        "id",
+        "tags"
+      ],
+      "additionalProperties": false
+    },
+    "example_args": {
+      "id": "local:1",
+      "tags": [
+        "Afro house",
+        "chill vibe"
+      ]
+    },
+    "example_cli": "pulsedeckctl library track tags local:1 --tags '[\"Afro house\",\"chill vibe\"]' --json"
   }
 ]

@@ -23,7 +23,7 @@ pulsedeckctl commands describe controller.action --json
 pulsedeckctl ui state --json
 ```
 
-The catalog exposes 81 product methods, all 52 native engine variants (49 original actions plus explicit-time hot cues and native ramp controls), the complete controller action schema and live UI targets/actions. Argument examples and schemas are returned with the methods. Unsupported controls and future capabilities are explicitly listed.
+The catalog exposes 82 product methods, all 52 native engine variants (49 original actions plus explicit-time hot cues and native ramp controls), the complete controller action schema and live UI targets/actions. Argument examples and schemas are returned with the methods. Unsupported controls and future capabilities are explicitly listed.
 
 Every catalog method can be called directly:
 
@@ -179,3 +179,5 @@ The desktop harness starts a temporary profile with separate library, preference
 Physical controller/routing verification and live Spotify authorization require the corresponding hardware/account. Parsed controls with no software implementation (mic gain, Android mono, Smart Fader Next and shifted loop-in/out) remain explicitly unsupported. Spotify playlist writes, embedded-widget transport, musical-section detection, scheduled native transport and an MCP server remain future work. The CLI supplies the control, metadata, job and diagnostic foundation for that work.
 
 For musical operation through shell agents, see the [seven DJ skills](../.agents/skills/README.md). `track.inspect` provides bounded timestamped overview/range views of existing analysis, with full metadata and cue revisions, without seeking or reanalyzing.
+
+Song tags are free-form strings stored in the local library. Edit them inline in the Tags column (Enter to add, × to remove), or run `pulsedeckctl library track tags local:42 --tags '["Afro house","chill vibe"]' --json`. Supplying `[]` clears tags. Library search includes tags, and `track.inspect` returns them as `metadata.tags`. Tags survive reimport/reanalysis and do not alter audio files.

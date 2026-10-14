@@ -11,3 +11,17 @@ export async function native<T>(
     );
   return invoke<T>(command, args);
 }
+
+export async function control<T>(
+  command: string,
+  args: Record<string, unknown>,
+): Promise<T> {
+  const response = await native<{
+    ok: boolean;
+    result?: T;
+    error?: { message: string };
+  }>("control_request", { request: { command, args } });
+  if (!response.ok)
+    throw new Error(response.error?.message || "Command failed");
+  return response.result as T;
+}

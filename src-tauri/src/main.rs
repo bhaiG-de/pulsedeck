@@ -296,6 +296,7 @@ fn analysis_record(analysis: TrackAnalysis) -> TrackRecord {
         path: analysis.path,
         title: analysis.title,
         artist: analysis.artist.unwrap_or_default(),
+        tags: Vec::new(),
         duration_seconds: analysis.duration_seconds,
         bpm: analysis.bpm.unwrap_or(0.),
         key: analysis.key,

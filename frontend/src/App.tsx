@@ -30,7 +30,8 @@ import {
   SkipBack,
   Repeat2,
 } from "lucide-react";
-import { isDesktop, native } from "./api";
+import { isDesktop, native, control } from "./api";
+import TrackTags from "./TrackTags";
 import { useControl } from "./control-bridge";
 import {
   controlString,
@@ -1797,7 +1798,7 @@ export default function App() {
       .filter(
         (t) =>
           (!p || p.track_ids.includes(t.id)) &&
-          `${t.title} ${t.artist || ""} ${t.bpm || ""} ${t.key || ""}`
+          `${t.title} ${t.artist || ""} ${t.bpm || ""} ${t.key || ""} ${(t.tags || []).join(" ")}`
             .toLowerCase()
             .includes(q),
       )
@@ -2100,6 +2101,15 @@ export default function App() {
         track_ids: visible.map((t) => t.id),
       }).catch(fail);
   }, [visible, fail]);
+  const saveTags = useCallback(async (id: string | number, tags: string[]) => {
+    const updated = await control<TrackRecord>("library.set_tags", {
+      id,
+      tags,
+    });
+    setLibrary((tracks) =>
+      tracks.map((t) => (t.id === id ? { ...t, tags: updated.tags } : t)),
+    );
+  }, []);
   const trackRows = useMemo(
     () =>
       visible.map((track, i) => (
@@ -2163,9 +2173,16 @@ export default function App() {
               </button>
             </div>
           </td>
+          <td>
+            <TrackTags
+              title={track.title}
+              tags={track.tags || []}
+              save={(tags) => saveTags(track.id, tags)}
+            />
+          </td>
         </tr>
       )),
-    [visible, selection, load, selectTrack],
+    [visible, selection, load, selectTrack, saveTags],
   );
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
@@ -2793,7 +2810,7 @@ export default function App() {
                 <label className="search">
                   <Search size={15} />
                   <input
-                    placeholder="Search tracks, artist, BPM…"
+                    placeholder="Search tracks, artist, BPM, tags…"
                     aria-label="Search library"
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
@@ -2875,7 +2892,7 @@ export default function App() {
                   </form>
                 )}
                 <div className="track-table-wrapper">
-                  <table className="track-table">
+                  <table className="track-table local-track-table">
                     <thead>
                       <tr>
                         <th className="track-number">#</th>
@@ -2884,6 +2901,7 @@ export default function App() {
                         <th>KEY</th>
                         <th>TIME</th>
                         <th>DECK</th>
+                        <th>Tags</th>
                       </tr>
                     </thead>
                     <tbody>{trackRows}</tbody>
@@ -2900,7 +2918,7 @@ export default function App() {
                       </h3>
                       <p>
                         {search
-                          ? "Try a different title, artist or BPM."
+                          ? "Try a different title, artist, BPM or tag."
                           : "Import local audio, then drag a track onto either deck."}
                       </p>
                       {!search && (

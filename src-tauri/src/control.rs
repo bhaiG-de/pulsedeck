@@ -843,11 +843,12 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
                 let search = search.to_lowercase();
                 tracks.retain(|t| {
                     format!(
-                        "{} {} {} {}",
+                        "{} {} {} {} {}",
                         t.title,
                         t.artist,
                         t.bpm,
-                        t.key.as_deref().unwrap_or("")
+                        t.key.as_deref().unwrap_or(""),
+                        t.tags.join(" ")
                     )
                     .to_lowercase()
                     .contains(&search)
@@ -897,6 +898,18 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
                     .find(|t| t.id == track_id)
                     .ok_or_else(|| ControlError::new("track_not_found", "Track not found"))?,
             )?
+        }
+        "library.set_tags" => {
+            let track = state
+                .library
+                .lock()
+                .map_err(failure)?
+                .set_tags(id(a, "id")?, arg(a, "tags")?)
+                .map_err(failure)?;
+            let mut track = serialized(track)?;
+            track.as_object_mut().unwrap().remove("waveform");
+            track.as_object_mut().unwrap().remove("waveform_bands");
+            return Ok(("persisted", track));
         }
         "track.inspect" => {
             if a.get("deck").is_some() == a.get("source").is_some() {
@@ -954,6 +967,14 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
                 .map_err(failure)?
                 .source_cues(&source)
                 .map_err(failure)?;
+            result["metadata"]["tags"] = json!(state
+                .library
+                .lock()
+                .map_err(failure)?
+                .track_by_path(&source)
+                .map_err(failure)?
+                .map(|t| t.tags)
+                .unwrap_or_default());
             result["source"] = json!(source);
             result["requested_source"] = a.get("source").cloned().unwrap_or(Value::Null);
             result["load_revision"] = json!(d.map(|d| metadata.load_revisions[d]));

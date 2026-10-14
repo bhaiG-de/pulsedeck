@@ -361,6 +361,10 @@ fn parse_inner(tokens: &[String]) -> Result<Invocation, ControlError> {
         ["library", "tracks"] | ["library", "tracks", "list"] => {
             Request::new("library.tracks", json!(flags))
         }
+        ["library", "track", "tags", id] => Request::new(
+            "library.set_tags",
+            json!({"id":id,"tags":required(&flags,"tags")?}),
+        ),
         ["library", "track", action, id] if matches!(*action, "get" | "remove") => Request::new(
             if *action == "get" {
                 "library.track"
@@ -567,6 +571,7 @@ fn allowed_flags(words: &[&str]) -> Vec<String> {
         ["mixer", _, "set"] => &["position", "gain", "mix"],
         ["sampler", "slot", _, "load"] => &["path"],
         ["library", "import"] => &["path", "paths"],
+        ["library", "track", "tags", _] => &["tags"],
         ["library", "tracks"] | ["library", "tracks", "list"] => {
             &["search", "sort", "playlist", "offset", "limit", "waveform"]
         }
