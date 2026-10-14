@@ -38,6 +38,17 @@ pub struct TrackAnalysis {
     pub waveform_bands: Option<audio_analysis::WaveformBands>,
     /// 4096 normalized stereo-maximum waveform peaks, generated off the audio thread.
     pub waveform: Vec<f32>,
+    /// Neural beat/downbeat stage, versioned separately from the DSP analysis.
+    /// `None` means the model has not run on this source yet.
+    #[serde(default)]
+    pub beat_model: Option<audio_analysis::BeatModelStage>,
+    /// Song sections cut on the track's grid; `None` until analysed or when
+    /// the grid has no known beat 1.
+    #[serde(default)]
+    pub sections: Option<audio_analysis::SectionStage>,
+    /// Cues PulseDeck placed from the sections, so they stay distinguishable.
+    #[serde(default)]
+    pub auto_cues: Option<audio_analysis::AutoCues>,
 }
 fn recording_allowed_default() -> bool {
     true

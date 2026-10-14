@@ -1,6 +1,12 @@
 import { useState } from "react";
 import { ChevronDown, LoaderCircle, RefreshCw } from "lucide-react";
-import type { TrackRecord } from "./types";
+import type { TrackRecord, Vocabulary } from "./types";
+import {
+  SECTION_COLORS,
+  SECTION_NAMES,
+  UNLABELLED_SECTION,
+  displaySections,
+} from "./waveform-data";
 
 const strength = (value: number | undefined | null) =>
   typeof value === "number" && Number.isFinite(value)
@@ -12,11 +18,13 @@ const scoreText = (value: number | null) =>
 export default function AnalysisInfo({
   track,
   onReanalyze,
+  onVocabulary,
   baseBpm,
   onChooseBpm,
 }: {
   track: TrackRecord;
   onReanalyze: () => Promise<void>;
+  onVocabulary: (vocabulary: Vocabulary | null) => Promise<void>;
   baseBpm: number;
   onChooseBpm: (bpm: number) => void;
 }) {
@@ -30,30 +38,38 @@ export default function AnalysisInfo({
     track.bpm_source === "manual" ||
     (!!track.bpm && Math.abs(baseBpm - track.bpm) > 0.005);
   const tagged = track.bpm_source === "tag" || track.bpm_source === "import";
-  const rhythmLabel = manual
-    ? "BPM manual"
-    : tagged
-      ? "BPM tag"
-      : ambiguous
-        ? "BPM ambiguous"
-        : rhythm === null
-          ? "BPM unverified"
-          : `Rhythm ${scoreText(rhythm)}`;
-  const gridLabel =
-    track.beatgrid_source === "manual"
-      ? "Grid manual"
-      : track.beatgrid_source === "synthetic"
-        ? "Grid demo"
-        : track.beatgrid_confidence != null
-          ? "Grid estimated"
-          : track.bpm
-            ? "Align beatgrid"
-            : "Grid unavailable";
-  const keyLabel = track.key
-    ? `Key strength ${scoreText(key)}`
-    : track.key_candidates?.length
-      ? "Key ambiguous"
-      : "Key unavailable";
+  // Only what a DJ has to act on before mixing; scores live in the popover.
+  const flags: string[] = [];
+  if (!manual && ambiguous) flags.push("bpm ½ / 2×?");
+  else if (!manual && (rhythm === null || rhythm < 0.45))
+    flags.push("check bpm");
+  if (
+    track.beatgrid_source !== "manual" &&
+    track.beatgrid_source !== "synthetic" &&
+    track.beatgrid_confidence == null
+  )
+    flags.push(track.bpm ? "align grid" : "no grid");
+  else if (
+    track.beatgrid_source === "model" &&
+    (strength(track.beatgrid_confidence) ?? 0) < 0.5
+  )
+    flags.push("check beat 1");
+  if (!track.key) flags.push(track.key_candidates?.length ? "key ?" : "no key");
+  else if (key !== null && key < 0.45) flags.push("key ?");
+  const stage = track.sections;
+  const sections = displaySections(
+    stage,
+    track.duration_seconds ?? track.duration ?? 0,
+  );
+  const vocabulary = stage?.vocabulary_override ?? stage?.vocabulary;
+  async function chooseVocabulary(choice: Vocabulary) {
+    setError("");
+    try {
+      await onVocabulary(choice === stage?.vocabulary ? null : choice);
+    } catch (e) {
+      setError(String(e instanceof Error ? e.message : e));
+    }
+  }
   async function reanalyze() {
     setReanalyzing(true);
     setError("");
@@ -72,21 +88,15 @@ export default function AnalysisInfo({
         onToggle={(e) => setDetails(e.currentTarget.open)}
       >
         <summary title="Inspect analysis support and alternative tempos">
-          <span
-            className={`analysis-chip ${ambiguous || (rhythm !== null && rhythm < 0.45) ? "uncertain" : ""}`}
-          >
-            {rhythmLabel}
-          </span>
-          <span
-            className={`analysis-chip ${!track.key || (key !== null && key < 0.45) ? "uncertain" : ""}`}
-          >
-            {keyLabel}
-          </span>
-          <span
-            className={`analysis-chip ${gridLabel === "Align beatgrid" ? "uncertain" : ""}`}
-          >
-            {gridLabel}
-          </span>
+          {flags.length ? (
+            flags.map((flag) => (
+              <span className="analysis-chip uncertain" key={flag}>
+                {flag}
+              </span>
+            ))
+          ) : (
+            <span className="analysis-chip">analysis ok</span>
+          )}
           <ChevronDown size={10} />
         </summary>
         <div className="analysis-popover">
@@ -98,9 +108,11 @@ export default function AnalysisInfo({
           <p>
             {track.beatgrid_source === "manual"
               ? "The grid origin was set manually."
-              : track.beatgrid_confidence != null
-                ? "Grid lines follow an estimated periodic beat origin. The stronger markers group four beats; they do not identify a verified musical downbeat."
-                : "Align the first beat in the grid editor before relying on the beat lines."}
+              : track.beatgrid_source === "model"
+                ? "Grid lines follow the beat model. The stronger lines mark beat 1 of each bar; if a bar starts elsewhere, shift beat 1 in the grid editor."
+                : track.beatgrid_confidence != null
+                  ? "Grid lines follow an estimated periodic beat origin. The stronger markers group four beats; they do not identify a verified musical downbeat."
+                  : "Align the first beat in the grid editor before relying on the beat lines."}
           </p>
           <div className="analysis-current">
             <span>
@@ -110,6 +122,12 @@ export default function AnalysisInfo({
               Key strength<strong>{scoreText(key)}</strong>
             </span>
           </div>
+          {!manual && track.bpm_source === "model" && (
+            <p>
+              The tempo comes from the beat model. Rhythm support is the share
+              of detected beats that sit on the grid.
+            </p>
+          )}
           {(manual || tagged) && (
             <p>
               {manual
@@ -143,6 +161,46 @@ export default function AnalysisInfo({
               </div>
             </>
           )}
+          {!!sections.length && (
+            <>
+              <h5>Sections</h5>
+              <div className="section-list">
+                {sections.map((s, i) => (
+                  <span key={`${s.start}-${i}`}>
+                    <i
+                      style={{
+                        background: s.label
+                          ? SECTION_COLORS[s.label]
+                          : UNLABELLED_SECTION,
+                      }}
+                    />
+                    {s.label ? SECTION_NAMES[s.label] : "Section"} {s.bars}
+                  </span>
+                ))}
+              </div>
+              <div className="bpm-candidates">
+                {(["dance", "hip_hop"] as const).map((choice) => (
+                  <button
+                    key={choice}
+                    className={vocabulary === choice ? "selected" : ""}
+                    onClick={() => chooseVocabulary(choice)}
+                    title={
+                      choice === "dance"
+                        ? "Label intro, build-up, drop, breakdown and outro"
+                        : "Label intro, verse, hook and outro"
+                    }
+                  >
+                    <strong>
+                      {choice === "dance" ? "Dance labels" : "Hip-hop labels"}
+                    </strong>
+                    <span>
+                      {stage?.vocabulary === choice ? "detected" : "switch"}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
           {!!track.key_candidates?.length && (
             <>
               <h5>Tonal candidates</h5>
@@ -170,14 +228,14 @@ export default function AnalysisInfo({
         className="reanalyze-button"
         disabled={reanalyzing}
         onClick={reanalyze}
-        title="Refresh beat, key and three-band analysis without unloading the deck"
+        aria-label={reanalyzing ? "Analyzing" : "Reanalyze"}
+        title="Refresh the beat model, key and three-band analysis without unloading the deck"
       >
         {reanalyzing ? (
-          <LoaderCircle size={10} className="spin" />
+          <LoaderCircle size={11} className="spin" />
         ) : (
-          <RefreshCw size={10} />
-        )}{" "}
-        {reanalyzing ? "Analyzing…" : "Reanalyze"}
+          <RefreshCw size={11} />
+        )}
       </button>
       {error && (
         <p className="analysis-inline-error" role="alert">

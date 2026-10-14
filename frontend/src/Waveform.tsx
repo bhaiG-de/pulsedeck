@@ -6,10 +6,43 @@ import {
   timeToWaveformFraction,
   waveformSeekSeconds,
   waveformBarBeat,
+  nextSection,
   HOT_CUE_COLORS,
+  SECTION_COLORS,
+  SECTION_NAMES,
+  UNLABELLED_SECTION,
+  type DisplaySection,
 } from "./waveform-data";
 import { WaveformMotion } from "./waveform-motion";
+import type { WaveformGuide } from "./transition";
 import { WaveformRaster } from "./waveform-renderer";
+
+/* Monochrome screen palette: faint white linework, a dotted baseline and a
+   red playhead with a dot cap (as on a field recorder), orange loops (matching
+   the loop key), blue labels. Band colours come from BAND_COLORS; hot-cue
+   colours stay as analysed. */
+const SCREEN = {
+  background: "#0b0b0c",
+  axis: "#4b4b4f",
+  played: "rgba(11,11,12,.5)",
+  playhead: "#ff3b30",
+  idle: "#4b4b4f",
+  idleText: "#6e6e72",
+  windowFill: "rgba(242,242,240,.08)",
+  windowLine: "rgba(242,242,240,.45)",
+  beatLine: "rgba(242,242,240,.1)",
+  beatTick: "#8e8e91",
+  barLine: "rgba(242,242,240,.26)",
+  bar: "#f2f2f0",
+  loop: "#ff7a30",
+  loopFill: "rgba(255,122,48,.12)",
+  loopText: "#ffb084",
+  memory: "#b8b8bb",
+  labelFill: "rgba(11,11,12,.9)",
+  barLabel: "#4a90ff",
+  font: (size: number, weight = 400) =>
+    `${weight} ${size}px "DM Mono", ui-monospace, monospace`,
+};
 
 export type WaveformProps = {
   samples: number[];
@@ -29,6 +62,13 @@ export type WaveformProps = {
   loopActive?: boolean;
   overview?: boolean;
   hotcues?: (number | null)[];
+  /** Song sections, drawn as a coloured strip along the top edge. */
+  sections?: DisplaySection[];
+  /** Transition guide marks: when to start the other deck, the stretch
+   * both play together and where the new track's drop lands. */
+  guides?: WaveformGuide[];
+  /** "START B in 8", drawn under the bar counter beside the playhead. */
+  guideCountdown?: { text: string; color: string } | null;
   beatgridOffset?: number;
   playing?: boolean;
   playbackRate?: number;
@@ -69,6 +109,8 @@ interface Runtime {
   click: (event: MouseEvent) => void;
 }
 const empty: number[] = [];
+const noSections: DisplaySection[] = [];
+const noGuides: WaveformGuide[] = [];
 
 export default function Waveform(input: WaveformProps) {
   const props = useRef(input);
@@ -184,6 +226,9 @@ export default function Waveform(input: WaveformProps) {
         spanBeats,
         overview = false,
         hotcues = empty,
+        sections = noSections,
+        guides = noGuides,
+        guideCountdown,
         beatgridOffset = 0,
         cuePoint,
         cueSeconds,
@@ -207,12 +252,15 @@ export default function Waveform(input: WaveformProps) {
         }),
         { span, start } = view;
       const xFor = (t: number) => timeToWaveformFraction(t, view) * w;
-      ctx.strokeStyle = "#222a35";
+      // Dotted baseline, as on a recorder waiting for signal.
+      ctx.strokeStyle = SCREEN.axis;
       ctx.lineWidth = 1;
+      ctx.setLineDash([1, 3]);
       ctx.beginPath();
       ctx.moveTo(0, h / 2 + 0.5);
       ctx.lineTo(w, h / 2 + 0.5);
       ctx.stroke();
+      ctx.setLineDash([]);
       if (duration > 0 && span > 0) {
         if (overview) {
           const detail = getWaveformWindow({
@@ -225,9 +273,9 @@ export default function Waveform(input: WaveformProps) {
           const left = Math.max(0, xFor(detail.start)),
             right = Math.min(w, xFor(detail.end));
           if (right > left) {
-            ctx.fillStyle = "rgba(193,213,239,.09)";
+            ctx.fillStyle = SCREEN.windowFill;
             ctx.fillRect(left, 0, right - left, h);
-            ctx.strokeStyle = "rgba(193,213,239,.42)";
+            ctx.strokeStyle = SCREEN.windowLine;
             ctx.lineWidth = 1;
             ctx.strokeRect(
               left + 0.5,
@@ -248,9 +296,9 @@ export default function Waveform(input: WaveformProps) {
           const left = Math.max(0, xFor(loopStart)),
             right = Math.min(w, xFor(loopEnd));
           if (right > left) {
-            ctx.fillStyle = "rgba(80,190,199,.12)";
+            ctx.fillStyle = SCREEN.loopFill;
             ctx.fillRect(left, 0, right - left, h);
-            ctx.strokeStyle = "#64c1cc";
+            ctx.strokeStyle = SCREEN.loop;
             ctx.lineWidth = 1;
             ctx.strokeRect(
               left + 0.5,
@@ -259,8 +307,8 @@ export default function Waveform(input: WaveformProps) {
               h - 1,
             );
             if (!overview) {
-              ctx.fillStyle = "#b0e3e9";
-              ctx.font = "8px sans-serif";
+              ctx.fillStyle = SCREEN.loopText;
+              ctx.font = SCREEN.font(9);
               ctx.fillText("LOOP", left + 4, h - 5);
             }
           }
@@ -277,6 +325,12 @@ export default function Waveform(input: WaveformProps) {
             overview,
           });
           raster.draw(ctx, start, w);
+          // Played audio steps back so what is coming next reads first.
+          const played = overview
+            ? Math.max(0, Math.min(w, view.playheadFraction * w))
+            : w / 2;
+          ctx.fillStyle = SCREEN.played;
+          ctx.fillRect(0, 0, played, h);
           if (!overview && Math.abs(position - lastPrewarmPosition) > 1) {
             lastPrewarmPosition = position;
             const direction = position >= lastPaintPosition ? 1 : -1;
@@ -285,6 +339,67 @@ export default function Waveform(input: WaveformProps) {
               if (!disposed && scheduledConfig === sourceKey())
                 raster.prewarm(start, w, direction);
             });
+          }
+        }
+        // Song sections: a strip along the top edge, with names on the detail view.
+        const strip = overview ? 3 : 4;
+        for (const section of sections) {
+          const left = Math.max(0, xFor(section.start)),
+            right = Math.min(w, xFor(section.end));
+          if (right <= left) continue;
+          const colour = section.label
+            ? SECTION_COLORS[section.label]
+            : UNLABELLED_SECTION;
+          ctx.fillStyle = colour;
+          ctx.fillRect(left, 0, Math.max(1, right - left - 1), strip);
+          if (!overview && section.label) {
+            const name = SECTION_NAMES[section.label].toUpperCase();
+            ctx.font = SCREEN.font(9, 500);
+            const textWidth = ctx.measureText(name).width;
+            // Clear of a hot cue flag at the section start; pinned to the left
+            // edge while the section's start has scrolled past.
+            const labelX = left + (left > 0 ? 18 : 4);
+            if (labelX + textWidth + 6 < right) {
+              ctx.fillStyle = SCREEN.labelFill;
+              ctx.fillRect(labelX - 3, 6, textWidth + 6, 13);
+              ctx.fillStyle = colour;
+              ctx.fillText(name, labelX, 16);
+            }
+          }
+        }
+        // Transition guide: a tinted "together" span, a dashed start line and
+        // a dotted landing line in the incoming deck's colour, labelled above
+        // the cue markers on the detail view.
+        for (const guide of guides) {
+          const x = xFor(guide.at);
+          if (guide.until !== undefined && guide.until > guide.at) {
+            const left = Math.max(0, x),
+              right = Math.min(w, xFor(guide.until));
+            if (right > left) {
+              ctx.globalAlpha = 0.1;
+              ctx.fillStyle = guide.color;
+              ctx.fillRect(left, 0, right - left, h);
+              ctx.globalAlpha = 1;
+            }
+          }
+          if (x < 0 || x > w) continue;
+          ctx.strokeStyle = guide.color;
+          ctx.lineWidth = guide.kind === "landing" ? 1 : 1.5;
+          ctx.setLineDash(guide.kind === "landing" ? [2, 3] : [5, 3]);
+          ctx.beginPath();
+          ctx.moveTo(x + 0.5, 0);
+          ctx.lineTo(x + 0.5, h);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          if (!overview) {
+            ctx.font = SCREEN.font(9, 500);
+            const textWidth = ctx.measureText(guide.label).width,
+              labelX = Math.max(3, Math.min(x + 4, w - textWidth - 6)),
+              labelY = Math.max(22, h - 46);
+            ctx.fillStyle = SCREEN.labelFill;
+            ctx.fillRect(labelX - 3, labelY, textWidth + 6, 13);
+            ctx.fillStyle = guide.color;
+            ctx.fillText(guide.label, labelX, labelY + 10);
           }
         }
         // Beat markers sit over the envelopes, so loud passages cannot hide the
@@ -306,15 +421,13 @@ export default function Waveform(input: WaveformProps) {
             const major = Math.round((t - beatgridOffset) / beat) % 4 === 0,
               x = xFor(t);
             ctx.lineWidth = 1;
-            ctx.strokeStyle = major
-              ? "rgba(232,112,111,.7)"
-              : "rgba(172,190,213,.35)";
+            ctx.strokeStyle = major ? SCREEN.barLine : SCREEN.beatLine;
             ctx.beginPath();
             ctx.moveTo(x + 0.5, 0);
             ctx.lineTo(x + 0.5, h);
             ctx.stroke();
             if (major) {
-              ctx.fillStyle = "#e8706f";
+              ctx.fillStyle = SCREEN.bar;
               ctx.beginPath();
               ctx.moveTo(x - 4, 0);
               ctx.lineTo(x + 4, 0);
@@ -328,7 +441,7 @@ export default function Waveform(input: WaveformProps) {
               ctx.closePath();
               ctx.fill();
             } else {
-              ctx.strokeStyle = "#a7b7cd";
+              ctx.strokeStyle = SCREEN.beatTick;
               ctx.beginPath();
               ctx.moveTo(x + 0.5, 0);
               ctx.lineTo(x + 0.5, 8);
@@ -344,7 +457,7 @@ export default function Waveform(input: WaveformProps) {
           loopEnd > loopStart &&
           loopActive !== false
         ) {
-          ctx.strokeStyle = "#64c1cc";
+          ctx.strokeStyle = SCREEN.loop;
           ctx.lineWidth = 1;
           for (const boundary of [loopStart, loopEnd]) {
             const x = xFor(boundary);
@@ -364,8 +477,8 @@ export default function Waveform(input: WaveformProps) {
           ctx.fillRect(Math.min(w - 1, x), 0, 1, h);
           const flagX = Math.min(x, w - (overview ? 9 : 15));
           ctx.fillRect(flagX, 0, overview ? 9 : 15, overview ? 9 : 16);
-          ctx.fillStyle = "#131923";
-          ctx.font = overview ? "bold 7px sans-serif" : "bold 10px sans-serif";
+          ctx.fillStyle = SCREEN.background;
+          ctx.font = SCREEN.font(overview ? 7 : 10, 500);
           ctx.fillText(
             String.fromCharCode(65 + i),
             flagX + (overview ? 2 : 4),
@@ -390,13 +503,13 @@ export default function Waveform(input: WaveformProps) {
           ctx.stroke();
           if (!overview) {
             ctx.fillStyle = markerColor;
-            ctx.font = "8px sans-serif";
+            ctx.font = SCREEN.font(9);
             ctx.fillText(label, markerX + 3, h - height + 8);
           }
         };
         memoryCues.forEach((cue, i) => {
           if (cue !== null)
-            bottomMarker(cue, `M${i + 1}`, "#b2bfd3", overview ? 5 : 18);
+            bottomMarker(cue, `M${i + 1}`, SCREEN.memory, overview ? 5 : 18);
         });
         const mainCue = cuePoint !== undefined ? cuePoint : cueSeconds;
         if (mainCue != null)
@@ -404,28 +517,37 @@ export default function Waveform(input: WaveformProps) {
         const x = overview
           ? Math.max(0.75, Math.min(w - 0.75, view.playheadFraction * w))
           : w / 2;
-        ctx.fillStyle = "#eff3f8";
+        ctx.fillStyle = SCREEN.playhead;
         ctx.fillRect(x - 0.75, 0, 1.5, h);
         if (!overview) {
           ctx.beginPath();
-          ctx.moveTo(x - 5, 0);
-          ctx.lineTo(x + 5, 0);
-          ctx.lineTo(x, 7);
+          ctx.arc(x, 4, 3.5, 0, Math.PI * 2);
           ctx.fill();
           const label = waveformBarBeat(position, bpm, beatgridOffset);
           if (label) {
-            ctx.font = "600 11px sans-serif";
-            const text = `${label} BARS`,
+            ctx.font = SCREEN.font(10, 500);
+            const upcoming = nextSection(sections, position, bpm);
+            const text = upcoming?.label
+                ? `${label} bars · ${SECTION_NAMES[upcoming.label].toUpperCase()} in ${upcoming.bars}`
+                : `${label} bars`,
               size = ctx.measureText(text).width;
-            ctx.fillStyle = "rgba(17,24,34,.9)";
+            ctx.fillStyle = SCREEN.labelFill;
             ctx.fillRect(x + 5, 17, size + 8, 16);
-            ctx.fillStyle = "#75b8fa";
+            ctx.fillStyle = SCREEN.barLabel;
             ctx.fillText(text, x + 9, 29);
+          }
+          if (guideCountdown) {
+            ctx.font = SCREEN.font(10, 500);
+            const size = ctx.measureText(guideCountdown.text).width;
+            ctx.fillStyle = SCREEN.labelFill;
+            ctx.fillRect(x + 5, 35, size + 8, 16);
+            ctx.fillStyle = guideCountdown.color;
+            ctx.fillText(guideCountdown.text, x + 9, 47);
           }
         }
       }
       if (!duration && !overview) {
-        ctx.fillStyle = "#60728c";
+        ctx.fillStyle = SCREEN.idle;
         ctx.fillRect(w / 2 - 0.75, 0, 1.5, h);
         ctx.beginPath();
         ctx.moveTo(w / 2 - 5, 0);
@@ -434,11 +556,11 @@ export default function Waveform(input: WaveformProps) {
         ctx.fill();
       }
       if (!samples.length && !overview) {
-        ctx.fillStyle = "#65768e";
+        ctx.fillStyle = SCREEN.idleText;
         ctx.textAlign = "center";
-        ctx.font = "11px system-ui";
+        ctx.font = SCREEN.font(11);
         ctx.fillText(
-          duration ? "Waveform analysis pending" : "LOAD A TRACK TO BEGIN",
+          duration ? "waveform analysis pending" : "load a track to begin",
           w / 2,
           h / 2,
         );

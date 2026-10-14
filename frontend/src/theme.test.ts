@@ -15,10 +15,10 @@ test("theme preference restores across application starts and rejects stale valu
     },
   };
   assert.equal(readTheme(storage), DEFAULT_THEME);
-  saveTheme("anatomy-light", storage);
-  assert.equal(readTheme(storage), "anatomy-light");
-  saveTheme("anatomy-dark", storage);
-  assert.equal(readTheme(storage), "anatomy-dark");
+  saveTheme("ivory", storage);
+  assert.equal(readTheme(storage), "ivory");
+  saveTheme("graphite", storage);
+  assert.equal(readTheme(storage), "graphite");
   values.set(THEME_STORAGE_KEY, "removed-theme");
   assert.equal(readTheme(storage), DEFAULT_THEME);
 });
@@ -32,5 +32,5 @@ test("denied preference storage does not prevent changing the live appearance", 
     },
   };
   assert.equal(readTheme(storage), DEFAULT_THEME);
-  assert.doesNotThrow(() => saveTheme("anatomy-light", storage));
+  assert.doesNotThrow(() => saveTheme("ivory", storage));
 });

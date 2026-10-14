@@ -1,7 +1,12 @@
-use audio_analysis::{KeyCandidate, TempoCandidate, WaveformBands};
+use crate::suggest::{PendingFeatures, TrackFeatures, FEATURES_VERSION};
+use audio_analysis::{
+    AutoCues, BeatModelStage, KeyCandidate, SectionStage, TempoCandidate, WaveformBands,
+};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -40,6 +45,9 @@ pub struct AnalysisMetadata {
     pub waveform_bands: Option<WaveformBands>,
     pub beatgrid_confidence: Option<f32>,
     pub beatgrid_source: Option<String>,
+    pub beat_model: Option<BeatModelStage>,
+    pub sections: Option<SectionStage>,
+    pub auto_cues: Option<AutoCues>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,6 +59,41 @@ pub struct Playlist {
 
 pub struct Library {
     db: Connection,
+    /// Suggestion features by source, loaded on first use and kept in step
+    /// with every write below.
+    features: RefCell<Option<HashMap<String, TrackFeatures>>>,
+    /// Set once no stored track lacks current features; writes keep it so.
+    features_complete: Cell<bool>,
+}
+
+/// Whether a cached Spotify analysis is complete enough to display and reuse.
+pub fn usable_spotify_analysis(uri: &str, a: &deck_engine::TrackAnalysis) -> bool {
+    a.path == uri
+        && (a.analysis_version == audio_analysis::ANALYSIS_VERSION
+            || (audio_analysis::ANALYSIS_VERSION == 3 && a.analysis_version == 2))
+        && !a.recording_allowed
+        && a.waveform.len() == 4096
+        && a.waveform_bands
+            .as_ref()
+            .is_some_and(|b| b.low.len() == 4096 && b.mid.len() == 4096 && b.high.len() == 4096)
+}
+
+const FEATURE_COLUMNS: &str =
+    "source,track_id,title,artist,duration_seconds,bpm,bpm_ambiguous,camelot,key_confidence,energy";
+
+fn feature_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TrackFeatures> {
+    Ok(TrackFeatures {
+        source: row.get(0)?,
+        track_id: row.get(1)?,
+        title: row.get(2)?,
+        artist: row.get(3)?,
+        duration_seconds: row.get(4)?,
+        bpm: row.get(5)?,
+        bpm_ambiguous: row.get(6)?,
+        camelot: row.get(7)?,
+        key_confidence: row.get(8)?,
+        energy: row.get(9)?,
+    })
 }
 
 impl Library {
@@ -103,7 +146,21 @@ impl Library {
                 .map_err(|e| e.to_string())?;
             }
         }
-        Ok(Self { db })
+        // Compact per-track data for next-track suggestions, so they never
+        // read the large analysis records (see suggest.rs).
+        db.execute_batch(
+            "CREATE TABLE IF NOT EXISTS suggest_features(source TEXT PRIMARY KEY,
+               track_id INTEGER REFERENCES tracks(id) ON DELETE CASCADE, version INTEGER NOT NULL,
+               title TEXT NOT NULL, artist TEXT NOT NULL, duration_seconds REAL NOT NULL, bpm REAL,
+               bpm_ambiguous INTEGER NOT NULL, camelot TEXT, key_confidence REAL, energy REAL);
+             CREATE INDEX IF NOT EXISTS suggest_features_track ON suggest_features(track_id);",
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(Self {
+            db,
+            features: RefCell::new(None),
+            features_complete: Cell::new(false),
+        })
     }
 
     pub fn spotify_analysis(
@@ -121,16 +178,7 @@ impl Library {
             .map_err(|e| e.to_string())?;
         Ok(json
             .and_then(|json| serde_json::from_str::<deck_engine::TrackAnalysis>(&json).ok())
-            .filter(|a| {
-                a.path == uri
-                    && (a.analysis_version == audio_analysis::ANALYSIS_VERSION
-                        || (audio_analysis::ANALYSIS_VERSION == 3 && a.analysis_version == 2))
-                    && !a.recording_allowed
-                    && a.waveform.len() == 4096
-                    && a.waveform_bands.as_ref().is_some_and(|b| {
-                        b.low.len() == 4096 && b.mid.len() == 4096 && b.high.len() == 4096
-                    })
-            }))
+            .filter(|a| usable_spotify_analysis(uri, a)))
     }
     pub fn cache_spotify_analysis(
         &self,
@@ -141,7 +189,158 @@ impl Library {
         }
         let json = serde_json::to_string(analysis).map_err(|e| e.to_string())?;
         self.db.execute("INSERT INTO spotify_analysis(uri,version,metadata,updated_at) VALUES(?1,?2,?3,unixepoch()) ON CONFLICT(uri) DO UPDATE SET version=excluded.version,metadata=excluded.metadata,updated_at=excluded.updated_at", params![analysis.path, analysis.analysis_version, json]).map_err(|e| e.to_string())?;
+        self.store_features(&[if usable_spotify_analysis(&analysis.path, analysis) {
+            TrackFeatures::from_analysis(analysis)
+        } else {
+            TrackFeatures::unusable(analysis.path.clone())
+        }])
+    }
+
+    /// Store suggestion features, replacing older ones for the same source.
+    /// Local rows whose track was deleted meanwhile are skipped.
+    pub fn store_features(&self, features: &[TrackFeatures]) -> Result<(), String> {
+        let tx = self.db.unchecked_transaction().map_err(|e| e.to_string())?;
+        let mut stored = Vec::with_capacity(features.len());
+        {
+            let mut insert = tx
+                .prepare_cached(&format!(
+                    "INSERT INTO suggest_features(version,{FEATURE_COLUMNS})
+                     SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11
+                     WHERE ?3 IS NULL OR EXISTS(SELECT 1 FROM tracks WHERE id=?3)
+                     ON CONFLICT(source) DO UPDATE SET version=excluded.version,track_id=excluded.track_id,
+                       title=excluded.title,artist=excluded.artist,duration_seconds=excluded.duration_seconds,
+                       bpm=excluded.bpm,bpm_ambiguous=excluded.bpm_ambiguous,camelot=excluded.camelot,
+                       key_confidence=excluded.key_confidence,energy=excluded.energy"
+                ))
+                .map_err(|e| e.to_string())?;
+            for f in features {
+                let changed = insert
+                    .execute(params![
+                        FEATURES_VERSION,
+                        f.source,
+                        f.track_id,
+                        f.title,
+                        f.artist,
+                        f.duration_seconds,
+                        f.bpm,
+                        f.bpm_ambiguous,
+                        f.camelot,
+                        f.key_confidence,
+                        f.energy
+                    ])
+                    .map_err(|e| e.to_string())?;
+                if changed > 0 {
+                    stored.push(f);
+                }
+            }
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+        if let Some(cache) = self.features.borrow_mut().as_mut() {
+            for f in stored {
+                cache.insert(f.source.clone(), f.clone());
+            }
+        }
         Ok(())
+    }
+
+    /// Run `score` over the current suggestion features of every source,
+    /// loading them from the database on first use.
+    pub fn with_features<R>(
+        &self,
+        score: impl FnOnce(&HashMap<String, TrackFeatures>) -> R,
+    ) -> Result<R, String> {
+        if self.features.borrow().is_none() {
+            let mut stmt = self
+                .db
+                .prepare(&format!(
+                    "SELECT {FEATURE_COLUMNS} FROM suggest_features WHERE version=?1"
+                ))
+                .map_err(|e| e.to_string())?;
+            let loaded = stmt
+                .query_map([FEATURES_VERSION], feature_row)
+                .map_err(|e| e.to_string())?
+                .map(|row| row.map(|f| (f.source.clone(), f)))
+                .collect::<Result<HashMap<_, _>, _>>()
+                .map_err(|e| e.to_string())?;
+            *self.features.borrow_mut() = Some(loaded);
+        }
+        let cache = self.features.borrow();
+        Ok(score(
+            cache.as_ref().ok_or("Suggestion features unavailable")?,
+        ))
+    }
+
+    /// How many stored tracks still lack current suggestion features. Free
+    /// once none do, because every write keeps the features current.
+    pub fn features_pending(&self) -> Result<usize, String> {
+        if self.features_complete.get() {
+            return Ok(0);
+        }
+        let count: i64 = self
+            .db
+            .query_row(
+                "SELECT (SELECT count(*) FROM tracks t WHERE NOT EXISTS(SELECT 1 FROM suggest_features f WHERE f.source=t.path AND f.version=?1))
+                      + (SELECT count(*) FROM spotify_analysis s WHERE NOT EXISTS(SELECT 1 FROM suggest_features f WHERE f.source=s.uri AND f.version=?1))",
+                [FEATURES_VERSION],
+                |r| r.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        self.features_complete.set(count == 0);
+        Ok(count as usize)
+    }
+
+    /// Up to `limit` stored records that lack current suggestion features,
+    /// raw, so they can be parsed without holding the library.
+    pub fn pending_features(&self, limit: usize) -> Result<Vec<PendingFeatures>, String> {
+        let mut stmt = self
+            .db
+            .prepare(
+                "SELECT t.id,t.path,t.title,t.artist,t.duration_seconds,t.bpm,t.camelot,t.key_confidence,t.analysis_json
+                 FROM tracks t WHERE NOT EXISTS(SELECT 1 FROM suggest_features f WHERE f.source=t.path AND f.version=?1) LIMIT ?2",
+            )
+            .map_err(|e| e.to_string())?;
+        let mut pending = stmt
+            .query_map(params![FEATURES_VERSION, limit as i64], |r| {
+                let mut features = TrackFeatures::unusable(r.get(1)?);
+                features.track_id = Some(r.get(0)?);
+                features.title = r.get(2)?;
+                features.artist = r.get(3)?;
+                features.duration_seconds = r.get(4)?;
+                features.bpm = crate::suggest::usable_bpm(r.get(5)?);
+                features.camelot = r.get(6)?;
+                features.key_confidence = r.get(7)?;
+                Ok(PendingFeatures::Local {
+                    features,
+                    analysis_json: r.get(8)?,
+                })
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        if pending.len() < limit {
+            let mut stmt = self
+                .db
+                .prepare(
+                    "SELECT s.uri,s.metadata FROM spotify_analysis s
+                     WHERE NOT EXISTS(SELECT 1 FROM suggest_features f WHERE f.source=s.uri AND f.version=?1) LIMIT ?2",
+                )
+                .map_err(|e| e.to_string())?;
+            let spotify = stmt
+                .query_map(
+                    params![FEATURES_VERSION, (limit - pending.len()) as i64],
+                    |r| {
+                        Ok(PendingFeatures::Spotify {
+                            uri: r.get(0)?,
+                            metadata: r.get(1)?,
+                        })
+                    },
+                )
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+            pending.extend(spotify);
+        }
+        Ok(pending)
     }
 
     pub fn tracks(&self) -> Result<Vec<TrackRecord>, String> {
@@ -173,6 +372,21 @@ impl Library {
             key_confidence: row.get(15)?,
             analysis: serde_json::from_str(&row.get::<_, String>(16)?).unwrap_or_default(),
         })
+    }
+
+    /// Local tracks whose stored analysis lacks the current beat-model stage.
+    pub fn paths_needing_beat_model(&self) -> Result<Vec<String>, String> {
+        let mut stmt = self
+            .db
+            .prepare(
+                "SELECT path FROM tracks WHERE coalesce(json_extract(analysis_json,'$.beat_model.version'),0) < ?1 ORDER BY added_at DESC,id DESC",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([audio_analysis::BEAT_MODEL_VERSION], |r| r.get(0))
+            .map_err(|e| e.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())
     }
 
     pub fn track_by_path(&self, path: &str) -> Result<Option<TrackRecord>, String> {
@@ -216,14 +430,21 @@ impl Library {
           ON CONFLICT(path) DO UPDATE SET title=excluded.title,artist=excluded.artist,duration_seconds=excluded.duration_seconds,
           bpm=excluded.bpm,key_name=excluded.key_name,sample_rate=excluded.sample_rate,waveform=excluded.waveform,camelot=excluded.camelot,key_confidence=excluded.key_confidence,analysis_json=excluded.analysis_json,beatgrid_offset_seconds=excluded.beatgrid_offset_seconds",
           params![track.path,track.title,track.artist,track.duration_seconds,bpm,track.key,track.sample_rate,waveform,now,track.camelot,track.key_confidence,analysis_json,grid_offset]).map_err(|e|e.to_string())?;
-        self.track_by_path(&track.path)?
-            .ok_or_else(|| "Imported track was not found".to_string())
+        let record = self
+            .track_by_path(&track.path)?
+            .ok_or_else(|| "Imported track was not found".to_string())?;
+        self.store_features(&[TrackFeatures::from_record(&record)])?;
+        Ok(record)
     }
 
     pub fn delete_track(&self, id: i64) -> Result<(), String> {
+        // Its suggestion features go with it (ON DELETE CASCADE).
         self.db
             .execute("DELETE FROM tracks WHERE id=?1", [id])
             .map_err(|e| e.to_string())?;
+        if let Some(cache) = self.features.borrow_mut().as_mut() {
+            cache.retain(|_, f| f.track_id != Some(id));
+        }
         Ok(()) // Original music files are never removed.
     }
 
@@ -251,6 +472,23 @@ impl Library {
                     ],
                 )
                 .map_err(|e| e.to_string())?;
+            // A manual BPM is the DJ's reading, so it is no longer ambiguous.
+            let bpm = crate::suggest::usable_bpm(Some(bpm));
+            self.db
+                .execute(
+                    "UPDATE suggest_features SET bpm=?1,bpm_ambiguous=0 WHERE source=?2",
+                    params![bpm, path],
+                )
+                .map_err(|e| e.to_string())?;
+            if let Some(f) = self
+                .features
+                .borrow_mut()
+                .as_mut()
+                .and_then(|c| c.get_mut(path))
+            {
+                f.bpm = bpm;
+                f.bpm_ambiguous = false;
+            }
         }
         if let Some(cues) = cues {
             if cues.len() != 8 || cues.iter().flatten().any(|x| !x.is_finite() || *x < 0.) {
@@ -352,6 +590,20 @@ impl Library {
         key: Option<&str>,
     ) -> Result<(), String> {
         self.db.execute("UPDATE tracks SET title=CASE WHEN ?1='' THEN title ELSE ?1 END,artist=CASE WHEN ?2='' THEN artist ELSE ?2 END,key_name=COALESCE(?3,key_name) WHERE path=?4",params![title,artist,key,path]).map_err(|e|e.to_string())?;
+        self.db.execute("UPDATE suggest_features SET title=CASE WHEN ?1='' THEN title ELSE ?1 END,artist=CASE WHEN ?2='' THEN artist ELSE ?2 END WHERE source=?3",params![title,artist,path]).map_err(|e|e.to_string())?;
+        if let Some(f) = self
+            .features
+            .borrow_mut()
+            .as_mut()
+            .and_then(|c| c.get_mut(path))
+        {
+            if !title.is_empty() {
+                f.title = title.into();
+            }
+            if !artist.is_empty() {
+                f.artist = artist.into();
+            }
+        }
         Ok(())
     }
 
@@ -547,6 +799,32 @@ mod tests {
         }
     }
     #[test]
+    fn beat_model_stage_persists_and_only_missing_stages_are_queued() {
+        let lib = Library::from_connection(Connection::open_in_memory().unwrap()).unwrap();
+        let mut done = track();
+        done.analysis.beat_model = Some(BeatModelStage {
+            version: audio_analysis::BEAT_MODEL_VERSION,
+            beats_seconds: vec![0.25, 0.75],
+            downbeats_seconds: vec![0.25],
+            grid: None,
+        });
+        let mut stale = track();
+        stale.path = "/tmp/old.wav".into();
+        stale.analysis.beat_model = Some(BeatModelStage {
+            version: 0,
+            ..done.analysis.beat_model.clone().unwrap()
+        });
+        let mut missing = track();
+        missing.path = "/tmp/missing.wav".into();
+        let saved = lib.upsert(&done).unwrap();
+        lib.upsert(&stale).unwrap();
+        lib.upsert(&missing).unwrap();
+        assert_eq!(saved.analysis.beat_model, done.analysis.beat_model);
+        let mut queued = lib.paths_needing_beat_model().unwrap();
+        queued.sort();
+        assert_eq!(queued, ["/tmp/missing.wav", "/tmp/old.wav"]);
+    }
+    #[test]
     fn persistence_and_playlist_cascade() {
         let lib = Library::from_connection(Connection::open_in_memory().unwrap()).unwrap();
         let saved = lib.upsert(&track()).unwrap();
@@ -662,5 +940,258 @@ mod tests {
             assert!(library.cache_spotify_analysis(&analysis).is_err());
         }
         std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    fn bands(level: f32) -> WaveformBands {
+        WaveformBands {
+            low: vec![level; 4096],
+            mid: vec![level * 0.5; 4096],
+            high: vec![level * 0.2; 4096],
+        }
+    }
+
+    fn cached_features(lib: &Library) -> HashMap<String, TrackFeatures> {
+        lib.with_features(|pool| pool.clone()).unwrap()
+    }
+
+    #[test]
+    fn suggestion_features_follow_every_library_write() {
+        let lib = Library::from_connection(Connection::open_in_memory().unwrap()).unwrap();
+        // Load the in-memory copy first so each write must update it.
+        assert!(cached_features(&lib).is_empty());
+        let mut record = track();
+        record.analysis.bpm_ambiguous = true;
+        record.analysis.waveform_bands = Some(bands(0.4));
+        let saved = lib.upsert(&record).unwrap();
+        let stored = &cached_features(&lib)[&saved.path];
+        assert_eq!(stored.track_id, Some(saved.id));
+        assert_eq!(stored.camelot.as_deref(), Some("8A"));
+        assert!(stored.bpm_ambiguous && stored.energy.is_some());
+        lib.metadata(&saved.path, Some(124.0), None, None).unwrap();
+        lib.tags(&saved.path, "Renamed", "", None).unwrap();
+        let edited = cached_features(&lib)[&saved.path].clone();
+        assert_eq!((edited.bpm, edited.bpm_ambiguous), (Some(124.0), false));
+        assert_eq!(
+            (edited.title.as_str(), edited.artist.as_str()),
+            ("Renamed", "DJ")
+        );
+        // The database agrees with the in-memory copy.
+        *lib.features.borrow_mut() = None;
+        assert_eq!(cached_features(&lib)[&saved.path], edited);
+        lib.delete_track(saved.id).unwrap();
+        assert!(cached_features(&lib).is_empty());
+        *lib.features.borrow_mut() = None;
+        assert!(cached_features(&lib).is_empty());
+        assert_eq!(lib.features_pending().unwrap(), 0);
+    }
+
+    #[test]
+    fn records_from_before_suggestions_get_features_in_the_background_pass() {
+        let lib = Library::from_connection(Connection::open_in_memory().unwrap()).unwrap();
+        // A local track and Spotify entries written without features, as
+        // older versions of the app stored them.
+        let mut analysis = track().analysis;
+        analysis.bpm_ambiguous = true;
+        analysis.waveform_bands = Some(bands(0.3));
+        lib.db
+            .execute(
+                "INSERT INTO tracks(path,title,artist,duration_seconds,bpm,key_name,sample_rate,waveform,added_at,camelot,key_confidence,analysis_json)
+                 VALUES('/old.wav','Old','DJ',200,122,'Am',44100,'[]','0','8A',0.7,?1)",
+                [serde_json::to_string(&analysis).unwrap()],
+            )
+            .unwrap();
+        let uri = "spotify:track:1111111111111111111111";
+        let samples = vec![[0.1; 2]; 8000];
+        let mut spotify = deck_engine::analyze_decoded_audio(
+            &samples,
+            8000,
+            &deck_engine::AudioSourceInfo {
+                id: uri.into(),
+                location: uri.into(),
+                title: "Cached".into(),
+                artist: Some("Artist".into()),
+                extension: None,
+            },
+            false,
+        )
+        .unwrap();
+        spotify.bpm = Some(124.0);
+        spotify.camelot = Some("9A".into());
+        lib.db
+            .execute(
+                "INSERT INTO spotify_analysis(uri,version,metadata,updated_at) VALUES(?1,?2,?3,0)",
+                params![
+                    uri,
+                    spotify.analysis_version,
+                    serde_json::to_string(&spotify).unwrap()
+                ],
+            )
+            .unwrap();
+        lib.db
+            .execute(
+                "INSERT INTO spotify_analysis(uri,version,metadata,updated_at) VALUES('spotify:track:2222222222222222222222',3,'{}',0)",
+                [],
+            )
+            .unwrap();
+        assert_eq!(lib.features_pending().unwrap(), 3);
+        let pending = lib.pending_features(16).unwrap();
+        assert_eq!(pending.len(), 3);
+        let computed: Vec<TrackFeatures> =
+            pending.into_iter().map(PendingFeatures::compute).collect();
+        lib.store_features(&computed).unwrap();
+        assert_eq!(lib.features_pending().unwrap(), 0);
+        assert!(lib.pending_features(16).unwrap().is_empty());
+        let pool = cached_features(&lib);
+        let old = &pool["/old.wav"];
+        assert_eq!((old.bpm, old.camelot.as_deref()), (Some(122.0), Some("8A")));
+        assert!(old.bpm_ambiguous && old.energy.is_some() && old.track_id.is_some());
+        let cached = &pool[uri];
+        assert_eq!(
+            (cached.title.as_str(), cached.artist.as_str()),
+            ("Cached", "Artist")
+        );
+        assert_eq!(
+            (cached.bpm, cached.camelot.as_deref()),
+            (Some(124.0), Some("9A"))
+        );
+        // An unreadable entry is stored as unusable so it is not retried.
+        assert_eq!(pool["spotify:track:2222222222222222222222"].bpm, None);
+    }
+
+    /// Acceptance: suggestions update within about 50 ms of a track change on
+    /// a 10,000-track library. Track loads keep the features current, so a
+    /// request is the in-memory ranking; reading them from SQLite happens once.
+    #[test]
+    fn suggestions_over_ten_thousand_stored_tracks_are_fast() {
+        use crate::suggest::{rank, EnergyDirection, Reference, LIMIT};
+        use std::collections::HashSet;
+        let lib = Library::from_connection(Connection::open_in_memory().unwrap()).unwrap();
+        let keys = ["1A", "2A", "8A", "9A", "8B", "12B", "5A", "6B", "10A", "3B"];
+        let rows: Vec<TrackFeatures> = (0..10_000)
+            .map(|i| TrackFeatures {
+                source: if i % 4 == 0 {
+                    format!("spotify:track:{i:022}")
+                } else {
+                    format!("/Users/dj/Music/Library/Artist {i}/Track {i:05}.mp3")
+                },
+                track_id: None,
+                title: format!("Track {i:05}"),
+                artist: format!("Artist {i}"),
+                duration_seconds: 180.0 + (i % 300) as f64,
+                bpm: Some(70.0 + (i % 100) as f64 * 0.9),
+                bpm_ambiguous: i % 9 == 0,
+                camelot: Some(keys[i % keys.len()].into()),
+                key_confidence: Some(0.25 + (i % 6) as f32 * 0.1),
+                energy: Some((i % 97) as f32 / 97.0),
+            })
+            .collect();
+        lib.store_features(&rows).unwrap();
+        *lib.features.borrow_mut() = None;
+        let started = std::time::Instant::now();
+        assert_eq!(cached_features(&lib).len(), 10_000);
+        let cold_ms = started.elapsed().as_secs_f64() * 1000.0;
+        let reference = Reference {
+            source: rows[1].source.clone(),
+            title: "Playing".into(),
+            bpm: Some(124.0),
+            bpm_ambiguous: false,
+            camelot: Some("8A".into()),
+            key_confidence: Some(0.7),
+            energy: Some(0.5),
+            energy_level: Some(6),
+        };
+        let excluded = HashSet::from([rows[1].source.clone(), rows[2].source.clone()]);
+        let played: HashSet<String> = rows.iter().take(200).map(|r| r.source.clone()).collect();
+        let started = std::time::Instant::now();
+        let runs = 5;
+        for _ in 0..runs {
+            let ranking = lib
+                .with_features(|pool| {
+                    rank(
+                        pool.values(),
+                        &reference,
+                        EnergyDirection::Keep,
+                        10.0,
+                        &excluded,
+                        &played,
+                        LIMIT,
+                    )
+                })
+                .unwrap();
+            assert_eq!(ranking.suggestions.len(), LIMIT);
+            assert!(ranking.suggestions.iter().take(10).all(|s| !s.key_clash));
+        }
+        let warm_ms = started.elapsed().as_secs_f64() * 1000.0 / runs as f64;
+        eprintln!("10,000 tracks: first load {cold_ms:.1} ms, request {warm_ms:.2} ms");
+        assert!(warm_ms < 50.0, "{warm_ms:.2} ms per request");
+        assert!(cold_ms < 2000.0, "{cold_ms:.0} ms to load features");
+    }
+
+    /// Prints the top suggestions for every track of a real library. It
+    /// writes features into the database, so point it at a copy:
+    /// `PULSEDECK_LIBRARY=/tmp/copy.sqlite3 cargo test -p pulsedeck -- --ignored --nocapture real_library`
+    #[test]
+    #[ignore = "needs PULSEDECK_LIBRARY set to a copy of a library database"]
+    fn real_library_suggestions() {
+        use crate::suggest::{energy_level, rank, EnergyDirection, Reference};
+        use std::collections::HashSet;
+        let Ok(path) = std::env::var("PULSEDECK_LIBRARY") else {
+            return;
+        };
+        let lib = Library::open(Path::new(&path)).unwrap();
+        let started = std::time::Instant::now();
+        let prepared = lib.features_pending().unwrap();
+        loop {
+            let batch = lib.pending_features(64).unwrap();
+            if batch.is_empty() {
+                break;
+            }
+            let features: Vec<TrackFeatures> =
+                batch.into_iter().map(PendingFeatures::compute).collect();
+            lib.store_features(&features).unwrap();
+        }
+        eprintln!(
+            "prepared {prepared} tracks in {:.0} ms",
+            started.elapsed().as_secs_f64() * 1000.0
+        );
+        let pool = cached_features(&lib);
+        let mut playing: Vec<&TrackFeatures> = pool.values().filter(|f| f.bpm.is_some()).collect();
+        playing.sort_by(|a, b| a.title.cmp(&b.title));
+        for track in playing {
+            let reference = Reference {
+                source: track.source.clone(),
+                title: track.title.clone(),
+                bpm: track.bpm,
+                bpm_ambiguous: track.bpm_ambiguous,
+                camelot: track.camelot.clone(),
+                key_confidence: track.key_confidence,
+                energy: track.energy,
+                energy_level: track.energy.map(energy_level),
+            };
+            for (direction, range) in [(EnergyDirection::Keep, 6.0), (EnergyDirection::Raise, 16.0)]
+            {
+                let ranking = rank(
+                    pool.values(),
+                    &reference,
+                    direction,
+                    range,
+                    &HashSet::from([track.source.clone()]),
+                    &HashSet::new(),
+                    4,
+                );
+                eprintln!(
+                    "{} ({:.1} bpm, {}, energy {}) {direction:?} ±{range}%: {} in reach, {} out of range",
+                    track.title,
+                    track.bpm.unwrap_or_default(),
+                    track.camelot.as_deref().unwrap_or("?"),
+                    reference.energy_level.unwrap_or_default(),
+                    ranking.considered,
+                    ranking.out_of_range
+                );
+                for s in ranking.suggestions {
+                    eprintln!("    {:.2}  {}  [{}]", s.score, s.title, s.reason);
+                }
+            }
+        }
     }
 }

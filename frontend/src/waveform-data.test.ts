@@ -9,7 +9,41 @@ import {
   waveformSeekSeconds,
   beatSpacingFraction,
   waveformBarBeat,
+  displaySections,
+  nextSection,
 } from "./waveform-data.ts";
+test("sections merge repeated labels and count bars to the next one", () => {
+  const stage = {
+    version: 1,
+    bpm: 120,
+    downbeat_offset_seconds: 0.5,
+    vocabulary: "dance" as const,
+    sections: [
+      { start_seconds: 0.5, bars: 16, label: "intro" as const },
+      { start_seconds: 32.5, bars: 8, label: "drop" as const },
+      { start_seconds: 48.5, bars: 8, label: "drop" as const },
+      { start_seconds: 64.5, bars: 4, label: null },
+      { start_seconds: 72.5, bars: 8, label: null },
+      { start_seconds: 88.5, bars: 8, label: "outro" as const },
+    ].map((s) => ({ ...s, energy: 0.5, groove: 0.5, rise: 0, group: 0 })),
+  };
+  const shown = displaySections(stage, 100);
+  assert.deepEqual(
+    shown.map((s) => [s.start, s.end, s.bars, s.label]),
+    [
+      [0.5, 32.5, 16, "intro"],
+      [32.5, 64.5, 16, "drop"],
+      [64.5, 72.5, 4, null],
+      [72.5, 88.5, 8, null],
+      [88.5, 100, 8, "outro"],
+    ],
+  );
+  // Two seconds per bar at 120 BPM: 31 s into the intro, the drop is a bar away.
+  assert.deepEqual(nextSection(shown, 31, 120), { label: "drop", bars: 1 });
+  assert.deepEqual(nextSection(shown, 0.5, 120), { label: "drop", bars: 16 });
+  assert.equal(nextSection(shown, 95, 120), null);
+  assert.deepEqual(displaySections(null, 100), []);
+});
 test("compressed overview retains a narrow transient instead of sampling past it", () => {
   const peaks = Array(4096).fill(0);
   peaks[2047] = 0.9;

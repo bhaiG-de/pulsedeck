@@ -3,8 +3,16 @@ name = "audio-analysis"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "Bounded offline tempo, tonal key and frequency-band waveform analysis"
+description = "Bounded offline tempo, tonal key, beat and frequency-band waveform analysis"
 
 [dependencies]
+audioadapter-buffers = "5"
+rayon = "1"
+rubato = "5.0.1"
 serde = { version = "1", features = ["derive"] }
 rustfft = "6.4.1"
+tract-linalg = { version = "0.23.8", features = ["multithread-mm"] }
+tract-onnx = "0.23.8"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"

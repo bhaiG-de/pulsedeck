@@ -1,0 +1,21 @@
+[package]
+name = "beat-model-spike"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "Beat This! feasibility spike: tract inference compared against the Python reference"
+
+# Standalone: not a member of the PulseDeck workspace.
+[workspace]
+
+[dependencies]
+audio-analysis = { path = "../../../crates/audio-analysis" }
+audioadapter-buffers = "5"
+rubato = "5.0.1"
+rustfft = "6.4"
+serde_json = "1.0.154"
+symphonia = { version = "=0.5.5", features = ["all"] }
+tract-core = "0.23.8"
+tract-linalg = { version = "0.23.8", features = ["multithread-mm"] }
+tract-onnx = "0.23.8"

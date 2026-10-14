@@ -12,6 +12,7 @@ export default function TrackDrawer({
   open,
   onClose,
   title,
+  icon,
   children,
   controllerCloseFocused = false,
   controllerPaneFocused = false,
@@ -20,6 +21,7 @@ export default function TrackDrawer({
   open: boolean;
   onClose: () => void;
   title: string;
+  icon?: ReactNode;
   children: ReactNode;
   controllerCloseFocused?: boolean;
   controllerPaneFocused?: boolean;
@@ -144,10 +146,10 @@ export default function TrackDrawer({
         </div>
         <header className="drawer-heading">
           <div>
+            {icon && <span className="drawer-icon">{icon}</span>}
             <h2 id="track-drawer-title" ref={heading} tabIndex={-1}>
               {title}
             </h2>
-            <p>Load A or B, or drag a track onto a deck.</p>
           </div>
           <button
             ref={closeButton}
@@ -160,10 +162,6 @@ export default function TrackDrawer({
           </button>
         </header>
         <div className="drawer-content">{children}</div>
-        <footer className="drawer-footer">
-          <span>Drag the handle to resize</span>
-          <button onClick={onClose}>Close</button>
-        </footer>
       </section>
     </>
   );

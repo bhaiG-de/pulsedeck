@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Local deck controls and track selection",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:default"]
+  "permissions": ["core:default", "core:window:allow-start-dragging", "dialog:default"]
 }

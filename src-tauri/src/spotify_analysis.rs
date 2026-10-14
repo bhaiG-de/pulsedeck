@@ -176,7 +176,12 @@ fn run_page(app: &tauri::AppHandle, queue: Vec<String>, cancel: Arc<AtomicBool>)
             .lock()
             .ok()
             .and_then(|cache| cache.spotify_analysis(&uri).ok().flatten());
-        if cached.is_some() {
+        let beat_model = state.beat_model_spotify.load(Ordering::Acquire);
+        // Cached entries without the current beat and section stage are upgraded in place.
+        if cached
+            .as_ref()
+            .is_some_and(|c| !beat_model || crate::beat_stage_current(c))
+        {
             if let Ok(mut b) = state.spotify_analysis.0.lock() {
                 b.status.completed += 1;
                 b.status.cached += 1;
@@ -226,22 +231,41 @@ fn run_page(app: &tauri::AppHandle, queue: Vec<String>, cancel: Arc<AtomicBool>)
                 if current.load(Ordering::Acquire) {
                     return Err("Analysis interrupted".into());
                 }
-                let analysis = deck_engine::analyze_decoded_audio(
-                    &source.samples,
-                    source.sample_rate,
-                    &AudioSourceInfo {
-                        id: uri.clone(),
-                        location: uri.clone(),
-                        title: source.metadata.title,
-                        artist: Some(source.metadata.artists.join(", ")),
-                        extension: None,
-                    },
-                    false,
-                )?;
-                if current.load(Ordering::Acquire) {
+                let mut analysis = match cached.clone() {
+                    // Keep the cached key, waveform and manual edits; add beats only.
+                    Some(cached) => cached,
+                    None => deck_engine::analyze_decoded_audio(
+                        &source.samples,
+                        source.sample_rate,
+                        &AudioSourceInfo {
+                            id: uri.clone(),
+                            location: uri.clone(),
+                            title: source.metadata.title,
+                            artist: Some(source.metadata.artists.join(", ")),
+                            extension: None,
+                        },
+                        false,
+                    )?,
+                };
+                let interrupted = || current.load(Ordering::Acquire);
+                let mut model_error = None;
+                if beat_model {
+                    match deck_engine::analyze_beats_and_sections(
+                        &source.samples,
+                        source.sample_rate,
+                        &mut analysis,
+                        &interrupted,
+                    ) {
+                        Ok(()) => {}
+                        Err(_) if interrupted() => return Err("Analysis interrupted".into()),
+                        Err(e) => model_error = Some(e),
+                    }
+                }
+                if interrupted() {
                     return Err("Analysis interrupted".into());
                 }
-                store(app, &analysis)
+                store(app, &analysis)?;
+                model_error.map_or(Ok(()), |e| Err(format!("Beat analysis failed: {e}")))
             })();
             drop(guard);
             if let Ok(mut b) = state.spotify_analysis.0.lock() {

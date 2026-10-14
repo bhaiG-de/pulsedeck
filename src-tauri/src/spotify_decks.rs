@@ -190,7 +190,28 @@ pub async fn load_spotify_track(
                 cached,
             )?;
             crate::spotify_analysis::store(&app, &analysis)?;
-            Ok(analysis)
+            if !crate::beat_stage_current(&analysis) {
+                if state.beat_model_spotify.load(Ordering::Acquire) {
+                    crate::spawn_beat_model(&app, deck, request);
+                }
+                return Ok(analysis);
+            }
+            // Spotify cues are not stored between loads: fill a fresh deck from
+            // the cached sections.
+            match crate::place_auto_cues(
+                &app,
+                &state,
+                deck,
+                analysis.clone(),
+                Some(([None; 8], [None; 10])),
+                true,
+            ) {
+                Ok(updated) => Ok(updated),
+                Err(e) => {
+                    state.message(format!("Auto cues could not be placed: {e}"));
+                    Ok(analysis)
+                }
+            }
         })();
         state
             .source_jobs

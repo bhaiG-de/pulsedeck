@@ -1,9 +1,11 @@
-import type { WaveformBands } from "./types";
+import type { SectionLabel, SectionStage, WaveformBands } from "./types";
 
+/* OP-1 screen palette: blue lows, green mids, white highs. The mixer's EQ
+   caps use the same three colours, so a knob points at its band. */
 export const BAND_COLORS = {
-  low: "#0055e1",
-  mid: "#ffa600",
-  high: "#ffffff",
+  low: "#3f7dff",
+  mid: "#35d07f",
+  high: "#f4f4f2",
 } as const;
 
 export function hasWaveformBands(
@@ -201,3 +203,73 @@ export const HOT_CUE_COLORS = [
   "#8a9ae8",
   "#c58adc",
 ] as const;
+
+export const SECTION_COLORS: Record<SectionLabel, string> = {
+  intro: "#8b95a7",
+  build_up: "#e8b339",
+  drop: "#ff5a4f",
+  breakdown: "#4fc3c3",
+  verse: "#9b8cff",
+  hook: "#ff7ad9",
+  outro: "#8b95a7",
+};
+export const UNLABELLED_SECTION = "#5a5a60";
+export const SECTION_NAMES: Record<SectionLabel, string> = {
+  intro: "Intro",
+  build_up: "Build-up",
+  drop: "Drop",
+  breakdown: "Breakdown",
+  verse: "Verse",
+  hook: "Hook",
+  outro: "Outro",
+};
+
+export interface DisplaySection {
+  start: number;
+  end: number;
+  bars: number;
+  label: SectionLabel | null;
+}
+
+/** Sections as drawn: neighbours with the same label merge, as the cue planner does. */
+export function displaySections(
+  stage: SectionStage | null | undefined,
+  duration: number,
+): DisplaySection[] {
+  if (!stage?.sections?.length || !(stage.bpm > 0)) return [];
+  const bar = 240 / stage.bpm;
+  const merged: DisplaySection[] = [];
+  for (const s of stage.sections) {
+    const last = merged[merged.length - 1];
+    if (last && last.label !== null && last.label === s.label) {
+      last.bars += s.bars;
+    } else {
+      merged.push({
+        start: s.start_seconds,
+        end: s.start_seconds,
+        bars: s.bars,
+        label: s.label,
+      });
+    }
+  }
+  return merged.map((s, i) => ({
+    ...s,
+    end: Math.min(
+      Number.isFinite(duration) && duration > 0 ? duration : Infinity,
+      merged[i + 1]?.start ?? s.start + s.bars * bar,
+    ),
+  }));
+}
+
+/** The next section after `position`, with whole bars left until it starts. */
+export function nextSection(
+  sections: DisplaySection[],
+  position: number,
+  bpm: number,
+): { label: SectionLabel | null; bars: number } | null {
+  if (!Number.isFinite(position) || !(bpm > 0)) return null;
+  const next = sections.find((s) => s.start > position + 1e-3);
+  if (!next) return null;
+  const bars = Math.ceil((next.start - position) / (240 / bpm) - 1e-6);
+  return { label: next.label, bars: Math.max(1, bars) };
+}

@@ -20,6 +20,20 @@ export function beatPhaseDelta(
   if (a === null || b === null) return null;
   return ((((b - a + 0.5) % 1) + 1) % 1) - 0.5;
 }
+/** Move a grid origin by whole beats, reduced to within one bar (four beats). */
+export function shiftBeatOne(
+  offset: number,
+  bpm: number,
+  beats: number,
+): number {
+  if (!Number.isFinite(offset) || !Number.isFinite(bpm) || bpm <= 0)
+    return offset;
+  const beat = 60 / bpm;
+  const bar = 4 * beat;
+  const shifted = (offset + beats * beat) % bar;
+  return shifted < 0 ? shifted + bar : shifted;
+}
+
 export function snapToBeat(
   seconds: number,
   bpm: number,

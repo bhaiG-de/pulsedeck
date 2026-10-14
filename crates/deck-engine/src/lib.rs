@@ -11,7 +11,10 @@ use cpal::{
     SampleFormat, StreamConfig,
 };
 use decode::TrackData;
-pub use decode::{analyze_file, AudioSourceInfo};
+pub use decode::{
+    analyze_beats_and_sections, analyze_file, analyze_file_with_beat_model, apply_beat_model,
+    refresh_sections, AudioSourceInfo,
+};
 use dsp::Mixer;
 pub use model::*;
 pub use recording::RecordingStatus;
@@ -578,11 +581,21 @@ impl EngineHandle {
             .map_err(|_| "Audio command queue is full; retry shortly".into())
     }
     pub fn load_track(&self, deck: usize, path: &Path) -> Result<TrackAnalysis, String> {
+        self.load_track_cached(deck, path, None)
+    }
+    /// Load a file, reusing a stored analysis when it still matches the decoded
+    /// audio (same path, rate, duration and waveform shape); otherwise analyze.
+    pub fn load_track_cached(
+        &self,
+        deck: usize,
+        path: &Path,
+        cached: Option<TrackAnalysis>,
+    ) -> Result<TrackAnalysis, String> {
         if deck > 1 {
             return Err("Deck must be 0 or 1".into());
         }
         let generation = self.begin_load(deck)?;
-        let track = decode::decode_file(path)?;
+        let track = decode::decode_file_cached(path, cached)?;
         self.load_data(deck, track, generation)
     }
     /// Load the other deck's RAM asset without decoding, then copy its actual
@@ -813,35 +826,108 @@ impl EngineHandle {
             .fetch_add(1, Ordering::Release);
         Ok(analysis)
     }
-    /// Reanalyze the deck's existing RAM source on the calling worker. Native
-    /// position, playback, cues, manual BPM and grid are deliberately untouched.
-    pub fn reanalyze_loaded(&self, deck: usize) -> Result<TrackAnalysis, String> {
+    /// Run the neural beat stage on the deck's RAM source (blocks the calling
+    /// worker for seconds) and replace the deck's metadata if the same load is
+    /// still current. Transport, BPM and grid commands are left to the caller.
+    pub fn beat_model_loaded(&self, deck: usize) -> Result<TrackAnalysis, String> {
+        let (source, mut analysis, generation) = self.loaded_source(deck)?;
+        let replaced = || self.shared.load_generation[deck].load(Ordering::Acquire) != generation;
+        decode::analyze_beats_and_sections(
+            &source.samples,
+            source.sample_rate,
+            &mut analysis,
+            &replaced,
+        )?;
+        self.replace_loaded_metadata(deck, generation, analysis)
+    }
+    /// Re-cut the loaded deck's sections on the given grid (a fraction of a
+    /// second per track; no model) and replace its metadata.
+    pub fn sections_loaded(
+        &self,
+        deck: usize,
+        bpm: f64,
+        offset_seconds: f64,
+    ) -> Result<TrackAnalysis, String> {
+        let (source, mut analysis, generation) = self.loaded_source(deck)?;
+        decode::refresh_sections(
+            &source.samples,
+            source.sample_rate,
+            &mut analysis,
+            bpm,
+            offset_seconds,
+        )?;
+        self.replace_loaded_metadata(deck, generation, analysis)
+    }
+    /// Change the loaded deck's metadata in place (vocabulary choice, auto-cue
+    /// record) if the same track is still loaded.
+    pub fn update_loaded_analysis(
+        &self,
+        deck: usize,
+        track_id: &str,
+        change: impl FnOnce(&mut TrackAnalysis),
+    ) -> Result<TrackAnalysis, String> {
+        let (_, mut analysis, generation) = self.loaded_source(deck)?;
+        if analysis.id != track_id {
+            return Err("Track changed".into());
+        }
+        change(&mut analysis);
+        self.replace_loaded_metadata(deck, generation, analysis)
+    }
+    fn loaded_source(&self, deck: usize) -> Result<(Arc<TrackData>, TrackAnalysis, u64), String> {
         if deck > 1 {
             return Err("Deck must be 0 or 1".into());
         }
-        let (source, current, generation) = {
-            let tracks = self
-                .shared
-                .tracks
-                .lock()
-                .map_err(|_| "Track cache poisoned")?;
-            let current = tracks[deck].clone().ok_or("Deck has no loaded track")?;
-            let settings = self
-                .shared
-                .preparation
-                .settings
-                .lock()
-                .map_err(|_| "Preparation settings poisoned")?;
-            let source = settings[deck]
-                .source
-                .clone()
-                .ok_or("Deck audio source is unavailable")?;
-            (
-                source,
-                current,
-                self.shared.load_generation[deck].load(Ordering::Acquire),
-            )
-        };
+        let tracks = self
+            .shared
+            .tracks
+            .lock()
+            .map_err(|_| "Track cache poisoned")?;
+        let current = tracks[deck].clone().ok_or("Deck has no loaded track")?;
+        let settings = self
+            .shared
+            .preparation
+            .settings
+            .lock()
+            .map_err(|_| "Preparation settings poisoned")?;
+        let source = settings[deck]
+            .source
+            .clone()
+            .ok_or("Deck audio source is unavailable")?;
+        Ok((
+            source,
+            current,
+            self.shared.load_generation[deck].load(Ordering::Acquire),
+        ))
+    }
+    fn replace_loaded_metadata(
+        &self,
+        deck: usize,
+        generation: u64,
+        analysis: TrackAnalysis,
+    ) -> Result<TrackAnalysis, String> {
+        let mut tracks = self
+            .shared
+            .tracks
+            .lock()
+            .map_err(|_| "Track cache poisoned")?;
+        if self.shared.load_generation[deck].load(Ordering::Acquire) != generation
+            || tracks[deck]
+                .as_ref()
+                .is_none_or(|track| track.id != analysis.id)
+        {
+            return Err("Track changed during analysis".into());
+        }
+        tracks[deck] = Some(analysis.clone());
+        self.shared
+            .metadata_revision
+            .fetch_add(1, Ordering::Release);
+        Ok(analysis)
+    }
+    /// Reanalyze the deck's existing RAM source on the calling worker, including
+    /// the beat model. Native position, playback and cues are untouched; the
+    /// caller decides whether the new BPM and grid reach the deck.
+    pub fn reanalyze_loaded(&self, deck: usize) -> Result<TrackAnalysis, String> {
+        let (source, current, generation) = self.loaded_source(deck)?;
         let mut analysis = decode::analyze_pcm(
             &source.samples,
             source.sample_rate,
@@ -867,23 +953,22 @@ impl EngineHandle {
             analysis.beatgrid_confidence = phase.map(|p| p.confidence);
             analysis.beatgrid_source = analysis.beatgrid_offset_seconds.map(|_| "tag".into());
         }
-        let mut tracks = self
-            .shared
-            .tracks
-            .lock()
-            .map_err(|_| "Track cache poisoned")?;
-        if self.shared.load_generation[deck].load(Ordering::Acquire) != generation
-            || tracks[deck]
-                .as_ref()
-                .is_none_or(|track| track.id != analysis.id)
-        {
-            return Err("Track changed during analysis".into());
+        let replaced = || self.shared.load_generation[deck].load(Ordering::Acquire) != generation;
+        // Keep the DJ's vocabulary choice and auto-cue record across reanalysis.
+        analysis.sections = current.sections.clone();
+        analysis.auto_cues = current.auto_cues.clone();
+        match decode::analyze_beats_and_sections(
+            &source.samples,
+            source.sample_rate,
+            &mut analysis,
+            &replaced,
+        ) {
+            Ok(()) => {}
+            Err(_) if replaced() => return Err("Track changed during analysis".into()),
+            // Keep the DSP result; the stage stays unset so a later pass retries.
+            Err(_) => {}
         }
-        tracks[deck] = Some(analysis.clone());
-        self.shared
-            .metadata_revision
-            .fetch_add(1, Ordering::Release);
-        Ok(analysis)
+        self.replace_loaded_metadata(deck, generation, analysis)
     }
     /// Fast transport/meters only: no metadata mutex or waveform-vector clones.
     pub fn transport_snapshot(&self) -> EngineSnapshot {
@@ -1842,6 +1927,38 @@ mod reanalysis_tests {
         assert_eq!(before.hot_cues, after.hot_cues);
         assert_eq!(after.bpm, Some(128.0));
         assert_eq!(after.beatgrid_offset_seconds, 0.12);
+    }
+
+    #[test]
+    fn beat_model_updates_loaded_metadata_but_not_the_deck_grid() {
+        let engine = EngineHandle::new().unwrap();
+        engine.load_demo(0).unwrap();
+        engine
+            .command(EngineCommand::SetBeatgrid {
+                deck: 0,
+                offset_seconds: 0.07,
+            })
+            .unwrap();
+        let revision = engine.metadata_revision();
+        let updated = engine.beat_model_loaded(0).unwrap();
+        let stage = updated.beat_model.as_ref().expect("stage recorded");
+        let grid = stage.usable_grid().expect("demo loop has a clear pulse");
+        assert!((grid.bpm - 120.0).abs() < 0.5, "{grid:?}");
+        assert_eq!(updated.bpm_source.as_deref(), Some("model"));
+        assert!(engine.metadata_revision() > revision);
+        assert!(engine.metadata_snapshot().tracks[0]
+            .as_ref()
+            .is_some_and(|t| t.beat_model.is_some()));
+        // Applying a new grid to a loaded deck is the caller's decision.
+        for _ in 0..100 {
+            if engine.snapshot().decks[0].beatgrid_offset_seconds == 0.07 {
+                break;
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(engine.snapshot().decks[0].beatgrid_offset_seconds, 0.07);
+        engine.unload(0).unwrap();
+        assert!(engine.beat_model_loaded(0).is_err());
     }
 }
 

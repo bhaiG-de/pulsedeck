@@ -1,6 +1,20 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { beatPosition, beatPhaseDelta, snapToBeat } from "./mixing-view.ts";
+import {
+  beatPosition,
+  beatPhaseDelta,
+  shiftBeatOne,
+  snapToBeat,
+} from "./mixing-view.ts";
+test("beat 1 shifts by whole beats and stays within one bar", () => {
+  const close = (a: number, b: number) =>
+    assert.ok(Math.abs(a - b) < 1e-9, `${a} vs ${b}`);
+  close(shiftBeatOne(0.11, 120, 1), 0.61);
+  close(shiftBeatOne(0.11, 120, -1), 1.61);
+  close(shiftBeatOne(1.61, 120, 1), 0.11);
+  close(shiftBeatOne(5.0, 120, 0), 1.0);
+  assert.equal(shiftBeatOne(0.3, 0, 1), 0.3);
+});
 test("aligned source-time grids compare correctly across different BPMs and pickup offsets", () => {
   assert.equal(beatPosition(1.125, 120, 0.125), 2);
   assert.ok(Math.abs(beatPosition(1.8, 100, 0.6)! - 2) < 1e-9);

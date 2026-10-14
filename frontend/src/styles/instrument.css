@@ -1,0 +1,2403 @@
+/* The performance surface: one instrument body with a top screen, two deck
+   modules and a centre mixer, all milled from the same plate. */
+
+.app-shell {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: 100%;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--chassis);
+  color: var(--ink);
+}
+
+/* Printed legends: lowercase, like the labels silk-screened on hardware. */
+.app-shell
+  :is(.deck, .mixer-column, .topbar, .waveform-tools, .sampler-strip)
+  :is(button, label, small, span, em) {
+  text-transform: lowercase;
+}
+
+/* ── Header ───────────────────────────────────────────────────────── */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 52px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--seam);
+  box-shadow: 0 1px 0 var(--key-hi);
+  position: relative;
+  z-index: 5;
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+/* Brand mark: a dot-field record; the spindle dot breathes. */
+.brand-mark {
+  display: block;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  fill: var(--ink);
+}
+.brand-mark .live {
+  fill: var(--signal);
+  animation: brand-pulse 2.4s ease-in-out infinite;
+}
+@keyframes brand-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.brand strong {
+  font-size: 19px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  text-transform: lowercase;
+}
+.version {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--ink-3);
+  padding: 2px 5px;
+  border: 1px solid var(--seam);
+  border-radius: 4px;
+}
+.topbar-center {
+  /* Empty spacer between the button groups; also a window drag area. */
+  flex: 1;
+  align-self: stretch;
+  min-width: 24px;
+}
+.topbar-center > * {
+  display: none;
+}
+.top-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+/* Live recording key: appears only while the mix is being recorded. */
+.record-live {
+  padding: 0 11px;
+  gap: 6px;
+  border-color: color-mix(in srgb, var(--signal) 70%, #000);
+  background: var(--signal);
+  color: #fff;
+  font-size: 11px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.25),
+    0 0 0 3px color-mix(in srgb, var(--signal) 20%, transparent);
+  animation: rec-breathe 1.6s ease-in-out infinite;
+}
+.record-live:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--signal) 90%, #000);
+}
+.record-live svg {
+  animation: brand-pulse 1.2s ease-in-out infinite;
+}
+@keyframes rec-breathe {
+  50% {
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.25),
+      0 0 0 6px color-mix(in srgb, var(--signal) 8%, transparent);
+  }
+}
+.connection-chip,
+.controller-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 8px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-3);
+  white-space: nowrap;
+}
+/* Audio status: a black pill readout, like a recorder's battery gauge. */
+.connection-chip {
+  height: 24px;
+  padding: 0 10px;
+  border-radius: var(--r-pill);
+  background: var(--screen);
+  color: var(--screen-dim);
+}
+.connection-chip.connected {
+  color: var(--screen-ink);
+}
+.controller-chip {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  font-weight: 400;
+}
+.controller-chip:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+}
+.connected {
+  color: var(--ok-ink);
+}
+.controller-chip.connected svg {
+  color: var(--ok);
+}
+.topbar .icon-button {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--key-edge);
+  background: linear-gradient(var(--key-top), var(--key-bottom));
+  box-shadow:
+    inset 0 1px 0 var(--key-hi),
+    0 1px 1px var(--key-shadow);
+  color: var(--ink-2);
+}
+.source-picker {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--ink-3);
+}
+.source-picker select {
+  height: 30px;
+  min-width: 118px;
+  font-family: var(--font-ui);
+  text-transform: none;
+}
+.topbar .import-button {
+  height: 30px;
+  padding: 0 13px;
+  font-size: 11px;
+  text-transform: none;
+}
+
+/* ── Title bar ──────────────────────────────────────────────────────
+   The header replaces the macOS title bar (overlay style): its empty areas
+   drag the window and the traffic lights sit in the left gutter. */
+.topbar {
+  height: 44px;
+  padding: 0 12px 0 84px;
+  cursor: default;
+  -webkit-user-select: none;
+  user-select: none;
+}
+/* One control height for everything in the header. */
+.topbar {
+  --control: 28px;
+}
+.topbar .app-menu-trigger,
+.topbar .record-live,
+.topbar .import-progress {
+  height: var(--control);
+  min-height: 0;
+}
+.topbar .brand strong {
+  font-size: 16px;
+}
+.topbar .version {
+  display: none;
+}
+
+/* ── Trays (header, deck footer) ────────────────────────────────────
+   Like the deck's mode selector: options sit flush in a recessed groove and
+   the active one rises as a key. */
+.tray {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: var(--control, 28px);
+  padding: 2px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--well) 60%, var(--plate));
+  box-shadow:
+    inset 0 1px 2px var(--key-shadow),
+    0 1px 0 var(--key-hi);
+}
+.tray button {
+  position: relative;
+  height: calc(var(--control, 28px) - 4px);
+  min-height: 0;
+  padding: 0 10px;
+  gap: 6px;
+  border-color: transparent;
+  border-radius: 7px;
+  background: transparent;
+  box-shadow: none;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-2);
+}
+.tray button:hover:not(:disabled) {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--key-top) 55%, transparent);
+}
+.tray button:active:not(:disabled) {
+  transform: none;
+}
+.tray button:is(.active, .loop-on, .enabled) {
+  color: var(--ink);
+  border-color: var(--key-edge);
+  background: linear-gradient(var(--key-top), var(--key-bottom));
+  box-shadow:
+    inset 0 1px 0 var(--key-hi),
+    0 1px 1px var(--key-shadow);
+}
+.tray button.active svg {
+  color: var(--signal);
+}
+.topbar .top-actions {
+  gap: 10px;
+}
+
+/* App menu: occasional actions live behind one key. */
+.app-menu {
+  position: relative;
+}
+.topbar .app-menu-trigger {
+  width: auto;
+  padding: 0 7px 0 8px;
+  gap: 3px;
+  color: var(--ink-2);
+}
+.topbar .app-menu-trigger[aria-expanded="true"] {
+  background: var(--key-pressed);
+  box-shadow: inset 0 1px 2px var(--key-shadow);
+}
+.app-menu-list {
+  width: 230px;
+  z-index: 80;
+}
+.topbar .app-menu-list button {
+  gap: 10px;
+  height: 36px;
+  padding: 0 10px;
+  font-size: 12px;
+  color: var(--ink);
+}
+.topbar .app-menu-list button svg {
+  width: 14px;
+  color: var(--ink-3);
+}
+.topbar .app-menu-list button:first-child svg {
+  color: var(--signal);
+}
+.topbar .app-menu-list button.is-recording {
+  color: var(--signal-ink);
+}
+.topbar .app-menu-list button[aria-checked="true"] > svg:last-child {
+  margin-left: auto;
+  color: var(--signal);
+}
+
+/* Import progress: a small black readout, only while analysing. */
+.import-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 11px;
+  border-radius: var(--r-pill);
+  background: var(--screen);
+  color: var(--screen-ink);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+/* The menu key lights amber while audio is stopped. */
+.topbar .app-menu-trigger.alert::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--warn);
+  box-shadow: 0 0 5px var(--warn);
+}
+.topbar .app-menu-trigger {
+  position: relative;
+}
+/* Status rows at the top of the menu; each opens its settings tab. */
+.topbar .app-menu-list .menu-status {
+  color: var(--ink);
+}
+.topbar .app-menu-list .menu-status .tiny-dot {
+  margin: 0 3px 0 4px;
+}
+.topbar .app-menu-list .menu-status small {
+  font-size: 10px;
+  color: var(--ink-3);
+}
+.app-menu-list hr {
+  height: 1px;
+  margin: 4px 6px;
+  border: 0;
+  background: var(--seam-soft);
+}
+.dropdown hr + button {
+  border-top: 0;
+}
+
+/* ── Workspace ────────────────────────────────────────────────────── */
+.workspace {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+}
+.workspace main {
+  position: relative;
+  display: grid;
+  grid-template-rows: minmax(150px, 0.28fr) minmax(0, 0.72fr);
+  gap: 12px;
+  padding: 12px 14px;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* ── The main screen: both decks' scrolling waveforms ─────────────── */
+.stacked-waveforms {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--screen-ink);
+  background:
+    repeating-linear-gradient(
+      0deg,
+      rgba(255, 255, 255, 0.022) 0 1px,
+      transparent 1px 3px
+    ),
+    var(--screen);
+  border: 1px solid var(--bezel);
+  border-radius: var(--r-screen);
+  /* Bezel: the screen sits in a machined pocket of the plate. */
+  box-shadow:
+    0 0 0 5px var(--plate),
+    0 0 0 6px var(--seam),
+    0 1px 0 6px var(--key-hi),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.03),
+    inset 0 18px 30px -24px rgba(255, 255, 255, 0.14);
+  margin: 6px 6px 4px;
+}
+.waveform-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 34px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--screen-line);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--screen-dim);
+}
+/* Buttons drawn on the screen are outlines, not keys. */
+.stacked-waveforms button {
+  min-height: 22px;
+  padding: 0 7px;
+  color: var(--screen-ink);
+  background: transparent;
+  border: 1px solid var(--screen-line);
+  border-radius: 4px;
+  box-shadow: none;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 400;
+}
+.stacked-waveforms button:hover:not(:disabled) {
+  background: var(--screen-raise);
+  border-color: var(--screen-faint);
+}
+.stacked-waveforms button:active:not(:disabled) {
+  background: var(--screen-line);
+  transform: none;
+}
+.linked-zoom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.linked-zoom button {
+  width: 22px;
+  padding: 0;
+}
+.linked-zoom span {
+  min-width: 52px;
+  text-align: center;
+  color: var(--screen-ink);
+}
+.linked-zoom .reset-wave-zoom {
+  width: auto;
+  border-color: transparent;
+  color: var(--screen-dim);
+}
+.waveform-alignment {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--screen-dim);
+}
+.waveform-alignment strong {
+  min-width: 70px;
+  font-weight: 400;
+  color: var(--screen-ink);
+  font-variant-numeric: tabular-nums;
+}
+.phase-gauge {
+  position: relative;
+  width: 132px;
+  height: 14px;
+  /* Ruler: a long centre tick and dotted quarters, like a tuner scale. */
+  background:
+    linear-gradient(var(--screen-faint), var(--screen-faint)) 0 100% / 100% 1px
+      no-repeat,
+    radial-gradient(circle, var(--screen-faint) 1px, transparent 1.5px) 0 4px /
+      11px 6px repeat-x;
+}
+.phase-center {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 1px;
+  height: 14px;
+  background: var(--screen-ink);
+}
+.phase-dot {
+  position: absolute;
+  bottom: -3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--warn);
+  transform: translateX(-50%);
+  transition: left 60ms linear;
+}
+.phase-dot.aligned {
+  background: var(--ok);
+  box-shadow: 0 0 8px var(--ok);
+}
+.tempo-difference {
+  padding-left: 10px;
+  border-left: 1px solid var(--screen-line);
+}
+.snap-seek.enabled {
+  color: var(--screen);
+  background: var(--screen-ink);
+  border-color: var(--screen-ink);
+}
+.stacked-waveforms button.snap-seek.enabled:hover {
+  background: #fff;
+  color: var(--screen);
+}
+.stacked-wave-row {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  background: transparent;
+}
+.stacked-wave-row + .stacked-wave-row {
+  border-top: 1px solid var(--screen-line);
+}
+.stacked-wave-row > .waveform {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  border: 0;
+  background: transparent;
+  cursor: grab;
+}
+.stacked-wave-row > .waveform:active {
+  cursor: grabbing;
+}
+/* Boxed deck number, as on a pocket synth's screen. */
+.scrolling-deck-label {
+  position: absolute;
+  left: 9px;
+  top: 8px;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 17px;
+  height: 17px;
+  border: 1px solid var(--screen-ink);
+  border-radius: 3px;
+  color: var(--screen-ink);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+.scrolling-deck-label::after {
+  content: "";
+  position: absolute;
+  right: -7px;
+  top: 6px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--deck-color);
+}
+
+/* ── Performance row ──────────────────────────────────────────────── */
+.performance-area {
+  display: grid;
+  grid-template-columns:
+    minmax(0, 1fr) clamp(196px, 15.5vw, 236px)
+    minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+  container-type: size;
+}
+/* Every module is a plate screwed to the chassis. */
+.deck,
+.mixer,
+.sampler-strip {
+  position: relative;
+  background: linear-gradient(var(--plate-top), var(--plate) 38%);
+  border: 1px solid var(--seam);
+  border-radius: var(--r-plate);
+  box-shadow: var(--plate-shadow);
+}
+/* Corner screws. */
+.deck::before,
+.mixer::before {
+  content: "";
+  position: absolute;
+  inset: 6px;
+  pointer-events: none;
+  background:
+    radial-gradient(circle, var(--seam) 1.6px, transparent 2.2px) 0 0 / 6px 6px
+      no-repeat,
+    radial-gradient(circle, var(--seam) 1.6px, transparent 2.2px) 100% 0 / 6px
+      6px no-repeat,
+    radial-gradient(circle, var(--seam) 1.6px, transparent 2.2px) 0 100% / 6px
+      6px no-repeat,
+    radial-gradient(circle, var(--seam) 1.6px, transparent 2.2px) 100% 100% /
+      6px 6px no-repeat;
+}
+
+/* ── Deck module ──────────────────────────────────────────────────── */
+.performance-area > .deck {
+  display: grid;
+  grid-template-areas: "heading" "info" "preview" "controls" "mode" "pads" "footer";
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto auto minmax(120px, 1fr) auto auto auto;
+  min-width: 0;
+  min-height: 0;
+}
+.deck.drop-target {
+  border-color: var(--signal);
+  box-shadow:
+    var(--plate-shadow),
+    0 0 0 3px color-mix(in srgb, var(--signal) 25%, transparent);
+}
+.deck.drop-target::after {
+  content: "drop to load";
+  position: absolute;
+  inset: 8px;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  border: 1.5px dashed var(--signal);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--plate) 70%, transparent);
+  color: var(--signal-ink);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  pointer-events: none;
+}
+.deck-heading {
+  grid-area: heading;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px 8px;
+}
+/* Deck key: a numbered cap with a tiny identity LED. */
+.deck-badge {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--key-edge);
+  border-radius: 7px;
+  background: linear-gradient(var(--key-top), var(--key-bottom));
+  box-shadow:
+    inset 0 1px 0 var(--key-hi),
+    0 1px 1px var(--key-shadow);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+  text-transform: uppercase !important;
+}
+.deck-badge::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--deck-color);
+}
+.track-heading {
+  flex: 1;
+  min-width: 0;
+}
+.track-heading strong {
+  display: block;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.track-heading > span {
+  display: block;
+  margin-top: 2px;
+  overflow: hidden;
+  font-size: 11px;
+  color: var(--ink-3);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-transform: none !important;
+}
+.load-menu {
+  position: relative;
+}
+.load-menu > .subtle {
+  height: 28px;
+  padding: 0 8px 0 11px;
+  border: 1px solid var(--key-edge);
+  background: linear-gradient(var(--key-top), var(--key-bottom));
+  box-shadow:
+    inset 0 1px 0 var(--key-hi),
+    0 1px 1px var(--key-shadow);
+  color: var(--ink);
+}
+.dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 45;
+  width: 260px;
+  max-height: 320px;
+  overflow: auto;
+  padding: 5px;
+  background: var(--plate-top);
+  border: 1px solid var(--seam);
+  border-radius: 10px;
+  box-shadow: var(--float-shadow);
+}
+.dropdown button {
+  display: flex;
+  justify-content: flex-start;
+  width: 100%;
+  min-height: 32px;
+  padding: 7px 9px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: 12px;
+  font-weight: 400;
+  text-align: left;
+  text-transform: none !important;
+}
+.dropdown button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+}
+.dropdown button + button {
+  border-top: 1px solid var(--seam-soft);
+  border-radius: 0;
+}
+.dropdown small {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--ink-3);
+}
+.dropdown .muted {
+  padding: 10px;
+  font-size: 11px;
+  color: var(--ink-3);
+}
+
+/* Deck screen: readouts on top, the full-track overview beneath. */
+.deck-info,
+.deck-track-preview {
+  margin: 0 14px;
+  background:
+    repeating-linear-gradient(
+      0deg,
+      rgba(255, 255, 255, 0.022) 0 1px,
+      transparent 1px 3px
+    ),
+    var(--screen);
+  color: var(--screen-ink);
+  border: 1px solid var(--bezel);
+}
+.deck-info {
+  grid-area: info;
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  padding: 9px 12px 7px;
+  border-bottom: 0;
+  border-radius: var(--r-screen) var(--r-screen) 0 0;
+  box-shadow: inset 0 14px 20px -18px rgba(255, 255, 255, 0.2);
+}
+.deck-track-preview {
+  grid-area: preview;
+  position: relative;
+  padding: 0 12px 6px;
+  border-top: 0;
+  border-radius: 0 0 var(--r-screen) var(--r-screen);
+}
+.tempo-readout {
+  display: flex;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+  align-items: baseline;
+  column-gap: 6px;
+}
+.tempo-readout strong {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+/* Big, thin numerals, as on a field recorder's clock. */
+.tempo-readout strong,
+.time-readout strong {
+  font-family: var(--font-ui);
+  font-weight: 300;
+  line-height: 0.85;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+.tempo-readout strong {
+  font-size: 30px;
+}
+.tempo-readout > span,
+.key-readout > span {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--screen-dim);
+}
+.tempo-readout em {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 5px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-style: normal;
+  color: var(--screen-dim);
+  font-variant-numeric: tabular-nums;
+}
+.edit-grid {
+  min-height: 16px;
+  padding: 0 5px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 400;
+  color: var(--screen-ink);
+  background: transparent;
+  border: 1px solid var(--screen-faint);
+  border-radius: 3px;
+  box-shadow: none;
+}
+.edit-grid:hover:not(:disabled) {
+  background: var(--screen-raise);
+}
+.key-readout {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 14px;
+  border-left: 1px solid var(--screen-line);
+}
+.key-readout strong {
+  font-family: var(--font-ui);
+  font-size: 24px;
+  font-weight: 300;
+  line-height: 0.9;
+  color: var(--screen-ink);
+}
+.time-readout {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+  margin-left: auto;
+  text-align: right;
+}
+.time-readout strong {
+  font-size: 32px;
+}
+.time-readout > span {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--screen-dim);
+  font-variant-numeric: tabular-nums;
+}
+.deck-track-preview .overview,
+.deck-track-preview .waveform {
+  display: block;
+  width: 100%;
+  height: clamp(24px, 6cqh, 36px);
+  border: 0;
+  border-top: 1px solid var(--screen-line);
+  background: transparent;
+  cursor: pointer;
+}
+.preview-caption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 4px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--screen-dim);
+}
+.preview-caption > span:last-child {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.preview-caption i {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 6px;
+  border-radius: 50%;
+}
+
+/* Beatgrid editor: a floating plate over the deck screen. */
+.grid-editor {
+  position: absolute;
+  top: 96px;
+  left: 14px;
+  right: 14px;
+  z-index: 31;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  padding: 12px;
+  background: var(--plate-top);
+  border: 1px solid var(--seam);
+  border-radius: 10px;
+  box-shadow: var(--float-shadow);
+}
+.grid-editor label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--ink-3);
+}
+.grid-editor input {
+  width: 86px;
+  font-family: var(--font-mono);
+}
+.grid-tempo-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.grid-tempo-tools button {
+  min-height: 0;
+  height: 18px;
+  padding: 0 7px;
+  font-size: 10px;
+}
+.grid-editor > button {
+  margin-left: auto;
+  height: 30px;
+}
+
+/* ── Deck controls: record · transport · tempo ──────────────────────
+   The row is a size container, so the record is always a true circle sized
+   to whichever of width or height runs out first. */
+.deck-controls {
+  grid-area: controls;
+  container-type: size;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: 16px;
+  min-height: 0;
+  padding: 6px 16px 4px;
+}
+.jog {
+  --size: min(calc(100cqh - 28px), 54cqw, 300px);
+  container-type: size;
+  position: relative;
+  width: var(--size);
+  height: var(--size);
+  padding: calc(var(--size) * 0.085);
+  border-radius: 50%;
+  cursor: grab;
+  touch-action: none;
+}
+.jog:active {
+  cursor: grabbing;
+}
+.jog:focus-visible {
+  outline-offset: 2px;
+}
+/* Progress ring: sixty ticks printed on the plate; elapsed ones are inked. */
+.jog::before,
+.jog::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  pointer-events: none;
+  background: repeating-conic-gradient(
+    var(--tick) 0deg 1.6deg,
+    transparent 1.6deg 6deg
+  );
+  -webkit-mask: radial-gradient(
+    circle closest-side,
+    transparent calc(100% - 7px),
+    #000 calc(100% - 6px) calc(100% - 1px),
+    transparent 100%
+  );
+  mask: radial-gradient(
+    circle closest-side,
+    transparent calc(100% - 7px),
+    #000 calc(100% - 6px) calc(100% - 1px),
+    transparent 100%
+  );
+}
+.jog::before {
+  --tick: var(--ink-4);
+  opacity: 0.55;
+}
+.jog::after {
+  --tick: var(--ink);
+  -webkit-mask:
+    radial-gradient(
+      circle closest-side,
+      transparent calc(100% - 7px),
+      #000 calc(100% - 6px) calc(100% - 1px),
+      transparent 100%
+    ),
+    conic-gradient(#000 calc(var(--progress, 0) * 360deg), transparent 0);
+  -webkit-mask-composite: source-in;
+  mask:
+    radial-gradient(
+      circle closest-side,
+      transparent calc(100% - 7px),
+      #000 calc(100% - 6px) calc(100% - 1px),
+      transparent 100%
+    ),
+    conic-gradient(#000 calc(var(--progress, 0) * 360deg), transparent 0);
+  mask-composite: intersect;
+}
+.jog-surface {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: 50%;
+  background: var(--deck-color, var(--cap-white));
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--deck-color) 78%, #000),
+    inset 0 0 0 3px color-mix(in srgb, var(--deck-color) 92%, #000),
+    0 8px 18px -8px rgba(0, 0, 0, 0.55);
+  transition:
+    box-shadow 400ms ease,
+    transform 90ms var(--ease-key);
+}
+/* Grooves and the light falling across them; this layer never rotates. */
+.jog-surface::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  pointer-events: none;
+  background:
+    repeating-radial-gradient(
+      circle,
+      rgba(0, 0, 0, 0.05) 0 1px,
+      transparent 1px 3px
+    ),
+    conic-gradient(
+      from 20deg,
+      rgba(255, 255, 255, 0.34),
+      transparent 14%,
+      transparent 48%,
+      rgba(255, 255, 255, 0.24) 54%,
+      transparent 68%
+    );
+}
+.jog.is-playing .jog-surface {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--deck-color) 78%, #000),
+    inset 0 0 0 3px color-mix(in srgb, var(--deck-color) 92%, #000),
+    0 8px 18px -8px rgba(0, 0, 0, 0.55),
+    0 0 34px -4px color-mix(in srgb, var(--deck-color) 75%, transparent);
+}
+.jog-surface.touching {
+  transform: scale(0.985);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--deck-color) 78%, #000),
+    inset 0 0 0 3px color-mix(in srgb, var(--deck-color) 92%, #000),
+    0 0 0 3px var(--signal),
+    0 4px 10px -6px rgba(0, 0, 0, 0.55);
+}
+/* Rams' dot field, turning with the platter position. */
+.jog-surface > i {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  pointer-events: none;
+  background: radial-gradient(
+      circle,
+      rgba(0, 0, 0, 0.8) 1.2px,
+      transparent 1.7px
+    )
+    50% 50% / 7px 7px;
+  -webkit-mask: radial-gradient(circle closest-side, #000 84%, transparent 85%);
+  mask: radial-gradient(circle closest-side, #000 84%, transparent 85%);
+}
+/* Strobe mark at the record's edge. */
+.jog-surface > i::before {
+  content: "";
+  position: absolute;
+  top: 3%;
+  left: calc(50% - 2px);
+  width: 4px;
+  height: 10%;
+  border-radius: 2px;
+  background: #0b0b0c;
+}
+/* Black centre label carrying the tempo. */
+.jog-center {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  width: 54%;
+  height: 54%;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 30%, #1c1c1e, #0b0b0c 70%);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.35),
+    0 0 0 3px color-mix(in srgb, var(--deck-color) 88%, #000);
+  color: #f2f2f0;
+  text-align: center;
+}
+.jog-center strong {
+  font-family: var(--font-ui);
+  font-size: clamp(14px, 15cqw, 30px);
+  font-weight: 300;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.jog-center > span,
+.jog-center small {
+  font-family: var(--font-mono);
+  font-size: clamp(7px, 5.4cqw, 10px);
+  line-height: 1.2;
+  color: #8e8e91;
+  font-variant-numeric: tabular-nums;
+}
+.jog-surface.touching .jog-center small {
+  color: var(--signal);
+}
+
+/* Transport keys: built exactly like the hot-cue pads below, set on a grid
+   centred on the record and shorter than it. Navigation on top, sync and master in
+   the middle, cue and play at the bottom next to the pads. Wrappers dissolve
+   so all keys share one grid. */
+/* Middle of the controls row: transport keys, then the pad mode selector. */
+.deck-keys {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  align-self: center;
+  justify-self: center;
+  width: 100%;
+  min-width: 0;
+  max-width: 240px;
+}
+.transport-column {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(3, 30px) 16px;
+  grid-template-areas:
+    "back fwd"
+    "sync master"
+    "cue play"
+    "setcue setcue";
+  gap: 5px;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+.transport-column > .sync-row,
+.transport-column > .transport,
+.transport-column > .beat-jump {
+  display: contents;
+}
+.beat-jump > span {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.sync-row .mini {
+  grid-area: sync;
+}
+.sync-row .master-tag {
+  grid-area: master;
+}
+.transport .cue {
+  grid-area: cue;
+}
+.transport .play {
+  grid-area: play;
+}
+.beat-jump button:first-of-type {
+  grid-area: back;
+}
+.beat-jump button:last-of-type {
+  grid-area: fwd;
+}
+.transport-column .set-cue {
+  grid-area: setcue;
+}
+
+/* Same key anatomy as the pads: cap, edge, radius and corner LED. */
+.transport-column button:not(.set-cue) {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  height: auto;
+  padding: 0 10px;
+  gap: 5px;
+  border-radius: 6px;
+  font-size: 11px;
+}
+.transport-column button svg {
+  width: 13px;
+  height: 13px;
+}
+.transport-column .beat-jump button {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 400;
+  gap: 2px;
+}
+.transport-column .beat-jump button svg {
+  width: 11px;
+  height: 11px;
+}
+.transport-column .cue {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--signal-ink);
+}
+.transport-column .play svg {
+  width: 15px;
+  height: 15px;
+}
+.transport-column .mini::after,
+.transport-column .master-tag::after,
+.transport-column .play::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  width: 5px;
+  height: 5px;
+  margin-top: -2.5px;
+  border-radius: 50%;
+  background: var(--led-off);
+  opacity: 0.6;
+}
+.transport-column .mini.sync-on,
+.transport-column .master-tag.master-on,
+.transport-column .play.active {
+  background: var(--key-pressed);
+  box-shadow: none;
+}
+.transport-column .mini.sync-on::after {
+  opacity: 1;
+  background: var(--cap-blue);
+  box-shadow: 0 0 6px var(--cap-blue);
+}
+.transport-column .master-tag.master-on::after {
+  opacity: 1;
+  background: var(--signal);
+  box-shadow: 0 0 6px var(--signal);
+}
+.transport-column .play.active {
+  color: var(--ok-ink);
+}
+.transport-column .play.active::after {
+  opacity: 1;
+  background: var(--ok);
+  box-shadow: 0 0 6px var(--ok);
+}
+/* Set cue reads as a printed caption under the cue key, like the pad hints. */
+.transport-column .set-cue {
+  justify-content: flex-start;
+  min-width: 0;
+  min-height: 0;
+  height: 18px;
+  padding: 0 2px;
+  overflow: hidden;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--ink-3);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.transport-column .set-cue:hover:not(:disabled) {
+  color: var(--ink);
+  background: transparent;
+}
+
+/* Other latching keys (mixer cue, key lock) keep a shoulder LED. */
+.headphone-button,
+.deck-footer .keylock {
+  position: relative;
+}
+.headphone-button::after,
+.deck-footer .keylock::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 7px;
+  width: 4px;
+  height: 4px;
+  margin-top: -2px;
+  border-radius: 50%;
+  background: var(--led-off);
+}
+.headphone-button.enabled {
+  background: var(--key-pressed);
+  box-shadow: inset 0 1px 2px var(--key-shadow);
+}
+.headphone-button.enabled::after,
+.deck-footer .keylock.enabled::after {
+  background: var(--signal);
+  box-shadow: 0 0 5px var(--signal);
+}
+
+/* Tempo: the slot runs the full height of the row, with a printed scale. */
+.tempo-slider {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  justify-items: center;
+  align-self: stretch;
+  gap: 4px;
+  min-height: 0;
+  padding: 2px 0;
+}
+.range-control {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.range-control > span {
+  font-size: 10px;
+  color: var(--ink-3);
+}
+.range-control > output {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--ink-3);
+}
+.range-control.vertical input {
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 22px;
+  height: 100px;
+  padding: 0;
+}
+.range-control.vertical input::-webkit-slider-runnable-track {
+  width: 6px;
+  height: auto;
+}
+.range-control.vertical input::-webkit-slider-thumb {
+  width: 20px;
+  height: 20px;
+  margin: 0 0 0 -7px;
+  background:
+    linear-gradient(var(--ink-2), var(--ink-2)) 50% 50% / 60% 1.5px no-repeat,
+    radial-gradient(circle at 50% 35%, var(--cap-metal-top), transparent 70%),
+    linear-gradient(var(--cap-metal-top), var(--cap-metal-bottom));
+}
+.tempo-slider .range-control {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+  gap: 5px;
+}
+.tempo-slider .range-control.vertical input {
+  width: 30px;
+  height: 100%;
+  min-height: 0;
+  /* Braun-style scale: ticks either side, a longer zero mark. */
+  background:
+    linear-gradient(var(--ink-3), var(--ink-3)) 50% 50% / 100% 1px no-repeat,
+    repeating-linear-gradient(var(--ink-4) 0 1px, transparent 1px 8px) 0 0 / 5px
+      100% no-repeat,
+    repeating-linear-gradient(var(--ink-4) 0 1px, transparent 1px 8px) 100% 0 /
+      5px 100% no-repeat;
+}
+.range-pill {
+  min-height: 0;
+  height: 20px;
+  padding: 0 6px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+.tempo-reset {
+  min-height: 0;
+  height: 16px;
+  padding: 0 4px;
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 400;
+  color: var(--ink-3);
+}
+.tempo-reset:hover:not(:disabled) {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+}
+
+/* ── Pads ─────────────────────────────────────────────────────────── */
+.controller-pad-mode {
+  grid-area: mode;
+  margin: 2px 16px 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--cap-blue);
+}
+.pads-heading {
+  display: grid;
+  gap: 6px;
+}
+.pads-heading .tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.pads-heading .tabs button {
+  padding: 0 4px 0 15px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.pads-heading .tabs button::before {
+  left: 7px;
+}
+.tabs {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--well) 60%, var(--plate));
+  box-shadow: inset 0 1px 2px var(--key-shadow);
+}
+.tabs button {
+  min-height: 0;
+  height: 22px;
+  padding: 0 10px 0 20px;
+  border-color: transparent;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: none;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--ink-3);
+  position: relative;
+}
+.tabs button::before {
+  content: "";
+  position: absolute;
+  left: 9px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--led-off);
+}
+.tabs button.selected {
+  color: var(--ink);
+  border-color: var(--key-edge);
+  background: linear-gradient(var(--key-top), var(--key-bottom));
+  box-shadow:
+    inset 0 1px 0 var(--key-hi),
+    0 1px 1px var(--key-shadow);
+}
+.tabs button.selected::before {
+  background: var(--signal);
+  box-shadow: 0 0 5px var(--signal);
+}
+.pads-heading > span {
+  padding-left: 2px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--ink-3);
+}
+.pads,
+.memory-controls {
+  grid-area: pads;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 5px;
+  padding: 0 16px 10px;
+}
+/* Flat keys: a near-plate face and a hairline edge; they lift on hover. */
+.pads button,
+.memory-controls button,
+.transport-column button:not(.set-cue) {
+  border-color: var(--seam-soft);
+  background: color-mix(in srgb, var(--key-top) 55%, var(--plate));
+  box-shadow: none;
+}
+.pads button:hover:not(:disabled),
+.memory-controls button:hover:not(:disabled),
+.transport-column button:not(.set-cue):hover:not(:disabled) {
+  background: var(--key-top);
+  box-shadow: 0 1px 2px var(--key-shadow);
+}
+.pads button:active:not(:disabled),
+.memory-controls button:active:not(:disabled),
+.transport-column button:not(.set-cue):active:not(:disabled) {
+  transform: none;
+  background: var(--key-pressed);
+  box-shadow: none;
+}
+.pads button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  min-height: 0;
+  height: clamp(26px, 5.4cqh, 34px);
+  padding: 0 9px;
+  border-radius: 6px;
+}
+.pads button > span {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  color: var(--ink);
+  text-transform: uppercase !important;
+}
+.pads button small {
+  margin-right: 12px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1;
+  color: var(--ink-4);
+}
+.pads button::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  width: 5px;
+  height: 5px;
+  margin-top: -2.5px;
+  border-radius: 50%;
+  background: var(--led-off);
+  opacity: 0.6;
+}
+/* A set cue lights its pad in the cue's pastel, flat like the rest. */
+.pads button.set,
+.pads button.set:hover:not(:disabled) {
+  --lit: var(--cue-color, var(--deck-color));
+  border-color: color-mix(in srgb, var(--lit) 70%, #000);
+  background: color-mix(in srgb, var(--lit) 62%, var(--key-top));
+  box-shadow: none;
+}
+.pads button.set > span {
+  color: #141414;
+}
+.pads button.set small {
+  color: rgba(0, 0, 0, 0.62);
+}
+.pads button.set::after {
+  opacity: 1;
+  background: #fff;
+  box-shadow: 0 0 5px #fff;
+}
+.memory-controls button {
+  min-height: 0;
+  height: clamp(26px, 5.4cqh, 34px);
+  border-radius: 6px;
+  font-size: 11px;
+}
+
+/* ── Deck footer: loop tray left, pitch tray right ───────────────── */
+.deck-footer {
+  --control: 26px;
+  grid-area: footer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 16px 10px;
+  border-top: 1px solid var(--seam-soft);
+  box-shadow: inset 0 1px 0 var(--key-hi);
+}
+.deck-footer .tray button {
+  padding: 0 9px;
+  gap: 5px;
+  font-size: 11px;
+}
+.deck-footer .tray button svg {
+  width: 12px;
+  height: 12px;
+}
+.deck-footer .tray .loop-on {
+  color: var(--signal-ink);
+}
+.deck-footer .tray .keylock {
+  padding-right: 20px;
+  white-space: nowrap;
+}
+.deck-footer .tray select {
+  min-height: 0;
+  height: calc(var(--control) - 4px);
+  width: 64px;
+  padding: 0 18px 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background-color: transparent;
+  box-shadow: none;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-2);
+  background-position:
+    calc(100% - 11px) 52%,
+    calc(100% - 7px) 52%;
+}
+.deck-footer .tray select:hover:not(:disabled) {
+  background-color: color-mix(in srgb, var(--key-top) 55%, transparent);
+  color: var(--ink);
+}
+
+/* ── Analysis: one line in the deck screen's caption row ───────────
+   Green "analysis ok", or amber flags for what needs fixing before a mix.
+   The details popover opens beneath the whole screen. */
+.analysis-strip {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.analysis-strip details {
+  min-width: 0;
+}
+.analysis-strip summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  list-style: none;
+  cursor: pointer;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  white-space: nowrap;
+  color: var(--screen-dim);
+}
+.analysis-strip summary::-webkit-details-marker {
+  display: none;
+}
+.analysis-strip summary:hover,
+.analysis-strip details[open] summary {
+  color: var(--screen-ink);
+}
+.analysis-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--screen-dim);
+}
+.analysis-chip::before {
+  content: "";
+  flex-shrink: 0;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 5px color-mix(in srgb, var(--ok) 70%, transparent);
+}
+.analysis-chip.uncertain {
+  color: var(--warn);
+}
+.analysis-chip.uncertain::before {
+  background: var(--warn);
+  box-shadow: 0 0 5px color-mix(in srgb, var(--warn) 70%, transparent);
+}
+.reanalyze-button {
+  flex-shrink: 0;
+  width: 18px;
+  height: 16px;
+  min-height: 0;
+  padding: 0;
+  border: 1px solid var(--screen-line);
+  border-radius: 3px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--screen-dim);
+}
+.reanalyze-button:hover:not(:disabled) {
+  background: var(--screen-raise);
+  color: var(--screen-ink);
+}
+.reanalyze-button:active:not(:disabled) {
+  transform: none;
+  background: var(--screen-line);
+}
+.analysis-inline-error {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 29;
+  padding: 7px 10px;
+  border: 1px solid var(--seam);
+  border-left: 3px solid var(--fault);
+  border-radius: 8px;
+  background: var(--plate-top);
+  box-shadow: var(--float-shadow);
+}
+
+/* ── Mixer: a TX-6 strip: mirrored channels, legends down the spine ─ */
+/* Centre column: the mixer plate, then the crossfader below it on the
+   bare chassis, its bottom edge level with the decks'. */
+.performance-area > .mixer-column {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+}
+.mixer-column > .mixer {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  min-width: 0;
+  min-height: 0;
+  padding: 14px 12px 10px;
+}
+/* The FLX4 status row only takes space while a controller is connected. */
+.mixer-column > .mixer:has(> .controller-fx-status) {
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+}
+.controller-fx-status {
+  display: grid;
+  gap: 2px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--screen);
+  color: var(--screen-dim);
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+.controller-fx-status small {
+  font-size: 9px;
+}
+.controller-fx-status b {
+  font-weight: 500;
+  color: var(--screen-ink);
+}
+.controller-fx-status .enabled {
+  color: var(--cap-green);
+}
+.channel-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px minmax(0, 1fr);
+  grid-template-rows:
+    18px repeat(5, clamp(30px, 6.8cqh, 40px)) 26px
+    minmax(40px, 1fr);
+  justify-items: center;
+  align-items: center;
+  column-gap: 0;
+  row-gap: 4px;
+  min-height: 0;
+  margin: 0;
+}
+.channel,
+.channel .knob-control {
+  display: contents;
+}
+.channel-0 > *,
+.channel-0 .knob {
+  grid-column: 1;
+}
+.channel-1 > *,
+.channel-1 .knob {
+  grid-column: 3;
+}
+.channel .channel-label {
+  grid-row: 1;
+}
+.channel .knob-control:nth-of-type(1) > * {
+  grid-row: 2;
+}
+.channel .knob-control:nth-of-type(2) > * {
+  grid-row: 3;
+}
+.channel .knob-control:nth-of-type(3) > * {
+  grid-row: 4;
+}
+.channel .knob-control:nth-of-type(4) > * {
+  grid-row: 5;
+}
+.channel .knob-control:nth-of-type(5) > * {
+  grid-row: 6;
+}
+.channel .headphone-button {
+  grid-row: 7;
+}
+.channel .fader-row {
+  grid-row: 8;
+  align-self: stretch;
+}
+/* Legends down the centre spine; deck B's duplicates are hidden. */
+.channel-0 .knob-control > span:last-child {
+  grid-column: 2;
+  font-size: 10px;
+  color: var(--ink-3);
+  text-align: center;
+}
+.channel-1 .knob-control > span:last-child {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+/* Dotted scale between the faders. */
+.channel-pair::after {
+  content: "";
+  grid-column: 2;
+  grid-row: 8;
+  align-self: stretch;
+  width: 12px;
+  margin: 20px 0 6px;
+  background: radial-gradient(circle, var(--ink-4) 1px, transparent 1.5px) 50%
+    0 / 12px 9px repeat-y;
+}
+.channel-label {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--ink-2);
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink);
+  text-transform: uppercase !important;
+}
+
+/* Knob: a recessed well holding a coloured cap with a pointer notch. */
+.knob-control {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  color: var(--ink-3);
+}
+.knob {
+  --cap: var(--cap-white);
+  --notch: color-mix(in srgb, var(--cap) 35%, #000);
+  position: relative;
+  display: block;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 50% 30%,
+    var(--cap),
+    var(--cap) 60%,
+    color-mix(in srgb, var(--cap) 82%, #000)
+  );
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--well) 70%, var(--plate)),
+    0 0 0 4px var(--seam-soft),
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    inset 0 -2px 3px rgba(0, 0, 0, 0.18),
+    0 3px 4px rgba(0, 0, 0, 0.35);
+}
+.knob i {
+  position: absolute;
+  inset: 0;
+  transform: rotate(var(--rotation));
+  pointer-events: none;
+}
+.knob i::before {
+  content: "";
+  position: absolute;
+  left: calc(50% - 1.5px);
+  top: 3px;
+  width: 3px;
+  height: 38%;
+  border-radius: 2px;
+  background: var(--notch);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+.knob input {
+  position: absolute;
+  inset: -6px;
+  z-index: 1;
+  width: calc(100% + 12px);
+  height: calc(100% + 12px);
+  margin: 0;
+  opacity: 0;
+  cursor: ew-resize;
+}
+.knob:focus-within {
+  outline: 2px solid var(--signal);
+  outline-offset: 6px;
+}
+.tone-trim .knob {
+  --cap: var(--cap-graphite);
+  --notch: #f2f2f2;
+}
+.tone-high .knob {
+  --cap: var(--cap-white);
+}
+/* EQ caps wear their band's waveform colour: white high, green mid, blue low. */
+.tone-mid .knob {
+  --cap: var(--cap-green);
+  --notch: #fff;
+}
+.tone-low .knob {
+  --cap: var(--cap-blue);
+  --notch: #fff;
+}
+.tone-filter .knob {
+  --cap: var(--cap-orange);
+  --notch: #fff;
+}
+.tone-master .knob {
+  --cap: var(--cap-white);
+}
+.tone-aux .knob {
+  --cap: var(--cap-graphite);
+  --notch: #f2f2f2;
+}
+
+.headphone-button {
+  min-height: 0;
+  height: 24px;
+  width: 100%;
+  max-width: 76px;
+  padding: 0 16px 0 7px;
+  gap: 4px;
+  font-size: 10px;
+}
+.headphone-button::after {
+  right: 6px;
+}
+.fader-row {
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  gap: 7px;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  padding-top: 2px;
+}
+.fader-row .range-control {
+  display: grid;
+  grid-template-rows: 12px minmax(0, 1fr);
+  gap: 5px;
+  min-height: 0;
+}
+.fader-row .range-control > span {
+  font-size: 9px;
+}
+.fader-row .vertical input {
+  height: 100%;
+  min-height: 0;
+}
+/* Level meter: a black slot whose dots light white, then orange. */
+.meter {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 2px;
+  width: 8px;
+  height: calc(100% - 17px);
+  margin-top: 17px;
+  padding: 2px;
+  border-radius: 4px;
+  background: var(--slot);
+  box-shadow:
+    inset 0 1px 2px rgba(0, 0, 0, 0.7),
+    0 1px 0 var(--key-hi);
+}
+.meter i {
+  flex: 1;
+  min-height: 0;
+  border-radius: 1px;
+  background: #222225;
+}
+.meter .lit {
+  background: #e9e9e7;
+  box-shadow: 0 0 3px rgba(255, 255, 255, 0.5);
+}
+.meter .peak.lit {
+  background: var(--signal);
+  box-shadow: 0 0 4px var(--signal);
+}
+
+/* Crossfader: free-standing on the chassis. Boxed deck letters with their
+   identity lights, a slot whose ends glow in each deck's colour, a ridged
+   cap with an orange centre line, and a printed scale beneath. */
+.crossfader {
+  --cap-w: 30px;
+  position: relative;
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 6px 16px;
+}
+.crossfader > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  color: var(--ink-3);
+}
+.crossfader > div span:first-child,
+.crossfader > div span:last-child {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--ink-2);
+  border-radius: 4px;
+  color: var(--ink);
+  font-size: 10px;
+  text-transform: uppercase !important;
+}
+.crossfader > div span:first-child::after,
+.crossfader > div span:last-child::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+}
+.crossfader > div span:first-child::after {
+  right: -8px;
+  background: var(--deck-a);
+}
+.crossfader > div span:last-child::after {
+  left: -8px;
+  background: var(--deck-b);
+}
+.crossfader input {
+  width: 100%;
+  height: 26px;
+}
+.crossfader input::-webkit-slider-runnable-track {
+  height: 10px;
+  border-radius: 5px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--deck-a) 55%, var(--slot)),
+    var(--slot) 22%,
+    var(--slot) 78%,
+    color-mix(in srgb, var(--deck-b) 55%, var(--slot))
+  );
+}
+.crossfader input::-webkit-slider-thumb {
+  width: var(--cap-w);
+  height: 24px;
+  margin-top: -7px;
+  border-radius: 5px;
+  border: 1px solid color-mix(in srgb, var(--cap-metal-bottom) 60%, #000);
+  background:
+    linear-gradient(var(--signal), var(--signal)) 50% 50% / 2px 64% no-repeat,
+    repeating-linear-gradient(
+        90deg,
+        rgba(0, 0, 0, 0.16) 0 1px,
+        transparent 1px 4px
+      )
+      50% 50% / 20px 52% no-repeat,
+    linear-gradient(var(--cap-metal-top), var(--cap-metal-bottom));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.8),
+    0 1px 2px rgba(0, 0, 0, 0.45),
+    0 4px 8px -3px rgba(0, 0, 0, 0.4);
+}
+/* Printed scale: eleven ticks across the cap's travel, a longer centre. */
+.crossfader::after {
+  content: "";
+  position: absolute;
+  left: calc(6px + var(--cap-w) / 2);
+  right: calc(6px + var(--cap-w) / 2);
+  bottom: 6px;
+  height: 7px;
+  pointer-events: none;
+  background:
+    linear-gradient(var(--ink-3), var(--ink-3)) 50% 0 / 1px 7px no-repeat,
+    linear-gradient(var(--ink-4), var(--ink-4)) 100% 0 / 1px 4px no-repeat,
+    repeating-linear-gradient(90deg, var(--ink-4) 0 1px, transparent 1px 10%) 0
+      0 / 100% 4px no-repeat;
+}
+.master-controls {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 4px;
+  margin: 0;
+  /* The rings draw 5px outside the caps; add that above so the group sits
+     centred between this divider and the next (the row gap below is 8px). */
+  padding-top: 15px;
+  border-top: 1px solid var(--seam-soft);
+  box-shadow: inset 0 1px 0 var(--key-hi);
+}
+.master-controls .knob-control {
+  flex: 1;
+  min-width: 0;
+  gap: 8px;
+}
+.master-controls .knob-control > span:last-child {
+  font-size: 10px;
+  white-space: nowrap;
+}
+/* Master gets the Braun treatment: white cap in a knurled black ring. */
+.master-controls .tone-master .knob {
+  width: 34px;
+  height: 34px;
+  box-shadow:
+    0 0 0 4px var(--cap-graphite),
+    0 0 0 5px color-mix(in srgb, var(--cap-graphite) 50%, #000),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    inset 0 -2px 3px rgba(0, 0, 0, 0.15),
+    0 4px 7px rgba(0, 0, 0, 0.35);
+}
+.master-controls .tone-master .knob::before {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  background: repeating-conic-gradient(
+    rgba(255, 255, 255, 0.16) 0deg 3deg,
+    transparent 3deg 9deg
+  );
+  -webkit-mask: radial-gradient(circle, transparent 17px, #000 17.5px);
+  mask: radial-gradient(circle, transparent 17px, #000 17.5px);
+  pointer-events: none;
+}
+.master-controls .tone-master .knob i::before {
+  width: 4px;
+  height: 4px;
+  left: calc(50% - 2px);
+  top: 4px;
+  border-radius: 50%;
+  background: var(--signal);
+  box-shadow: none;
+}
+.fx-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--seam-soft);
+  box-shadow: inset 0 1px 0 var(--key-hi);
+}
+.fx-selector {
+  min-height: 0;
+  height: 24px;
+  padding: 0 7px;
+  gap: 4px;
+  font-size: 10px;
+}
+.fx-selector svg:first-child {
+  color: var(--signal);
+}
+.fx-row input {
+  width: 100%;
+  min-width: 0;
+}
+
+/* ── Sampler: a floating keyboard plate ───────────────────────────── */
+.sampler-strip {
+  position: absolute;
+  left: 22px;
+  right: 22px;
+  bottom: 14px;
+  z-index: 34;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 0;
+  padding: 12px 16px;
+  box-shadow: var(--float-shadow);
+  animation: rise 180ms var(--ease-sheet);
+}
+@keyframes rise {
+  from {
+    transform: translateY(12px);
+    opacity: 0;
+  }
+}
+.sampler-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 500;
+}
+.sampler-label svg {
+  color: var(--signal);
+}
+.sampler-label > span {
+  display: grid;
+  gap: 4px;
+}
+.sampler-label small {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 400;
+  color: var(--ink-3);
+}
+.sampler-label select {
+  height: 24px;
+  min-height: 0;
+  font-size: 10px;
+  text-transform: none;
+}
+.sample-pads {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.sample-slot {
+  display: flex;
+  min-width: 0;
+}
+.sample-slot > button:first-child {
+  flex: 1;
+  min-width: 0;
+  height: 54px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 2px;
+  padding: 6px 8px;
+  border-radius: 8px 0 0 8px;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--ink-3);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-transform: none !important;
+}
+.sample-slot > button:first-child span {
+  font-size: 22px;
+  font-weight: 300;
+  line-height: 1;
+  color: var(--ink);
+}
+.sample-slot > button:last-child {
+  width: 20px;
+  height: 54px;
+  padding: 0;
+  border-left: 0;
+  border-radius: 0 8px 8px 0;
+  color: var(--ink-3);
+}
+.sampler-strip > .range-control {
+  width: 86px;
+}
+.sampler-strip > .range-control input {
+  width: 86px;
+}
+
+/* Library tray details: track count badge and FLX4 browse focus. */
+.browser-dock button {
+  white-space: nowrap;
+}
+.browser-dock button span {
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--screen);
+  color: var(--screen-ink);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 400;
+}
+.browser-dock button.controller-focused,
+.controller-focused {
+  outline: 2px solid var(--cap-blue);
+  outline-offset: 2px;
+}
+
+/* ── Responsive tightening ────────────────────────────────────────── */
+@media (max-width: 1260px) {
+  .performance-area {
+    grid-template-columns: minmax(0, 1fr) 196px minmax(0, 1fr);
+    gap: 10px;
+  }
+  .deck-controls {
+    gap: 10px;
+    grid-template-columns: auto minmax(0, 1fr) 36px;
+  }
+  .pads-heading > span {
+    display: none;
+  }
+  .tempo-readout strong {
+    font-size: 26px;
+  }
+  .time-readout strong {
+    font-size: 23px;
+  }
+}
+@media (max-height: 840px) {
+  .workspace main {
+    grid-template-rows: minmax(130px, 0.24fr) minmax(0, 0.76fr);
+    gap: 10px;
+    padding: 10px 12px;
+  }
+  .deck-heading {
+    padding-top: 10px;
+    padding-bottom: 6px;
+  }
+  .deck-info {
+    padding-top: 8px;
+    padding-bottom: 6px;
+  }
+  .tempo-readout strong {
+    font-size: 25px;
+  }
+  .time-readout strong {
+    font-size: 22px;
+  }
+  .controller-fx-status > small:last-child {
+    display: none;
+  }
+  .channel-pair {
+    grid-template-rows:
+      18px repeat(5, clamp(28px, 6.4cqh, 34px)) 24px
+      minmax(36px, 1fr);
+    row-gap: 3px;
+  }
+  .channel .knob {
+    width: 22px;
+    height: 22px;
+  }
+}
+/* Short windows: tighten every fixed row so the deck never spills. */
+@media (max-height: 790px) {
+  .deck-heading {
+    padding: 8px 14px 5px;
+  }
+  .track-heading strong {
+    font-size: 11.5px;
+  }
+  .track-heading > span {
+    font-size: 10px;
+  }
+  .deck-badge,
+  .load-menu > .subtle {
+    height: 24px;
+  }
+  .deck-badge {
+    width: 24px;
+  }
+  .deck-info {
+    padding: 6px 10px 5px;
+  }
+  .tempo-readout strong {
+    font-size: 24px;
+  }
+  .time-readout strong {
+    font-size: 26px;
+  }
+  .key-readout strong {
+    font-size: 20px;
+  }
+  .deck-track-preview .overview,
+  .deck-track-preview .waveform {
+    height: 22px;
+  }
+  .tabs button {
+    height: 20px;
+  }
+  .pads,
+  .memory-controls {
+    padding-bottom: 6px;
+  }
+  .pads button,
+  .memory-controls button {
+    height: 28px;
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+  .pads button > span {
+    font-size: 13px;
+  }
+  .deck-footer {
+    --control: 24px;
+    padding: 5px 14px 7px;
+  }
+}

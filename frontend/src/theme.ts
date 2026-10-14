@@ -1,22 +1,28 @@
 export const THEMES = [
   {
-    id: "hardware-dark",
-    name: "Hardware Dark",
-    description: "Charcoal panels, tactile keys and orange controls.",
+    id: "aluminium",
+    name: "Aluminium",
+    description:
+      "Bead-blasted grey chassis, black screens and coloured encoders.",
+    scheme: "light",
   },
   {
-    id: "anatomy-light",
-    name: "Anatomy Light",
-    description: "Ivory surfaces, engraved lines and machined details.",
+    id: "ivory",
+    name: "Ivory",
+    description:
+      "Warm off-white housing with graphite type and a single orange dot.",
+    scheme: "light",
   },
   {
-    id: "anatomy-dark",
-    name: "Anatomy Dark",
-    description: "Graphite surfaces with precise, silver linework.",
+    id: "graphite",
+    name: "Graphite",
+    description:
+      "Anodised black body for dark booths. Same screens, same colours.",
+    scheme: "dark",
   },
 ] as const;
 export type ThemeId = (typeof THEMES)[number]["id"];
-export const DEFAULT_THEME: ThemeId = "hardware-dark";
+export const DEFAULT_THEME: ThemeId = "aluminium";
 export const THEME_STORAGE_KEY = "pulsedeck.theme";
 type ThemeStorage = Pick<Storage, "getItem" | "setItem">;
 export function isThemeId(value: unknown): value is ThemeId {
@@ -47,7 +53,7 @@ export function saveTheme(theme: ThemeId, storage = browserStorage()): void {
 export function applyTheme(theme: ThemeId): void {
   document.documentElement.dataset.theme = theme;
   document.documentElement.style.colorScheme =
-    theme === "anatomy-light" ? "light" : "dark";
+    THEMES.find((option) => option.id === theme)?.scheme ?? "light";
   const color = getComputedStyle(document.documentElement)
     .getPropertyValue("--color-app-bg")
     .trim();

@@ -116,7 +116,10 @@ const lowColor = rgb(BAND_COLORS.low),
   midColor = rgb(BAND_COLORS.mid),
   highColor = rgb(BAND_COLORS.high);
 
-/** Track-aligned raster tiles. Panning only composites existing pixels at fractional x. */
+/** Track-aligned raster tiles. Panning only composites existing pixels at fractional x.
+ *  The envelope is drawn as a comb of flat-topped bars, like a field recorder's
+ *  screen. Bar slots are anchored to track time (not to tiles), so the comb
+ *  scrolls without shimmer and stays continuous across tile boundaries. */
 export class WaveformRaster {
   private config: RasterSource | null = null;
   private bandGain = 1;
@@ -175,57 +178,42 @@ export class WaveformRaster {
       bytes = image.data,
       center = height / 2,
       scale = height * 0.46,
-      n = c.samples.length,
-      step = n / (c.duration * c.pixelsPerSecond * c.dpr),
-      base = ((number * this.tileWidth) / (c.duration * c.pixelsPerSecond)) * n;
+      n = c.samples.length;
     const spectral = hasWaveformBands(c.bands, n),
       peak = spectral ? null : envelopeIndex(c.samples),
       lo = spectral ? envelopeIndex(c.bands!.low) : null,
       mi = spectral ? envelopeIndex(c.bands!.mid) : null,
       hi = spectral ? envelopeIndex(c.bands!.high) : null,
       plain = rgb(c.color);
-    const peaks = new Float32Array(width),
-      low = new Float32Array(width + 2),
-      mid = new Float32Array(width + 2),
-      high = new Float32Array(width + 2);
-    if (peak)
-      for (let x = 0; x < width; x++)
-        peaks[x] = peak.sample(base + x * step, base + (x + 1) * step, false);
-    if (spectral)
-      for (let x = -1; x <= width; x++) {
-        const from = base + x * step,
-          to = from + step;
-        low[x + 1] = lo!.sample(from, to, true);
-        mid[x + 1] = mi!.sample(from, to, true);
-        high[x + 1] = hi!.sample(from, to, true);
-      }
+    // Bar slot in device pixels: a bar plus a gap, measured from track start.
+    const period = Math.max(2, Math.round((c.overview ? 2 : 3) * c.dpr)),
+      barWidth = Math.max(1, Math.round(period * (c.overview ? 0.5 : 0.67))),
+      trackStep = n / (c.duration * c.pixelsPerSecond * c.dpr),
+      origin = number * width;
+    let bar = -1,
+      l = 0,
+      m = 0,
+      h = 0,
+      p = 0;
     for (let x = 0; x < width; x++) {
-      const p = peaks[x] * scale,
-        l = spectral
-          ? (low[x + 1] * 0.75 + (low[x] + low[x + 2]) * 0.125) *
-            scale *
-            this.bandGain
-          : 0,
-        m = spectral
-          ? (mid[x + 1] * 0.75 + (mid[x] + mid[x + 2]) * 0.125) *
-            scale *
-            this.bandGain
-          : 0,
-        h = spectral
-          ? (high[x + 1] * 0.75 + (high[x] + high[x + 2]) * 0.125) *
-            scale *
-            this.bandGain
-          : 0;
+      const gx = origin + x;
+      if (gx % period >= barWidth) continue;
+      const slot = Math.floor(gx / period);
+      if (slot !== bar) {
+        bar = slot;
+        // Each bar carries the energy of its whole slot, so its top is flat.
+        const from = slot * period * trackStep,
+          to = from + period * trackStep;
+        if (spectral) {
+          l = lo!.sample(from, to, true) * scale * this.bandGain;
+          m = mi!.sample(from, to, true) * scale * this.bandGain;
+          h = hi!.sample(from, to, true) * scale * this.bandGain;
+        } else p = peak!.sample(from, to, false) * scale;
+      }
+      const reach = spectral ? Math.max(l, m, h) : p;
       for (
-        let y = Math.max(
-          0,
-          Math.floor(center - (spectral ? Math.max(l, m, h) : p)),
-        );
-        y <
-        Math.min(
-          height,
-          Math.ceil(center + (spectral ? Math.max(l, m, h) : p)),
-        );
+        let y = Math.max(0, Math.floor(center - reach));
+        y < Math.min(height, Math.ceil(center + reach));
         y++
       ) {
         const dist = Math.abs(y + 0.5 - center);
@@ -233,20 +221,16 @@ export class WaveformRaster {
           alpha = spectral ? 1 : c.overview ? 0.7 : 0.9,
           smallest = Infinity;
         if (spectral) {
+          // The innermost band containing this pixel shows on top.
           if (dist <= l) {
             smallest = l;
             color = lowColor;
-            alpha = 1;
           }
           if (dist <= m && m < smallest) {
             smallest = m;
             color = midColor;
-            alpha = 1;
           }
-          if (dist <= h && h < smallest) {
-            color = highColor;
-            alpha = 1;
-          }
+          if (dist <= h && h < smallest) color = highColor;
           if (smallest === Infinity && !(dist <= h)) continue;
         }
         const offset = (y * width + x) * 4;

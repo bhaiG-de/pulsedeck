@@ -10,7 +10,7 @@
     "frontendDist": "../frontend/dist"
   },
   "app": {
-    "windows": [{"title": "PulseDeck", "width": 1500, "height": 940, "minWidth": 1100, "minHeight": 760}],
+    "windows": [{"title": "PulseDeck", "width": 1500, "height": 940, "minWidth": 1100, "minHeight": 760, "titleBarStyle": "Overlay", "hiddenTitle": true, "trafficLightPosition": {"x": 16, "y": 20}}],
     "security": {"csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://i.scdn.co; frame-src https://open.spotify.com; connect-src ipc: http://ipc.localhost"}
   },
   "bundle": {"active": true, "targets": ["app"], "category": "Music", "shortDescription": "Two-deck DJ performance software", "macOS": {"minimumSystemVersion": "12.0", "infoPlist": "Info.plist"}}

@@ -10,3 +10,18 @@ cpal = { path = "vendor/cpal" }
 lto = "thin"
 codegen-units = 1
 panic = "abort"
+
+# The beat model is unusably slow unoptimized; keep its numeric crates fast in
+# tests and dev builds.
+[profile.dev.package.audio-analysis]
+opt-level = 3
+[profile.dev.package.tract-core]
+opt-level = 3
+[profile.dev.package.tract-data]
+opt-level = 3
+[profile.dev.package.tract-linalg]
+opt-level = 3
+[profile.dev.package.rubato]
+opt-level = 3
+[profile.dev.package.rustfft]
+opt-level = 3

@@ -30,9 +30,147 @@ pub fn analyze_file(path: &Path) -> Result<TrackAnalysis, String> {
     Ok(decode_file(path)?.analysis.clone())
 }
 
+/// Decode and analyze a file including the neural beat stage, for import and
+/// library-update workers. A model failure keeps the DSP analysis and returns
+/// the reason; decoding failure and cancellation are errors.
+pub fn analyze_file_with_beat_model(
+    path: &Path,
+    cancel: &dyn Fn() -> bool,
+) -> Result<(TrackAnalysis, Option<String>), String> {
+    let track = decode_file(path)?;
+    if cancel() {
+        return Err("Beat analysis cancelled".into());
+    }
+    let mut analysis = track.analysis.clone();
+    match analyze_beats_and_sections(&track.samples, track.sample_rate, &mut analysis, cancel) {
+        Ok(()) => Ok((analysis, None)),
+        Err(_) if cancel() => Err("Beat analysis cancelled".into()),
+        Err(e) => Ok((analysis, Some(e))),
+    }
+}
+
+/// Run the beat model, merge its grid into `analysis`, then cut sections on
+/// the resulting grid from the same spectrogram.
+pub fn analyze_beats_and_sections(
+    samples: &[[f32; 2]],
+    sample_rate: u32,
+    analysis: &mut TrackAnalysis,
+    cancel: &dyn Fn() -> bool,
+) -> Result<(), String> {
+    let (stage, spect) =
+        audio_analysis::track_beats_with_spectrogram(samples, sample_rate, cancel)?;
+    apply_beat_model(analysis, stage);
+    analysis.sections = analysis
+        .bpm
+        .zip(analysis.beatgrid_offset_seconds)
+        .filter(|_| grid_knows_beat_one(analysis))
+        .and_then(|(bpm, offset)| sections_on(&spect, analysis, bpm, offset));
+    Ok(())
+}
+
+/// Re-cut sections on a different grid (after a manual edit) without the model.
+pub fn refresh_sections(
+    samples: &[[f32; 2]],
+    sample_rate: u32,
+    analysis: &mut TrackAnalysis,
+    bpm: f64,
+    offset_seconds: f64,
+) -> Result<(), String> {
+    let spect = audio_analysis::spectrogram(samples, sample_rate)?;
+    analysis.sections = sections_on(&spect, analysis, bpm, offset_seconds);
+    Ok(())
+}
+
+fn sections_on(
+    spect: &audio_analysis::Spectrogram,
+    analysis: &TrackAnalysis,
+    bpm: f64,
+    offset_seconds: f64,
+) -> Option<audio_analysis::SectionStage> {
+    let vocabulary = analysis
+        .sections
+        .as_ref()
+        .and_then(|s| s.vocabulary_override);
+    audio_analysis::detect_sections(
+        spect,
+        analysis.duration_seconds,
+        bpm,
+        offset_seconds,
+        vocabulary,
+    )
+}
+
+/// Only model and manual grids place their origin on beat 1; the DSP phase
+/// is a beat, not a bar, so bars cut from it can start mid-phrase.
+fn grid_knows_beat_one(analysis: &TrackAnalysis) -> bool {
+    matches!(
+        analysis.beatgrid_source.as_deref(),
+        Some("model" | "manual")
+    )
+}
+
+/// Merge a beat-model stage into an analysis. A usable model grid replaces the
+/// DSP or tag estimate unless the BPM or grid was set manually. The previous BPM
+/// stays visible as a candidate, and a half/double or tag disagreement marks
+/// the BPM ambiguous. The stage is always recorded so it is not re-run.
+pub fn apply_beat_model(analysis: &mut TrackAnalysis, stage: audio_analysis::BeatModelStage) {
+    if let Some(grid) = stage.usable_grid() {
+        let confidence = grid.on_grid.clamp(0.0, 1.0);
+        let manual_bpm = analysis.bpm_source.as_deref() == Some("manual");
+        // A manual BPM keeps its grid unless it is the same pulse (or half/double).
+        let grid_fits_bpm = !manual_bpm
+            || analysis.bpm.is_some_and(|b| {
+                [0.5, 1.0, 2.0]
+                    .iter()
+                    .any(|r| (b / (grid.bpm * r) - 1.0).abs() <= 0.02)
+            });
+        if !manual_bpm {
+            let previous = analysis.bpm.map(|bpm| audio_analysis::TempoCandidate {
+                bpm,
+                score: analysis.bpm_confidence,
+            });
+            let differs =
+                |c: &audio_analysis::TempoCandidate| (c.bpm / grid.bpm - 1.0).abs() > 0.02;
+            let mut candidates = vec![audio_analysis::TempoCandidate {
+                bpm: grid.bpm,
+                score: confidence,
+            }];
+            for c in previous.iter().chain(&analysis.bpm_candidates) {
+                if differs(c)
+                    && candidates
+                        .iter()
+                        .all(|k| (k.bpm / c.bpm - 1.0).abs() > 0.02)
+                {
+                    candidates.push(c.clone());
+                }
+            }
+            candidates.truncate(4);
+            analysis.bpm_ambiguous = previous.as_ref().is_some_and(differs);
+            analysis.bpm = Some(grid.bpm);
+            analysis.bpm_confidence = confidence;
+            analysis.bpm_candidates = candidates;
+            analysis.bpm_source = Some("model".into());
+        }
+        if grid_fits_bpm && analysis.beatgrid_source.as_deref() != Some("manual") {
+            analysis.beatgrid_offset_seconds = Some(grid.downbeat_offset_seconds);
+            analysis.beatgrid_confidence = Some(grid.bar_agreement.clamp(0.0, 1.0));
+            analysis.beatgrid_source = Some("model".into());
+        }
+    }
+    analysis.beat_model = Some(stage);
+}
+
 pub(crate) fn decode_file(path: &Path) -> Result<Arc<TrackData>, String> {
+    decode_file_cached(path, None)
+}
+
+/// Decode a file, reusing a cached analysis when it still matches the audio.
+pub(crate) fn decode_file_cached(
+    path: &Path,
+    cached: Option<TrackAnalysis>,
+) -> Result<Arc<TrackData>, String> {
     let file = File::open(path).map_err(|e| format!("Cannot open track: {e}"))?;
-    decode_source(
+    decode_source_cached(
         Box::new(file),
         AudioSourceInfo {
             id: path
@@ -49,6 +187,7 @@ pub(crate) fn decode_file(path: &Path) -> Result<Arc<TrackData>, String> {
             artist: None,
             extension: path.extension().and_then(|s| s.to_str()).map(str::to_owned),
         },
+        cached,
     )
 }
 
@@ -56,6 +195,14 @@ pub(crate) fn decode_file(path: &Path) -> Result<Arc<TrackData>, String> {
 pub(crate) fn decode_source(
     source: Box<dyn MediaSource>,
     info: AudioSourceInfo,
+) -> Result<Arc<TrackData>, String> {
+    decode_source_cached(source, info, None)
+}
+
+fn decode_source_cached(
+    source: Box<dyn MediaSource>,
+    info: AudioSourceInfo,
+    cached: Option<TrackAnalysis>,
 ) -> Result<Arc<TrackData>, String> {
     let mut hint = Hint::new();
     if let Some(extension) = info.extension.as_deref() {
@@ -155,7 +302,7 @@ pub(crate) fn decode_source(
     if pcm.is_empty() {
         return Err("Track contains no decoded audio".into());
     }
-    let mut track = prepare_pcm(
+    let mut track = prepare_pcm_cached(
         pcm,
         sample_rate,
         AudioSourceInfo {
@@ -164,8 +311,15 @@ pub(crate) fn decode_source(
             ..info
         },
         true,
+        cached,
     )?;
-    if let Some(bpm) = tagged_bpm {
+    // Tags refine only a fresh DSP estimate; model and manual results stand.
+    let fresh_estimate = track.analysis.beat_model.is_none()
+        && matches!(
+            track.analysis.bpm_source.as_deref(),
+            None | Some("analysis")
+        );
+    if let Some(bpm) = tagged_bpm.filter(|_| fresh_estimate) {
         if let Some(track) = Arc::get_mut(&mut track) {
             track.analysis.bpm = Some(bpm);
             track.analysis.bpm_confidence = 1.0;
@@ -181,6 +335,7 @@ pub(crate) fn decode_source(
     Ok(track)
 }
 
+#[cfg(test)]
 pub(crate) fn prepare_pcm(
     pcm: Vec<[f32; 2]>,
     sample_rate: u32,
@@ -287,6 +442,9 @@ pub(crate) fn analyze_pcm(
         key_candidates: key.candidates,
         waveform: waveform.peaks,
         waveform_bands: Some(waveform.bands),
+        beat_model: None,
+        sections: None,
+        auto_cues: None,
     }
 }
 
@@ -338,6 +496,9 @@ pub(crate) fn demo_track(deck: usize) -> Arc<TrackData> {
         camelot: None,
         waveform: waveform.peaks,
         waveform_bands: Some(waveform.bands),
+        beat_model: None,
+        sections: None,
+        auto_cues: None,
     };
     Arc::new(TrackData {
         samples: pcm,
@@ -417,6 +578,9 @@ pub(crate) fn sample_track(slot: usize) -> Arc<TrackData> {
             key_confidence: None,
             camelot: None,
             waveform: Vec::new(),
+            beat_model: None,
+            sections: None,
+            auto_cues: None,
         },
     })
 }
@@ -631,5 +795,95 @@ mod cached_phase_upgrade_tests {
         assert_eq!(track.analysis.analysis_version, 3);
         assert_eq!(track.analysis.beatgrid_offset_seconds, Some(0.297));
         assert_eq!(track.analysis.beatgrid_source.as_deref(), Some("manual"));
+    }
+}
+
+#[cfg(test)]
+mod beat_model_tests {
+    use super::*;
+    use audio_analysis::{BeatModelStage, ModelGrid};
+
+    fn stage(bpm: f64, offset: f64, beats: usize) -> BeatModelStage {
+        BeatModelStage {
+            version: audio_analysis::BEAT_MODEL_VERSION,
+            beats_seconds: (0..beats)
+                .map(|k| (offset + k as f64 * 60.0 / bpm) as f32)
+                .collect(),
+            downbeats_seconds: vec![offset as f32],
+            grid: Some(ModelGrid {
+                bpm,
+                downbeat_offset_seconds: offset,
+                on_grid: 0.9,
+                bar_agreement: 0.8,
+            }),
+        }
+    }
+
+    fn analysis(bpm: f64, source: &str) -> TrackAnalysis {
+        let mut a = demo_track(0).analysis.clone();
+        a.bpm = Some(bpm);
+        a.bpm_source = Some(source.into());
+        a.bpm_confidence = 0.6;
+        a.beatgrid_offset_seconds = Some(0.1);
+        a.beatgrid_source = Some("analysis".into());
+        a
+    }
+
+    #[test]
+    fn model_grid_replaces_dsp_and_flags_half_double_disagreement() {
+        let mut a = analysis(70.99, "analysis");
+        apply_beat_model(&mut a, stage(142.03, 0.11, 300));
+        assert_eq!(a.bpm, Some(142.03));
+        assert_eq!(a.bpm_source.as_deref(), Some("model"));
+        assert!(a.bpm_ambiguous);
+        assert_eq!(a.bpm_candidates[0].bpm, 142.03);
+        assert!(a.bpm_candidates.iter().any(|c| c.bpm == 70.99));
+        assert_eq!(a.beatgrid_offset_seconds, Some(0.11));
+        assert_eq!(a.beatgrid_source.as_deref(), Some("model"));
+        assert_eq!(a.beatgrid_confidence, Some(0.8));
+        assert!(a.beat_model.is_some());
+    }
+
+    #[test]
+    fn agreeing_tag_is_refined_without_ambiguity() {
+        let mut a = analysis(124.0, "tag");
+        apply_beat_model(&mut a, stage(123.97, 0.4, 300));
+        assert_eq!(a.bpm, Some(123.97));
+        assert!(!a.bpm_ambiguous);
+        assert_eq!(a.bpm_candidates.len(), 1);
+    }
+
+    #[test]
+    fn manual_values_are_kept_and_grid_follows_only_a_compatible_bpm() {
+        let mut half = analysis(71.0, "manual");
+        apply_beat_model(&mut half, stage(142.03, 0.11, 300));
+        assert_eq!(
+            (half.bpm, half.bpm_source.as_deref()),
+            (Some(71.0), Some("manual"))
+        );
+        assert_eq!(half.beatgrid_offset_seconds, Some(0.11));
+
+        let mut other = analysis(100.0, "manual");
+        apply_beat_model(&mut other, stage(142.03, 0.11, 300));
+        assert_eq!(other.beatgrid_offset_seconds, Some(0.1));
+        assert_eq!(other.beatgrid_source.as_deref(), Some("analysis"));
+
+        let mut grid = analysis(120.0, "analysis");
+        grid.beatgrid_source = Some("manual".into());
+        apply_beat_model(&mut grid, stage(120.0, 0.3, 300));
+        assert_eq!(grid.bpm_source.as_deref(), Some("model"));
+        assert_eq!(grid.beatgrid_offset_seconds, Some(0.1));
+    }
+
+    #[test]
+    fn unusable_grid_is_recorded_without_replacing_dsp() {
+        let mut a = analysis(120.0, "analysis");
+        apply_beat_model(&mut a, stage(120.0, 0.3, 10));
+        assert_eq!(a.bpm_source.as_deref(), Some("analysis"));
+        assert_eq!(a.beatgrid_offset_seconds, Some(0.1));
+        assert_eq!(
+            a.beat_model.as_ref().map(|s| s.beats_seconds.len()),
+            Some(10)
+        );
     }
 }

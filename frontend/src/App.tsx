@@ -21,20 +21,22 @@ import {
   Radio,
   Search,
   Settings2,
-  SlidersHorizontal,
   Volume2,
   X,
   Zap,
   Check,
   AlertCircle,
   SkipBack,
+  SkipForward,
   Repeat2,
 } from "lucide-react";
 import { isDesktop, native } from "./api";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import {
   AppState,
+  AnalysisSettings,
   AudioDeviceInfo,
+  Vocabulary,
   DeckSnapshot,
   EngineSnapshot,
   MidiState,
@@ -46,14 +48,24 @@ import {
 import Waveform from "./Waveform";
 import AnalysisInfo from "./AnalysisInfo";
 import TrackDrawer from "./TrackDrawer";
-import { beatPosition, beatPhaseDelta, snapToBeat } from "./mixing-view";
+import {
+  beatPosition,
+  beatPhaseDelta,
+  shiftBeatOne,
+  snapToBeat,
+} from "./mixing-view";
 import {
   withTrackMetadata,
   type EngineTransport,
   type EngineMetadata,
 } from "./engine-state";
-import { BAND_COLORS, HOT_CUE_COLORS } from "./waveform-data";
+import { BAND_COLORS, HOT_CUE_COLORS, displaySections } from "./waveform-data";
 import SpotifyPanel, { type SpotifyTrack } from "./SpotifyPanel";
+import SpotifyLogo from "./SpotifyLogo";
+import NextPanel from "./NextPanel";
+import { TransitionReadout, useTransitionGuide } from "./TransitionGuide";
+import type { WaveformGuide } from "./transition";
+import type { Suggestion } from "./suggestions";
 import {
   THEMES,
   applyTheme,
@@ -75,6 +87,11 @@ import {
   type ControllerBrowserAction,
   type ControllerBrowserHandle,
 } from "./controller-browser";
+/* Brand mark: a record drawn as a circle of dots, orange at the spindle. */
+const BRAND_DOTS = Array.from({ length: 25 }, (_, i) => [
+  2.2 + (i % 5) * 4.4,
+  2.2 + Math.floor(i / 5) * 4.4,
+]).filter(([x, y]) => Math.hypot(x - 11, y - 11) < 10.5);
 const fmt = (seconds: number) => {
   const value = Math.max(0, Math.floor(seconds || 0));
   return `${Math.floor(value / 60)
@@ -127,6 +144,7 @@ function Knob({
   max = 2,
   onChange,
   reset = 1,
+  tone,
 }: {
   label: string;
   value: number;
@@ -134,9 +152,10 @@ function Knob({
   max?: number;
   onChange: (v: number) => void;
   reset?: number;
+  tone?: "trim" | "high" | "mid" | "low" | "filter" | "master" | "aux";
 }) {
   return (
-    <label className="knob-control">
+    <label className={`knob-control ${tone ? `tone-${tone}` : ""}`}>
       <span
         className="knob"
         style={
@@ -183,6 +202,8 @@ function DeckWaveform({
   snapSeek,
   waveformCommand,
   snapshotTime,
+  guides,
+  guideCountdown,
 }: {
   id: number;
   deck: DeckSnapshot;
@@ -192,6 +213,8 @@ function DeckWaveform({
   snapshotTime: number;
   visibleBeats: number;
   snapSeek: boolean;
+  guides?: WaveformGuide[];
+  guideCountdown?: { text: string; color: string } | null;
 }) {
   const track =
     deck.track ||
@@ -203,10 +226,14 @@ function DeckWaveform({
   const position = val(deck.position_seconds, val(deck.position));
   const baseBpm = val(deck.bpm, val(track?.bpm, val(deck.original_bpm)));
   const gridOffset = val(deck.beatgrid_offset_seconds);
+  const sections = useMemo(
+    () => displaySections(track?.sections, duration),
+    [track?.sections, duration],
+  );
   const heldPosition = useRef<number | null>(null);
   const currentSource = useRef(track?.path);
   currentSource.current = track?.path;
-  const color = id === 0 ? "#f4b65b" : "#62cbd5";
+  const color = id === 0 ? "#f5d90a" : "#86cfee";
   return (
     <section
       className="stacked-wave-row"
@@ -223,6 +250,9 @@ function DeckWaveform({
         spanBeats={visibleBeats}
         color={color}
         hotcues={deck.hot_cues || []}
+        sections={sections}
+        guides={guides}
+        guideCountdown={guideCountdown}
         memoryCues={deck.memory_cues || []}
         cuePoint={deck.cue_seconds}
         loopStart={deck.loop_start_seconds}
@@ -344,6 +374,7 @@ function Deck({
   load,
   demo,
   reanalyze,
+  setVocabulary,
   loadSpotify,
   visibleBeats,
   snapSeek,
@@ -351,6 +382,7 @@ function Deck({
   hardwareRange,
   hardwarePadMode,
   onTempoRange,
+  guides,
 }: {
   id: number;
   deck: DeckSnapshot;
@@ -360,6 +392,7 @@ function Deck({
   load: (deck: number, path: string) => void;
   demo: (deck: number) => void;
   reanalyze: (deck: number) => Promise<void>;
+  setVocabulary: (deck: number, vocabulary: Vocabulary | null) => Promise<void>;
   loadSpotify: (deck: number, track: SpotifyTrack) => Promise<void>;
   visibleBeats: number;
   snapSeek: boolean;
@@ -367,6 +400,7 @@ function Deck({
   hardwareRange?: number;
   hardwarePadMode?: string;
   onTempoRange: (deck: number, range: number) => void;
+  guides?: WaveformGuide[];
 }) {
   const track =
     deck.track ||
@@ -381,6 +415,10 @@ function Deck({
   const tempo = val(deck.tempo_percent);
   const bpm = baseBpm * (1 + tempo / 100);
   const hotcues = deck.hot_cues || Array(8).fill(null);
+  const sections = useMemo(
+    () => displaySections(track?.sections, duration),
+    [track?.sections, duration],
+  );
   const [editGrid, setEditGrid] = useState(false);
   const [gridBpm, setGridBpm] = useState("120");
   const [gridOffset, setGridOffset] = useState("0");
@@ -472,7 +510,7 @@ function Deck({
     },
     [track?.path, id, waveformCommand],
   );
-  const color = id === 0 ? "#f4b65b" : "#62cbd5";
+  const color = id === 0 ? "#f5d90a" : "#86cfee";
   const send = (type: string, data: Command = {}) =>
     command({ type, deck: id, ...data });
   return (
@@ -517,12 +555,11 @@ function Deck({
         <span className="deck-badge">{id === 0 ? "A" : "B"}</span>
         <div className="track-heading">
           <strong>{title || "Ready for your next track"}</strong>
-          <span>
-            {track?.artist ||
-              (title
-                ? "Local audio · native playback"
-                : "Drag a track here or choose from the library")}
-          </span>
+          {(track?.artist || !title) && (
+            <span>
+              {track?.artist || "Drag a track here or choose from the library"}
+            </span>
+          )}
         </div>
         <div className="load-menu">
           <button className="subtle" onClick={() => setMenu(!menu)}>
@@ -590,19 +627,6 @@ function Deck({
           <span>−{fmt(duration - position)} remaining</span>
         </div>
       </div>
-      {track && (
-        <AnalysisInfo
-          key={`${track.id}-${track.path}`}
-          track={track}
-          onReanalyze={() => reanalyze(id)}
-          baseBpm={baseBpm}
-          onChooseBpm={(bpm) => {
-            setGridBpm(bpm.toFixed(2));
-            setGridOffset(String(val(deck.beatgrid_offset_seconds)));
-            setEditGrid(true);
-          }}
-        />
-      )}
       {editGrid && (
         <form
           className="grid-editor"
@@ -646,7 +670,7 @@ function Deck({
             </button>
           </div>
           <label>
-            FIRST BEAT (s)
+            BEAT 1 (s)
             <input
               aria-label={`Deck ${id + 1} first beat offset`}
               type="number"
@@ -656,6 +680,26 @@ function Deck({
               onChange={(e) => setGridOffset(e.target.value)}
             />
           </label>
+          <div className="grid-tempo-tools">
+            {[-1, 1].map((step) => (
+              <button
+                key={step}
+                type="button"
+                disabled={
+                  !(+gridBpm >= 30 && +gridBpm <= 300) ||
+                  !Number.isFinite(+gridOffset)
+                }
+                title={`Move beat 1 one beat ${step < 0 ? "earlier" : "later"}`}
+                onClick={() =>
+                  setGridOffset(
+                    shiftBeatOne(+gridOffset, +gridBpm, step).toFixed(3),
+                  )
+                }
+              >
+                {step < 0 ? "◀ beat 1" : "beat 1 ▶"}
+              </button>
+            ))}
+          </div>
           <button>
             <Check size={12} />
             Apply grid
@@ -682,6 +726,8 @@ function Deck({
           sourceId={track?.path}
           snapshotTime={snapshotTime}
           hotcues={hotcues}
+          sections={sections}
+          guides={guides}
           memoryCues={deck.memory_cues || []}
           cuePoint={deck.cue_seconds}
           loopStart={deck.loop_start_seconds}
@@ -702,7 +748,22 @@ function Deck({
           }
         />
         <div className="preview-caption">
-          <span>FULL TRACK</span>
+          {track ? (
+            <AnalysisInfo
+              key={`${track.id}-${track.path}`}
+              track={track}
+              onReanalyze={() => reanalyze(id)}
+              onVocabulary={(vocabulary) => setVocabulary(id, vocabulary)}
+              baseBpm={baseBpm}
+              onChooseBpm={(bpm) => {
+                setGridBpm(bpm.toFixed(2));
+                setGridOffset(String(val(deck.beatgrid_offset_seconds)));
+                setEditGrid(true);
+              }}
+            />
+          ) : (
+            <span>FULL TRACK</span>
+          )}
           <span>
             {track?.waveform_bands ? (
               <>
@@ -719,7 +780,12 @@ function Deck({
       </div>
       <div className="deck-controls">
         <div
-          className="jog"
+          className={`jog ${deck.playing ? "is-playing" : ""}`}
+          style={
+            {
+              "--progress": duration > 0 ? Math.min(1, position / duration) : 0,
+            } as React.CSSProperties
+          }
           onPointerDown={(e) => {
             if (!title || e.button !== 0) return;
             e.preventDefault();
@@ -790,83 +856,115 @@ function Deck({
             <i style={{ transform: `rotate(${(position * 90) % 360}deg)` }} />
           </div>
         </div>
-        <div className="transport-column">
-          <div className="sync-row">
-            <button
-              disabled={!title}
-              className={`mini ${deck.sync_enabled ? "sync-on" : ""}`}
-              onClick={() => send("set_sync", { enabled: !deck.sync_enabled })}
-            >
-              <Link2 size={12} /> SYNC
-            </button>
-            <button
-              className={`master-tag ${deck.is_master ? "master-on" : ""}`}
-              disabled={!title}
-              onClick={() => send("set_master")}
-            >
-              MASTER
-            </button>
-          </div>
-          <div className="transport">
-            <button
-              title="Hold to preview from cue point"
-              className="cue"
-              disabled={!title}
-              onPointerDown={(e) => {
-                e.currentTarget.setPointerCapture(e.pointerId);
-                send("cue_press", { pressed: true });
-              }}
-              onPointerUp={() => send("cue_press", { pressed: false })}
-              onPointerCancel={() => send("cue_press", { pressed: false })}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  if (!e.repeat) send("cue_press", { pressed: true });
+        <div className="deck-keys">
+          <div className="transport-column">
+            <div className="sync-row">
+              <button
+                disabled={!title}
+                className={`mini ${deck.sync_enabled ? "sync-on" : ""}`}
+                onClick={() =>
+                  send("set_sync", { enabled: !deck.sync_enabled })
                 }
-              }}
-              onKeyUp={(e) => {
-                if (e.key === "Enter" || e.key === " ")
-                  send("cue_press", { pressed: false });
-              }}
-            >
-              CUE
-            </button>
+              >
+                <Link2 size={12} /> SYNC
+              </button>
+              <button
+                className={`master-tag ${deck.is_master ? "master-on" : ""}`}
+                disabled={!title}
+                onClick={() => send("set_master")}
+              >
+                MASTER
+              </button>
+            </div>
+            <div className="transport">
+              <button
+                title="Hold to preview from cue point"
+                className="cue"
+                disabled={!title}
+                onPointerDown={(e) => {
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                  send("cue_press", { pressed: true });
+                }}
+                onPointerUp={() => send("cue_press", { pressed: false })}
+                onPointerCancel={() => send("cue_press", { pressed: false })}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    if (!e.repeat) send("cue_press", { pressed: true });
+                  }
+                }}
+                onKeyUp={(e) => {
+                  if (e.key === "Enter" || e.key === " ")
+                    send("cue_press", { pressed: false });
+                }}
+              >
+                CUE
+              </button>
+              <button
+                className={`play ${deck.playing ? "active" : ""}`}
+                aria-label={deck.playing ? "Pause" : "Play"}
+                disabled={!title}
+                onClick={() => send("toggle_play")}
+              >
+                {deck.playing ? (
+                  <Pause size={20} fill="currentColor" />
+                ) : (
+                  <Play size={20} fill="currentColor" />
+                )}
+              </button>
+            </div>
             <button
-              className={`play ${deck.playing ? "active" : ""}`}
-              aria-label={deck.playing ? "Pause" : "Play"}
+              className="set-cue"
               disabled={!title}
-              onClick={() => send("toggle_play")}
+              onClick={() => send("set_cue")}
             >
-              {deck.playing ? (
-                <Pause size={20} fill="currentColor" />
-              ) : (
-                <Play size={20} fill="currentColor" />
-              )}
+              SET CUE AT {fmt(position)}
             </button>
+            <div className="beat-jump">
+              <span>BEAT JUMP</span>
+              <button
+                disabled={!title}
+                title="Back 4 beats"
+                onClick={() => send("beat_jump", { beats: -4 })}
+              >
+                <SkipBack size={12} />4
+              </button>
+              <button
+                disabled={!title}
+                title="Forward 4 beats"
+                onClick={() => send("beat_jump", { beats: 4 })}
+              >
+                4<ChevronRight size={14} />
+              </button>
+            </div>
           </div>
-          <button
-            className="set-cue"
-            disabled={!title}
-            onClick={() => send("set_cue")}
-          >
-            SET CUE AT {fmt(position)}
-          </button>
-          <div className="beat-jump">
-            <span>BEAT JUMP</span>
-            <button
-              disabled={!title}
-              title="Back 4 beats"
-              onClick={() => send("beat_jump", { beats: -4 })}
-            >
-              <SkipBack size={12} />4
-            </button>
-            <button
-              disabled={!title}
-              title="Forward 4 beats"
-              onClick={() => send("beat_jump", { beats: 4 })}
-            >
-              4<ChevronRight size={14} />
-            </button>
+          <div className="pads-heading">
+            <div className="tabs">
+              <button
+                className={padMode === "hotcue" ? "selected" : ""}
+                onClick={() => setPadMode("hotcue")}
+              >
+                HOT CUE
+              </button>
+              <button
+                className={padMode === "loop" ? "selected" : ""}
+                onClick={() => setPadMode("loop")}
+              >
+                BEAT LOOP
+              </button>
+              <button
+                className={padMode === "memory" ? "selected" : ""}
+                onClick={() => setPadMode("memory")}
+              >
+                MEMORY
+              </button>
+            </div>
+            {padMode === "memory" && (
+              <span>
+                {deck.memory_cues?.filter((c) => c !== null).length || 0} / 10
+                saved
+              </span>
+            )}
           </div>
         </div>
         <div className="tempo-slider">
@@ -904,35 +1002,6 @@ function Deck({
           FLX4 PADS · {controllerLabel(hardwarePadMode)}
         </div>
       )}
-      <div className="pads-heading">
-        <div className="tabs">
-          <button
-            className={padMode === "hotcue" ? "selected" : ""}
-            onClick={() => setPadMode("hotcue")}
-          >
-            HOT CUE
-          </button>
-          <button
-            className={padMode === "loop" ? "selected" : ""}
-            onClick={() => setPadMode("loop")}
-          >
-            BEAT LOOP
-          </button>
-          <button
-            className={padMode === "memory" ? "selected" : ""}
-            onClick={() => setPadMode("memory")}
-          >
-            MEMORY
-          </button>
-        </div>
-        <span>
-          {padMode === "hotcue"
-            ? "Shift + click to clear"
-            : padMode === "loop"
-              ? "Tap a length to loop"
-              : `${deck.memory_cues?.filter((c) => c !== null).length || 0} / 10 saved`}
-        </span>
-      </div>
       {padMode === "memory" ? (
         <div className="memory-controls">
           <button
@@ -978,6 +1047,13 @@ function Deck({
                 key={i}
                 disabled={!title}
                 className={active ? "set" : ""}
+                title={
+                  padMode === "hotcue"
+                    ? cue != null
+                      ? "Jump to cue · Shift-click to clear"
+                      : "Set hot cue here"
+                    : `Loop ${beats} beat${beats === 1 ? "" : "s"}`
+                }
                 style={
                   padMode === "hotcue"
                     ? ({
@@ -1022,11 +1098,7 @@ function Deck({
         </div>
       )}
       <div className="deck-footer">
-        <span>
-          <span className={`tiny-dot ${title ? "live" : ""}`} />
-          {title ? "TRACK LOADED" : "STANDBY"}
-        </span>
-        <div className="manual-loop">
+        <div className="manual-loop tray">
           <button
             disabled={!title}
             title="Set loop in point"
@@ -1050,7 +1122,7 @@ function Deck({
             {deck.loop_start_seconds != null ? "EXIT" : "LOOP"}
           </button>
         </div>
-        <div className="pitch-tools">
+        <div className="pitch-tools tray">
           <button
             disabled={!title || deck.preparation_pending}
             className={deck.keylock ? "keylock enabled" : "keylock"}
@@ -1089,120 +1161,180 @@ function Mixer({
 }) {
   const [fxType, setFxType] = useState<"echo" | "reverb">("echo");
   return (
-    <section className="mixer">
-      <div className="mixer-title">
-        <SlidersHorizontal size={13} /> MIXER <span>2 CHANNEL</span>
-      </div>
-      {controllerSurface && (
-        <div className="controller-fx-status" aria-label="FLX4 effects status">
-          <small>
-            FLX4 FX · TARGET {controllerSurface.fx_target === 0 ? "A" : "B"}
-          </small>
-          {controllerSurface.fx_name.map((name, i) => (
-            <span
-              key={i}
-              className={controllerSurface.fx_enabled[i] ? "enabled" : ""}
-            >
-              <b>{i === 0 ? "A" : "B"}</b> {controllerLabel(name)} ·{" "}
-              {controllerSurface.fx_beats[i]} beat ·{" "}
-              {controllerSurface.fx_enabled[i] ? "ON" : "OFF"}
-            </span>
-          ))}
-          <small>
-            FX depth {Math.round(controllerSurface.fx_depth * 100)}% · CFX{" "}
-            {controllerLabel(controllerSurface.smart_cfx_preset)}
-          </small>
-        </div>
-      )}
-      <div className="channel-pair">
-        {engine.decks.map((deck, i) => (
-          <div className={`channel channel-${i}`} key={i}>
-            <span className="channel-label">{i === 0 ? "A" : "B"}</span>
-            <Knob
-              label="TRIM"
-              value={val(deck.gain, 1)}
-              onChange={(gain) =>
-                command({ type: "set_deck_gain", deck: i, gain })
-              }
-            />
-            <Knob
-              label="HIGH"
-              value={val(deck.eq_high, 1)}
-              onChange={(high) =>
-                command({
-                  type: "set_eq",
-                  deck: i,
-                  low: val(deck.eq_low, 1),
-                  mid: val(deck.eq_mid, 1),
-                  high,
-                })
-              }
-            />
-            <Knob
-              label="MID"
-              value={val(deck.eq_mid, 1)}
-              onChange={(mid) =>
-                command({
-                  type: "set_eq",
-                  deck: i,
-                  low: val(deck.eq_low, 1),
-                  mid,
-                  high: val(deck.eq_high, 1),
-                })
-              }
-            />
-            <Knob
-              label="LOW"
-              value={val(deck.eq_low, 1)}
-              onChange={(low) =>
-                command({
-                  type: "set_eq",
-                  deck: i,
-                  low,
-                  mid: val(deck.eq_mid, 1),
-                  high: val(deck.eq_high, 1),
-                })
-              }
-            />
-            <Knob
-              label="FILTER"
-              min={-1}
-              max={1}
-              reset={0}
-              value={val(deck.filter)}
-              onChange={(amount) =>
-                command({ type: "set_filter", deck: i, amount })
-              }
-            />
-            <button
-              className={`headphone-button ${deck.cue_enabled ? "enabled" : ""}`}
-              aria-label={`Headphone cue deck ${i + 1}`}
-              onClick={() =>
-                command({
-                  type: "set_headphone_cue",
-                  deck: i,
-                  enabled: !deck.cue_enabled,
-                })
-              }
-            >
-              <Headphones size={15} /> CUE
-            </button>
-            <div className="fader-row">
-              <Range
-                label="LEVEL"
-                min={0}
-                max={1}
-                value={val(deck.channel_fader, 1)}
-                onChange={(value) =>
-                  command({ type: "set_channel_fader", deck: i, value })
-                }
-                vertical
-              />
-              <Meter value={Math.max(...(deck.peak || [0, 0]))} />
-            </div>
+    <div className="mixer-column">
+      <section className="mixer">
+        {controllerSurface && (
+          <div
+            className="controller-fx-status"
+            aria-label="FLX4 effects status"
+          >
+            <small>
+              FLX4 FX · TARGET {controllerSurface.fx_target === 0 ? "A" : "B"}
+            </small>
+            {controllerSurface.fx_name.map((name, i) => (
+              <span
+                key={i}
+                className={controllerSurface.fx_enabled[i] ? "enabled" : ""}
+              >
+                <b>{i === 0 ? "A" : "B"}</b> {controllerLabel(name)} ·{" "}
+                {controllerSurface.fx_beats[i]} beat ·{" "}
+                {controllerSurface.fx_enabled[i] ? "ON" : "OFF"}
+              </span>
+            ))}
+            <small>
+              FX depth {Math.round(controllerSurface.fx_depth * 100)}% · CFX{" "}
+              {controllerLabel(controllerSurface.smart_cfx_preset)}
+            </small>
           </div>
-        ))}
-      </div>
+        )}
+        <div className="channel-pair">
+          {engine.decks.map((deck, i) => (
+            <div className={`channel channel-${i}`} key={i}>
+              <span className="channel-label">{i === 0 ? "A" : "B"}</span>
+              <Knob
+                label="TRIM"
+                tone="trim"
+                value={val(deck.gain, 1)}
+                onChange={(gain) =>
+                  command({ type: "set_deck_gain", deck: i, gain })
+                }
+              />
+              <Knob
+                label="HIGH"
+                tone="high"
+                value={val(deck.eq_high, 1)}
+                onChange={(high) =>
+                  command({
+                    type: "set_eq",
+                    deck: i,
+                    low: val(deck.eq_low, 1),
+                    mid: val(deck.eq_mid, 1),
+                    high,
+                  })
+                }
+              />
+              <Knob
+                label="MID"
+                tone="mid"
+                value={val(deck.eq_mid, 1)}
+                onChange={(mid) =>
+                  command({
+                    type: "set_eq",
+                    deck: i,
+                    low: val(deck.eq_low, 1),
+                    mid,
+                    high: val(deck.eq_high, 1),
+                  })
+                }
+              />
+              <Knob
+                label="LOW"
+                tone="low"
+                value={val(deck.eq_low, 1)}
+                onChange={(low) =>
+                  command({
+                    type: "set_eq",
+                    deck: i,
+                    low,
+                    mid: val(deck.eq_mid, 1),
+                    high: val(deck.eq_high, 1),
+                  })
+                }
+              />
+              <Knob
+                label="FILTER"
+                tone="filter"
+                min={-1}
+                max={1}
+                reset={0}
+                value={val(deck.filter)}
+                onChange={(amount) =>
+                  command({ type: "set_filter", deck: i, amount })
+                }
+              />
+              <button
+                className={`headphone-button ${deck.cue_enabled ? "enabled" : ""}`}
+                aria-label={`Headphone cue deck ${i + 1}`}
+                onClick={() =>
+                  command({
+                    type: "set_headphone_cue",
+                    deck: i,
+                    enabled: !deck.cue_enabled,
+                  })
+                }
+              >
+                <Headphones size={15} /> CUE
+              </button>
+              <div className="fader-row">
+                <Range
+                  label="LEVEL"
+                  min={0}
+                  max={1}
+                  value={val(deck.channel_fader, 1)}
+                  onChange={(value) =>
+                    command({ type: "set_channel_fader", deck: i, value })
+                  }
+                  vertical
+                />
+                <Meter value={Math.max(...(deck.peak || [0, 0]))} />
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="master-controls">
+          <Knob
+            label="MASTER"
+            tone="master"
+            max={2}
+            value={val(engine.master_gain, 1)}
+            onChange={(gain) => command({ type: "set_master_gain", gain })}
+          />
+          <Knob
+            label="PHONES"
+            tone="aux"
+            max={2}
+            value={val(engine.cue_gain, 1)}
+            onChange={(gain) => command({ type: "set_cue_gain", gain })}
+          />
+          <Knob
+            label="CUE / MIX"
+            tone="aux"
+            max={1}
+            reset={0}
+            value={val(engine.cue_mix)}
+            onChange={(mix) => command({ type: "set_cue_mix", mix })}
+          />
+        </div>
+        <div className="fx-row">
+          <button
+            className="fx-selector"
+            onClick={() => setFxType(fxType === "echo" ? "reverb" : "echo")}
+          >
+            <Zap size={12} />
+            {fxType.toUpperCase()}
+            <ChevronDown size={10} />
+          </button>
+          {engine.decks.map((d, i) => (
+            <input
+              key={i}
+              aria-label={`Deck ${i + 1} ${fxType} amount`}
+              type="range"
+              min={0}
+              max={1}
+              step={0.01}
+              value={val(d[fxType])}
+              onChange={(e) =>
+                command({
+                  type: "set_fx",
+                  deck: i,
+                  echo: fxType === "echo" ? +e.target.value : val(d.echo),
+                  reverb: fxType === "reverb" ? +e.target.value : val(d.reverb),
+                })
+              }
+            />
+          ))}
+        </div>
+      </section>
       <div className="crossfader">
         <div>
           <span>A</span>
@@ -1222,57 +1354,7 @@ function Mixer({
           onDoubleClick={() => command({ type: "set_crossfader", position: 0 })}
         />
       </div>
-      <div className="master-controls">
-        <Knob
-          label="MASTER"
-          max={2}
-          value={val(engine.master_gain, 1)}
-          onChange={(gain) => command({ type: "set_master_gain", gain })}
-        />
-        <Knob
-          label="PHONES"
-          max={2}
-          value={val(engine.cue_gain, 1)}
-          onChange={(gain) => command({ type: "set_cue_gain", gain })}
-        />
-        <Knob
-          label="CUE / MIX"
-          max={1}
-          reset={0}
-          value={val(engine.cue_mix)}
-          onChange={(mix) => command({ type: "set_cue_mix", mix })}
-        />
-      </div>
-      <div className="fx-row">
-        <button
-          className="fx-selector"
-          onClick={() => setFxType(fxType === "echo" ? "reverb" : "echo")}
-        >
-          <Zap size={12} />
-          {fxType.toUpperCase()}
-          <ChevronDown size={10} />
-        </button>
-        {engine.decks.map((d, i) => (
-          <input
-            key={i}
-            aria-label={`Deck ${i + 1} ${fxType} amount`}
-            type="range"
-            min={0}
-            max={1}
-            step={0.01}
-            value={val(d[fxType])}
-            onChange={(e) =>
-              command({
-                type: "set_fx",
-                deck: i,
-                echo: fxType === "echo" ? +e.target.value : val(d.echo),
-                reverb: fxType === "reverb" ? +e.target.value : val(d.reverb),
-              })
-            }
-          />
-        ))}
-      </div>
-    </section>
+    </div>
   );
 }
 export default function App() {
@@ -1286,9 +1368,9 @@ export default function App() {
   const [sourceJobs, setSourceJobs] = useState<
     NonNullable<AppState["spotify_decks"]>
   >([]);
-  const [librarySource, setLibrarySource] = useState<"local" | "spotify">(
-    "local",
-  );
+  const [librarySource, setLibrarySource] = useState<
+    "local" | "spotify" | "next"
+  >("local");
   const [drawerOpen, updateDrawerOpen] = useState(false);
   const drawerOpenRef = useRef(false);
   const [browserNavigation, updateBrowserNavigation] =
@@ -1312,7 +1394,31 @@ export default function App() {
   );
   const [visibleBeats, setVisibleBeats] = useState(32);
   const [snapSeek, setSnapSeek] = useState(false);
+  const [mixGuide, setMixGuide] = useState(() => {
+    try {
+      return localStorage.getItem("pulsedeck.mixGuide") !== "off";
+    } catch {
+      return true;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem("pulsedeck.mixGuide", mixGuide ? "on" : "off");
+    } catch {
+      /* The guide still works; only the choice is not remembered. */
+    }
+  }, [mixGuide]);
   const [showSampler, setShowSampler] = useState(false);
+  const [appMenu, setAppMenu] = useState(false);
+  const appMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!appMenu) return;
+    const close = (e: PointerEvent) => {
+      if (!appMenuRef.current?.contains(e.target as Node)) setAppMenu(false);
+    };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, [appMenu]);
   const [samplerBank, setSamplerBank] = useState(0);
   const [sampleNames, setSampleNames] = useState<string[]>([
     "Kick",
@@ -1333,11 +1439,13 @@ export default function App() {
     "Sample 16",
   ]);
   const [analysis, setAnalysis] = useState<AppState["analysis"]>();
+  const [analysisSettings, setAnalysisSettings] = useState<AnalysisSettings>();
   const [engine, setEngine] = useState<EngineSnapshot>(emptyEngine);
   const [snapshotTime, setSnapshotTime] = useState(0);
   const trackMetadata = useRef<(TrackRecord | null)[]>([null, null]);
   const metadataRevision = useRef(-1);
 
+  const transition = useTransitionGuide(engine, mixGuide);
   const [library, setLibrary] = useState<TrackRecord[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [devices, setDevices] = useState<AudioDeviceInfo[]>([]);
@@ -1406,6 +1514,7 @@ export default function App() {
     [navigate],
   );
   const spotifyBrowser = useRef<ControllerBrowserHandle | null>(null);
+  const nextBrowser = useRef<ControllerBrowserHandle | null>(null);
   const controllerHandler = useRef<
     (action: ControllerBrowserAction) => void | Promise<void>
   >(() => {});
@@ -1416,6 +1525,12 @@ export default function App() {
   const registerSpotifyBrowser = useCallback(
     (handle: ControllerBrowserHandle | null) => {
       spotifyBrowser.current = handle;
+    },
+    [],
+  );
+  const registerNextBrowser = useCallback(
+    (handle: ControllerBrowserHandle | null) => {
+      nextBrowser.current = handle;
     },
     [],
   );
@@ -1482,6 +1597,7 @@ export default function App() {
       setSmartModes(s.smart_modes);
       setSourceJobs(s.spotify_decks || []);
       setAnalysis(s.analysis);
+      setAnalysisSettings(s.analysis_settings);
       hydrateAudio(s.audio_status);
       setDevice(
         (d) =>
@@ -1585,7 +1701,7 @@ export default function App() {
     [fail],
   );
   const loadSpotify = useCallback(
-    async (deck: number, track: SpotifyTrack) => {
+    async (deck: number, track: Pick<SpotifyTrack, "uri" | "title">) => {
       const request = ++deckLoadRequest.current[deck];
       setSourceJobs((old) =>
         [0, 1].map((i) =>
@@ -1655,6 +1771,32 @@ export default function App() {
       announce("Beat, key and waveform analysis updated");
     },
     [refresh, announce],
+  );
+  const setVocabulary = useCallback(
+    async (deck: number, vocabulary: Vocabulary | null) => {
+      await native("set_section_vocabulary", { deck, vocabulary });
+      announce(
+        vocabulary === null
+          ? "Section labels follow the detected style"
+          : `Section labels set to ${vocabulary === "dance" ? "dance" : "hip-hop"}`,
+      );
+    },
+    [announce],
+  );
+  const saveAnalysisSettings = useCallback(
+    (change: Partial<AnalysisSettings>) =>
+      native<AnalysisSettings>("set_analysis_settings", {
+        settings: {
+          beat_model_spotify: true,
+          auto_hot_cues: true,
+          auto_memory_cues: true,
+          ...analysisSettings,
+          ...change,
+        },
+      })
+        .then(setAnalysisSettings)
+        .catch(fail),
+    [analysisSettings, fail],
   );
   const recordingActive = !!(recording.recording || recording.active);
   useEffect(() => {
@@ -1755,7 +1897,7 @@ export default function App() {
       navigate("rotate");
       if (!wasHome)
         setLibrarySource((source) => {
-          const sources = ["spotify", "local"] as const;
+          const sources = ["spotify", "local", "next"] as const;
           return sources[browseIndex(sources, source, action.delta)];
         });
       return;
@@ -1769,8 +1911,10 @@ export default function App() {
       updateDrawerOpen(open);
       if (!open || next.layer === "close") return;
       setLocalCollectionFocus(next.layer === "playlists", false);
-      if (librarySource === "spotify") {
-        await spotifyBrowser.current?.handle({
+      if (librarySource !== "local") {
+        const browser =
+          librarySource === "spotify" ? spotifyBrowser : nextBrowser;
+        await browser.current?.handle({
           ...action,
           button: next.layer === "playlists" ? "browse_back" : "browse_press",
           shifted: false,
@@ -1789,7 +1933,8 @@ export default function App() {
       navigate("rotate");
       if (wasClose) {
         setLocalCollectionFocus(true, false);
-        await spotifyBrowser.current?.handle({
+        const browser = librarySource === "next" ? nextBrowser : spotifyBrowser;
+        await browser.current?.handle({
           type: "global_button",
           button: "browse_back",
           pressed: true,
@@ -1817,6 +1962,10 @@ export default function App() {
         );
         return;
       }
+    }
+    if (librarySource === "next") {
+      await nextBrowser.current?.handle(action);
+      return;
     }
     if (librarySource === "spotify") {
       if (spotifyBrowser.current) await spotifyBrowser.current.handle(action);
@@ -2165,99 +2314,226 @@ export default function App() {
   }
   return (
     <div className="app-shell">
-      <header className="topbar">
-        <div className="brand">
-          <div className="brand-mark">
-            <AudioLines size={22} />
-          </div>
-          <strong>PulseDeck</strong>
-          <span className="version">0.1</span>
+      <header className="topbar" data-tauri-drag-region>
+        <div className="brand" data-tauri-drag-region>
+          <svg
+            className="brand-mark"
+            viewBox="0 0 22 22"
+            aria-hidden="true"
+            data-tauri-drag-region
+          >
+            {BRAND_DOTS.map(([x, y]) => (
+              <circle
+                key={`${x}-${y}`}
+                cx={x}
+                cy={y}
+                r={1.45}
+                className={x === 11 && y === 11 ? "live" : undefined}
+              />
+            ))}
+          </svg>
+          <strong data-tauri-drag-region>PulseDeck</strong>
         </div>
-        <div className="topbar-center">
-          <span className="workspace-label">PERFORMANCE</span>
-          <span className="native-tag">RUST AUDIO ENGINE</span>
-        </div>
+        <div className="topbar-center" data-tauri-drag-region />
         <div className="top-actions">
-          <button
-            className={`record-button ${recordingActive ? "recording" : ""}`}
-            disabled={
-              (!audioRunning ||
-                engine.decks.some(
-                  (d) => d.track?.recording_allowed === false,
-                )) &&
-              !recordingActive
-            }
-            onClick={toggleRecording}
-            title={
-              engine.decks.some((d) => d.track?.recording_allowed === false)
-                ? "Recording is unavailable while a Spotify source is loaded"
-                : "Record the native deck and sampler mix as WAV"
-            }
+          {recordingActive && (
+            <button
+              className="record-live"
+              onClick={toggleRecording}
+              title={
+                recording.dropped_frames
+                  ? `Recording · ${recording.dropped_frames} dropped frames · click to stop`
+                  : "Recording the mix · click to stop"
+              }
+            >
+              <Circle size={8} fill="currentColor" /> REC
+            </button>
+          )}
+          {busy && (
+            <span className="import-progress" role="status">
+              <LoaderCircle size={11} className="spin" />
+              {analysis?.active
+                ? `${analysis.completed}/${analysis.total}`
+                : "importing"}
+            </span>
+          )}
+          <div
+            className="browser-dock tray"
+            aria-label="Music library"
+            onKeyDownCapture={browserNavigationKey}
           >
-            {recordingActive ? (
-              <Square size={10} fill="currentColor" />
-            ) : (
-              <Circle size={10} fill="currentColor" />
-            )}
-            {recordingActive ? "STOP REC" : "REC"}
-          </button>
-          <button
-            className={`sampler-toggle ${showSampler ? "selected" : ""}`}
-            onClick={() => setShowSampler(!showSampler)}
-          >
-            SAMPLER
-          </button>
-          <span
-            className={`connection-chip ${audioRunning ? "connected" : ""}`}
-          >
-            <span className="tiny-dot" />
-            {audioRunning ? "Audio online" : "Audio stopped"}
-          </span>
-          <button
-            className={`controller-chip ${midi.connected ? "connected" : ""}`}
-            onClick={() => {
-              openSettings();
-              setSettingsTab("midi");
-            }}
-          >
-            <Radio size={13} />
-            {midi.connected ? "MIDI connected" : "Controller offline"}
-          </button>
-          <button
-            className="icon-button"
-            aria-label="Settings"
-            onClick={openSettings}
-          >
-            <Settings2 size={18} />
-          </button>
-          <label className="source-picker">
-            <span>SOURCE</span>
-            <select
-              aria-label="Music source"
-              value={librarySource}
-              onChange={(e) => {
-                setLibrarySource(e.target.value as "local" | "spotify");
-                setDrawerOpen(true);
+            <button
+              data-browser-source="spotify"
+              aria-pressed={drawerOpen && librarySource === "spotify"}
+              title={
+                drawerOpen && librarySource === "spotify"
+                  ? "Hide Spotify"
+                  : "Open Spotify"
+              }
+              className={`${drawerOpen && librarySource === "spotify" ? "active" : ""} ${browserNavigation.layer === "footer" && librarySource === "spotify" ? "controller-focused" : ""}`}
+              onClick={() => {
+                setLibrarySource("spotify");
+                setDrawerOpen(!(drawerOpen && librarySource === "spotify"));
               }}
             >
-              <option value="local">Local tracks</option>
-              <option value="spotify">Spotify</option>
-            </select>
-          </label>
-          <button
-            className="import-button"
-            onClick={importTracks}
-            disabled={busy}
+              <Radio size={13} /> Spotify
+            </button>
+            <button
+              data-browser-source="local"
+              aria-pressed={drawerOpen && librarySource === "local"}
+              title={
+                drawerOpen && librarySource === "local"
+                  ? "Hide local tracks"
+                  : "Open local tracks"
+              }
+              className={`${drawerOpen && librarySource === "local" ? "active" : ""} ${browserNavigation.layer === "footer" && librarySource === "local" ? "controller-focused" : ""}`}
+              onClick={() => {
+                setLibrarySource("local");
+                setDrawerOpen(!(drawerOpen && librarySource === "local"));
+              }}
+            >
+              <Library size={13} /> Local <span>{library.length}</span>
+            </button>
+            <button
+              data-browser-source="next"
+              aria-pressed={drawerOpen && librarySource === "next"}
+              title={
+                drawerOpen && librarySource === "next"
+                  ? "Hide next-track suggestions"
+                  : "What should I play next?"
+              }
+              className={`${drawerOpen && librarySource === "next" ? "active" : ""} ${browserNavigation.layer === "footer" && librarySource === "next" ? "controller-focused" : ""}`}
+              onClick={() => {
+                setLibrarySource("next");
+                setDrawerOpen(!(drawerOpen && librarySource === "next"));
+              }}
+            >
+              <SkipForward size={13} /> Next
+            </button>
+          </div>
+          <div
+            className="app-menu"
+            ref={appMenuRef}
+            onKeyDown={(e) => {
+              if (e.key === "Escape" && appMenu) {
+                e.stopPropagation();
+                setAppMenu(false);
+              }
+            }}
           >
-            {busy ? (
-              <LoaderCircle size={15} className="spin" />
-            ) : (
-              <Plus size={16} />
-            )}{" "}
-            {busy
-              ? `Analyzing${analysis?.active ? ` ${analysis.completed}/${analysis.total}` : "…"}`
-              : "Import tracks"}
-          </button>
+            <button
+              className={`icon-button app-menu-trigger ${audioRunning ? "" : "alert"}`}
+              aria-label="Menu"
+              aria-haspopup="menu"
+              aria-expanded={appMenu}
+              onClick={() => setAppMenu((open) => !open)}
+            >
+              <Settings2 size={15} />
+              <ChevronDown size={11} />
+            </button>
+            {appMenu && (
+              <div className="dropdown app-menu-list" role="menu">
+                <button
+                  role="menuitem"
+                  className={`menu-status ${audioRunning ? "connected" : ""}`}
+                  onClick={() => {
+                    setAppMenu(false);
+                    openSettings();
+                    setSettingsTab("audio");
+                  }}
+                >
+                  <span className="tiny-dot" />
+                  {audioRunning ? "Audio online" : "Audio stopped"}
+                  <small>
+                    {engine.sample_rate
+                      ? `${(engine.sample_rate / 1000).toFixed(1)} kHz`
+                      : "set up"}
+                  </small>
+                </button>
+                <button
+                  role="menuitem"
+                  className={`menu-status ${midi.connected ? "connected" : ""}`}
+                  onClick={() => {
+                    setAppMenu(false);
+                    openSettings();
+                    setSettingsTab("midi");
+                  }}
+                >
+                  <span className="tiny-dot" />
+                  {midi.connected
+                    ? midi.input_name || "Controller connected"
+                    : "Controller offline"}
+                  <small>{midi.connected ? "midi" : "connect"}</small>
+                </button>
+                <hr />
+                <button
+                  role="menuitem"
+                  className={recordingActive ? "is-recording" : ""}
+                  disabled={
+                    (!audioRunning ||
+                      engine.decks.some(
+                        (d) => d.track?.recording_allowed === false,
+                      )) &&
+                    !recordingActive
+                  }
+                  title={
+                    engine.decks.some(
+                      (d) => d.track?.recording_allowed === false,
+                    )
+                      ? "Recording is unavailable while a Spotify source is loaded"
+                      : "Record the native deck and sampler mix as WAV"
+                  }
+                  onClick={() => {
+                    toggleRecording();
+                    setAppMenu(false);
+                  }}
+                >
+                  {recordingActive ? (
+                    <Square size={12} fill="currentColor" />
+                  ) : (
+                    <Circle size={12} fill="currentColor" />
+                  )}
+                  {recordingActive ? "Stop recording" : "Record mix"}
+                  <small>WAV</small>
+                </button>
+                <button
+                  role="menuitemcheckbox"
+                  aria-checked={showSampler}
+                  onClick={() => {
+                    setShowSampler(!showSampler);
+                    setAppMenu(false);
+                  }}
+                >
+                  <Zap size={13} />
+                  Sampler
+                  {showSampler && <Check size={13} />}
+                </button>
+                <button
+                  role="menuitem"
+                  disabled={busy}
+                  onClick={() => {
+                    setAppMenu(false);
+                    void importTracks();
+                  }}
+                >
+                  <Plus size={13} />
+                  {busy
+                    ? `Analyzing${analysis?.active ? ` ${analysis.completed}/${analysis.total}` : "…"}`
+                    : "Import tracks…"}
+                </button>
+                <button
+                  role="menuitem"
+                  onClick={() => {
+                    setAppMenu(false);
+                    openSettings();
+                  }}
+                >
+                  <Settings2 size={13} />
+                  Settings…
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </header>
       <div className="workspace">
@@ -2291,6 +2567,16 @@ export default function App() {
                 </button>
               </div>
               <WaveformAlignment decks={engine.decks} />
+              <TransitionReadout
+                state={transition}
+                enabled={mixGuide}
+                onToggle={() => setMixGuide((on) => !on)}
+                onCue={(deck, seconds) => {
+                  command({ type: "set_cue_point", deck, seconds });
+                  if (!engine.decks[deck]?.playing)
+                    command({ type: "seek", deck, seconds });
+                }}
+              />
               <button
                 className={`snap-seek ${snapSeek ? "enabled" : ""}`}
                 title="Snap waveform seeks to the nearest beat"
@@ -2308,6 +2594,8 @@ export default function App() {
               snapSeek={snapSeek}
               waveformCommand={waveformCommand}
               snapshotTime={snapshotTime}
+              guides={transition.guides[0]}
+              guideCountdown={transition.countdowns[0]}
             />
             <DeckWaveform
               id={1}
@@ -2318,12 +2606,15 @@ export default function App() {
               snapSeek={snapSeek}
               waveformCommand={waveformCommand}
               snapshotTime={snapshotTime}
+              guides={transition.guides[1]}
+              guideCountdown={transition.countdowns[1]}
             />
           </section>
           {
             <div className="performance-area">
               <Deck
                 id={0}
+                guides={transition.guides[0]}
                 hardwareRange={controllerSurface?.tempo_ranges[0]}
                 onTempoRange={setControllerTempoRange}
                 hardwarePadMode={
@@ -2339,6 +2630,7 @@ export default function App() {
                 load={load}
                 demo={demo}
                 reanalyze={reanalyze}
+                setVocabulary={setVocabulary}
                 loadSpotify={(deck, track) =>
                   loadSpotify(deck, track).catch(fail)
                 }
@@ -2352,6 +2644,7 @@ export default function App() {
               />
               <Deck
                 id={1}
+                guides={transition.guides[1]}
                 hardwareRange={controllerSurface?.tempo_ranges[1]}
                 onTempoRange={setControllerTempoRange}
                 hardwarePadMode={
@@ -2367,6 +2660,7 @@ export default function App() {
                 load={load}
                 demo={demo}
                 reanalyze={reanalyze}
+                setVocabulary={setVocabulary}
                 loadSpotify={(deck, track) =>
                   loadSpotify(deck, track).catch(fail)
                 }
@@ -2463,7 +2757,22 @@ export default function App() {
           browserNavigation.layer === "tracks"
         }
         onNavigationKey={browserNavigationKey}
-        title={librarySource === "spotify" ? "Spotify tracks" : "Local tracks"}
+        title={
+          librarySource === "spotify"
+            ? "Spotify"
+            : librarySource === "next"
+              ? "Next"
+              : "Local tracks"
+        }
+        icon={
+          librarySource === "spotify" ? (
+            <SpotifyLogo />
+          ) : librarySource === "next" ? (
+            <SkipForward size={17} aria-hidden="true" />
+          ) : (
+            <Library size={17} aria-hidden="true" />
+          )
+        }
       >
         {librarySource === "spotify" ? (
           <>
@@ -2496,6 +2805,23 @@ export default function App() {
               onBrowserPaneChange={navigate}
             />
           </>
+        ) : librarySource === "next" ? (
+          <NextPanel
+            engine={engine}
+            active={drawerOpen}
+            libraryRevision={library}
+            controllerLayer={browserNavigation.layer}
+            registerControllerBrowser={registerNextBrowser}
+            onBrowserPaneChange={navigate}
+            onLoad={(deck: number, s: Suggestion) =>
+              s.spotify
+                ? loadSpotify(deck, { uri: s.source, title: s.title }).catch(
+                    fail,
+                  )
+                : load(deck, s.source)
+            }
+            onError={fail}
+          />
         ) : (
           <section className="library-panel">
             <div className="library-toolbar">
@@ -2708,78 +3034,6 @@ export default function App() {
           </section>
         )}
       </TrackDrawer>
-      <footer
-        className="session-footer"
-        aria-label="Music library and session status"
-        onKeyDownCapture={browserNavigationKey}
-      >
-        <div className="browser-dock">
-          <div className="dock-actions">
-            <button
-              data-browser-source="spotify"
-              className={`${drawerOpen && librarySource === "spotify" ? "active" : ""} ${browserNavigation.layer === "footer" && librarySource === "spotify" ? "controller-focused" : ""}`}
-              onClick={() => {
-                setLibrarySource("spotify");
-                setDrawerOpen(!(drawerOpen && librarySource === "spotify"));
-              }}
-            >
-              <Radio size={15} />{" "}
-              {drawerOpen && librarySource === "spotify"
-                ? "Hide Spotify"
-                : "Open Spotify"}
-            </button>
-            <button
-              data-browser-source="local"
-              className={`${drawerOpen && librarySource === "local" ? "active" : ""} ${browserNavigation.layer === "footer" && librarySource === "local" ? "controller-focused" : ""}`}
-              onClick={() => {
-                setLibrarySource("local");
-                setDrawerOpen(!(drawerOpen && librarySource === "local"));
-              }}
-            >
-              <Library size={15} /> Local tracks <span>{library.length}</span>
-            </button>
-          </div>
-          <span>
-            {sourceJobs.some((job) => job.preparing)
-              ? "Preparing track in memory…"
-              : "Browse your music without leaving the decks."}
-          </span>
-          <button className="dock-audio" onClick={openSettings}>
-            {engine.sample_rate
-              ? `${(engine.sample_rate / 1000).toFixed(1)} kHz`
-              : "Audio settings"}{" "}
-            · {engine.buffer_frames || buffer} frames{" "}
-            <SlidersHorizontal size={13} />
-          </button>
-        </div>
-        <div className="statusbar">
-          <div>
-            <span className={`tiny-dot ${isDesktop ? "live" : ""}`} />
-            {isDesktop
-              ? "Native desktop session"
-              : "Browser preview — open the desktop app for playback"}
-          </div>
-          <div>
-            <span>
-              {analysis?.active
-                ? `Analyzing ${analysis.completed}/${analysis.total} tracks`
-                : audioRunning
-                  ? `${engine.output_channels || 2} output channels`
-                  : "Configure audio to begin"}
-            </span>
-            {recordingActive && (
-              <span className="recording-status">
-                ● RECORDING{" "}
-                {recording.dropped_frames
-                  ? `· ${recording.dropped_frames} dropped frames`
-                  : ""}
-              </span>
-            )}
-            <span>STREAM ERRORS {engine.underruns || 0}</span>
-            <span>SPACE: DECK A · ENTER: DECK B</span>
-          </div>
-        </div>
-      </footer>
       {notice && (
         <div
           className={`toast ${notice.error ? "error" : ""}`}
@@ -2920,9 +3174,9 @@ export default function App() {
                     ))}
                   </div>
                   <p className="help-text">
-                    Anatomy uses a palette of shaded surfaces and engraved
-                    lines. Frequency bands and cue colors stay consistent across
-                    themes.
+                    Each finish changes only the body. Screens, frequency bands
+                    and cue colours stay the same, so the decks read identically
+                    in every booth.
                   </p>
                 </section>
               )}
@@ -3258,6 +3512,107 @@ export default function App() {
               )}
               {settingsTab === "library" && (
                 <>
+                  <div className="settings-section-title">
+                    <AudioLines size={18} />
+                    <div>
+                      <h3>Beat analysis</h3>
+                      <p>
+                        A beat model finds every beat and beat 1 of each bar, in
+                        the background, so grid lines match the music.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="migration-card">
+                    <h4>Update library analysis</h4>
+                    <p>
+                      Run the beat model on tracks analyzed before it existed.
+                      It takes about two seconds per minute of audio, and decks
+                      keep playing. Manual BPM and grid edits are kept.
+                    </p>
+                    {analysis?.active ? (
+                      <button
+                        className="secondary"
+                        onClick={() =>
+                          native("cancel_library_analysis").catch(fail)
+                        }
+                      >
+                        Cancel ({analysis.completed}/{analysis.total})
+                      </button>
+                    ) : (
+                      <button
+                        className="secondary"
+                        disabled={busy}
+                        onClick={async () => {
+                          try {
+                            const updated = await native<TrackRecord[]>(
+                              "update_library_analysis",
+                            );
+                            await refresh();
+                            announce(
+                              updated.length
+                                ? `Beat analysis updated ${updated.length} track${updated.length === 1 ? "" : "s"}`
+                                : "Every track already has beat analysis",
+                            );
+                          } catch (e) {
+                            fail(e);
+                          }
+                        }}
+                      >
+                        Update library analysis
+                      </button>
+                    )}
+                  </div>
+                  <div className="migration-card">
+                    <h4>Spotify tracks</h4>
+                    <p>
+                      Analyze Spotify tracks with the beat model when they load
+                      or when you analyze a page. When off, they keep the
+                      existing tempo detection.
+                    </p>
+                    <label className="checkbox">
+                      <input
+                        type="checkbox"
+                        checked={analysisSettings?.beat_model_spotify ?? true}
+                        onChange={(e) =>
+                          saveAnalysisSettings({
+                            beat_model_spotify: e.target.checked,
+                          })
+                        }
+                      />
+                      Also run the beat model on Spotify tracks
+                    </label>
+                  </div>
+                  <div className="migration-card">
+                    <h4>Automatic cues</h4>
+                    <p>
+                      Fill empty hot cue pads and memory cues from song
+                      sections. Cues you set, move or delete are never changed.
+                    </p>
+                    <label className="checkbox">
+                      <input
+                        type="checkbox"
+                        checked={analysisSettings?.auto_hot_cues ?? true}
+                        onChange={(e) =>
+                          saveAnalysisSettings({
+                            auto_hot_cues: e.target.checked,
+                          })
+                        }
+                      />
+                      Fill empty hot cue pads
+                    </label>
+                    <label className="checkbox">
+                      <input
+                        type="checkbox"
+                        checked={analysisSettings?.auto_memory_cues ?? true}
+                        onChange={(e) =>
+                          saveAnalysisSettings({
+                            auto_memory_cues: e.target.checked,
+                          })
+                        }
+                      />
+                      Mark every section with a memory cue
+                    </label>
+                  </div>
                   <div className="settings-section-title">
                     <Library size={18} />
                     <div>

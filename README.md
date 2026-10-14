@@ -32,13 +32,16 @@ bash tools/rust-env.sh cargo test --workspace
 bash tools/rust-env.sh cargo clippy --workspace --all-targets -- -D warnings
 npm --prefix frontend test
 bash tools/rust-env.sh cargo run -p deck-engine --example native_smoke
+bash tools/rust-env.sh cargo run --release -p deck-engine --example beat_eval -- annotations.json
 ```
+
+The beat evaluation scores the beat model against the DSP grid on tracks whose grid you have checked by hand: open GRID, set or confirm BPM and beat 1, press Apply grid, then export them with `bash tools/export_beat_annotations.sh > annotations.json`. Playlists named House, Hip-hop, EDM or Electronic group the results. Frontend tests need Node 22.6 or newer.
 
 The native smoke test runs both decks silently through CoreAudio, records/decodes a WAV, and verifies transport continuity across audio stop/restart. Unit tests cover transport and routing, render-time allocations, track-load cancellation, pitch preparation, key estimation, FLX4 message parsing, XML/persistence and Spotify auth handling. These tests establish current behavior; they do not establish rekordbox performance or sound-quality parity.
 
 ## Current limits and roadmap
 
-Tracks are decoded into RAM. Key lock/pitch preparation computes a whole-track WSOLA asset on a worker, with cancellation and a 512 MiB preparation budget. Changes can have preparation latency and briefly use varispeed; Linear resampling and simple DSP need further fidelity work. Analysis v3 uses multi-window spectral rhythm analysis, tuning-aware chroma/key candidates and 4096 aligned peak/low/mid/high waveform bins. Confidence scores expose uncertainty; annotated real-music accuracy benchmarks remain necessary. Smart Fader/CFX are independent presets. Hardware latency, sleep/wake/device loss, long stress runs and a large-library benchmark remain pending.
+Tracks are decoded into RAM. Key lock/pitch preparation computes a whole-track WSOLA asset on a worker, with cancellation and a 512 MiB preparation budget. Changes can have preparation latency and briefly use varispeed; Linear resampling and simple DSP need further fidelity work. Analysis v3 uses multi-window spectral rhythm analysis, tuning-aware chroma/key candidates and 4096 aligned peak/low/mid/high waveform bins. Confidence scores expose uncertainty; annotated real-music accuracy benchmarks remain necessary. A neural beat stage (Beat This! small, MIT) adds beat and downbeat times on background threads after import or load, replaces the DSP grid with a constant grid whose bar lines sit on beat 1, and keeps manual BPM and grid edits; Settings → Library updates older tracks and controls whether Spotify tracks are included. See [the spike](research/beat-model-spike.md). The same pass cuts each track into sections (intro, build-up, drop, breakdown, outro, or verse and hook for hip-hop), shows them as a colour strip with a countdown to the next section, and fills empty hot cue pads and memory cues from them without changing cues you set. Smart Fader/CFX are independent presets. Hardware latency, sleep/wake/device loss, long stress runs and a large-library benchmark remain pending.
 
 Stems, proprietary USB/player export, Pro DJ Link, DVS, cloud sync, advanced video/lighting and complete Beat/Pad/Release FX parity are future roadmap work. This build is a functioning first implementation, not a completed replacement for every rekordbox feature.
 
@@ -70,9 +73,13 @@ Audio output is independent of MIDI: MacBook speakers are the initial output and
 
 ## Interface and controller browsing
 
-The performance view fills the window with a responsive grid: header, stacked waveforms, decks/mixer and library footer. Settings → Appearance offers Hardware Dark, Anatomy Light and Anatomy Dark. Shared semantic tokens style the decks, mixer, library tables, drawers, settings, analysis popovers and notifications. Themes apply immediately, persist locally across restarts and preserve the three-band waveform colors. Anatomy palettes are adapted from [Anatomy](https://skills.wheresryan.sh/anatomy). Only library and settings content scroll.
+The performance view fills the window: a header carrying the library keys, the stacked waveform screen, then decks and mixer running to the bottom edge. The interface is styled as a field instrument: a quiet chassis, black screens with thin numerals and a red playhead, coloured EQ caps that match the waveform bands, and each jog drawn as a coloured record whose tick ring fills as the track plays. Settings → Appearance offers three finishes, Aluminium, Ivory and Graphite. Shared semantic tokens in `frontend/src/styles/tokens.css` style the decks, mixer, library tables, drawers, settings, analysis popovers and notifications. Finishes apply immediately, persist locally across restarts and preserve the three-band waveform and cue colours. Only library and settings content scroll.
 
 Turn the browse knob on the main view to focus the library footer. Press to open playlists, press again to enter songs, then press to return through playlists and the close control. Press the close control to return to the footer. Turning on playlists starts a fresh inward selection path. Shift/Back moves outward one level.
+
+The **next** key beside Spotify and Local answers "what should I play next?". It ranks local tracks and analysed Spotify tracks against the deck the crowd hears, by key (Camelot), tempo (including half and double time, within the other deck's tempo range) and energy, and offers them for the other deck with a short reason such as "8A→9A · +1.5% · energy up". Choose keep, raise or lower energy on the left; tracks already on a deck or played this session are left out. The browse knob reaches it like the other sources, and LOAD loads the selected suggestion. See [the scope](research/ai-features-scope.md).
+
+The **mix guide** in the waveform toolbar suggests when to start the waiting deck so the two songs' sections line up: a dashed START line and a countdown on the playing deck, a tinted stretch where both play, and a dotted line where the new drop lands, ideally as the old track ends. Arrows step through alternatives, and **cue B** moves the waiting deck's cue to the suggested start. You still do the mix; the guide only points out the moment.
 
 ## Local configuration and secrets
 

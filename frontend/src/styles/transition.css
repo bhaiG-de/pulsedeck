@@ -1,0 +1,44 @@
+/* ── Transition guide ─────────────────────────────────────────────────
+   One line in the waveform toolbar: an on/off key, the suggestion, its
+   alternatives and a key that moves the waiting deck's cue point. The
+   guides themselves are drawn on the waveform canvases. */
+
+.transition-readout {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--screen-dim);
+}
+.transition-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--screen-ink);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.transition-choices {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.stacked-waveforms .transition-choices button {
+  width: 22px;
+  padding: 0;
+}
+.transition-readout > button {
+  flex-shrink: 0;
+}
+.stacked-waveforms button.mix-guide-toggle.enabled {
+  color: var(--screen);
+  background: var(--screen-ink);
+  border-color: var(--screen-ink);
+}
+.stacked-waveforms button.mix-guide-toggle.enabled:hover {
+  background: var(--screen-ink);
+  color: var(--screen);
+}

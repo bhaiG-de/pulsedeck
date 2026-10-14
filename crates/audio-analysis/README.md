@@ -70,6 +70,61 @@ transport state and zero callback allocation/deallocation. Synthetic checks do
 not establish accuracy across commercial music or parity with rekordbox; use
 held-out tracks with independently verified references for that assessment.
 
+## Neural beat stage
+
+`track_beats` runs the bundled Beat This! small model (`models/README.md`) over
+decoded PCM: mono mix, a single-block FFT resampler to 22,050 Hz, 128-band
+log-mel at 50 fps, 1500-frame chunks, then the upstream local-maximum peak
+picking. It returns beat and downbeat times plus a constant-grid fit: BPM is
+searched within ±4% of the median beat interval for the phase that puts the
+most beats within 35 ms of a line, refined by least squares, and the offset is
+placed on the bar phase most downbeats agree with. The grid is used only when at
+least 16 beats exist and half of them sit on it.
+
+Inference runs on a four-thread utility-priority pool, one track at a time
+(about 250 MB transient), at roughly two seconds per minute of audio on an M3
+Pro. It never runs in a render callback. The stage is versioned separately
+(`BEAT_MODEL_VERSION`) so DSP analysis version 3 stays valid. Tests check the
+log-mel front end against torchaudio reference values, chunking against the
+upstream split, the grid fit on jittered beats with gaps, and an end-to-end run
+on a synthetic drum loop. Agreement with the reference implementation is not an
+accuracy benchmark; use `deck-engine`'s `beat_eval` example on hand-checked tracks.
+
+## Song sections and automatic cues
+
+`detect_sections` cuts a track into sections on its grid, reusing the beat
+model's log-mel spectrogram, so it adds well under a second per track. Every
+full bar from the grid's beat 1 gets 16 timbre bands plus overall, bass and
+treble level and bass onset strength. Silent bars at either end are dropped.
+Dynamic programming over the z-scored bar vectors minimises within-section
+variance plus a cost per section; lengths in whole 8-bar phrases are free, 4-bar
+sections and odd lengths cost more, and fragments under four bars at the ends
+join their neighbour. Sections are only cut from model or manual grids: the DSP
+phase marks a beat, not beat 1.
+
+Labels use each section's energy, groove (bass level and how far bass stands
+out from the mix, so a noise riser does not read as a drop) and repetition.
+**Dance** (chosen when bass drops out mid-track and later returns): drops are
+loud with strong groove, breakdowns lose the groove, build-ups lead into a drop
+and either rise or are short and lighter, and plain phrases before the first or
+after the last labelled section extend the intro and outro. **Hip-hop**: short
+edge sections are the intro and outro, the repeating group of roughly 8-bar
+sections is the hook, and longer sections are verses. The DJ can switch
+vocabulary per track without re-reading audio. Neighbouring sections with the
+same label display and cue as one; the stored sections stay fine-grained.
+
+`plan_auto_cues` fills only empty hot cue pads (first downbeat, then drops or
+hooks, breakdowns or verses, build-ups and the outro, placed in time order) and
+memory cues (every section start). It records what it placed: untouched auto
+cues move when sections change, cues the DJ set or moved are never changed, and
+auto cues the DJ cleared are not placed again on any pad.
+
+Tests cover a synthetic EDM arrangement (intro, build-up, drop, breakdown,
+build-up, drop, outro cut on exact phrases), a synthetic hip-hop arrangement
+(intro, verse, hook, verse, hook, outro), silence, label extension and merging,
+and the cue rules. Real tracks need the annotated evaluation in
+`research/ai-features-scope.md`.
+
 Public DSP references:
 
 - [Ellis, Beat Tracking with Dynamic Programming](https://www.ee.columbia.edu/~dpwe/pubs/Ellis06-beattrack.pdf): onset strength and tempo autocorrelation.

@@ -13,6 +13,43 @@ export interface KeyCandidate {
   camelot: string;
   score: number;
 }
+export interface BeatModelGrid {
+  bpm: number;
+  downbeat_offset_seconds: number;
+  on_grid: number;
+  bar_agreement: number;
+}
+export interface BeatModelStage {
+  version: number;
+  beats_seconds: number[];
+  downbeats_seconds: number[];
+  grid?: BeatModelGrid | null;
+}
+export type SectionLabel =
+  "intro" | "build_up" | "drop" | "breakdown" | "verse" | "hook" | "outro";
+export type Vocabulary = "dance" | "hip_hop";
+export interface Section {
+  start_seconds: number;
+  bars: number;
+  label: SectionLabel | null;
+  energy: number;
+  groove: number;
+  rise: number;
+  group: number;
+}
+export interface SectionStage {
+  version: number;
+  bpm: number;
+  downbeat_offset_seconds: number;
+  vocabulary: Vocabulary;
+  vocabulary_override?: Vocabulary | null;
+  sections: Section[];
+}
+export interface AnalysisSettings {
+  beat_model_spotify: boolean;
+  auto_hot_cues: boolean;
+  auto_memory_cues: boolean;
+}
 export interface TrackRecord {
   id: string | number;
   path: string;
@@ -37,6 +74,8 @@ export interface TrackRecord {
   bpm_ambiguous?: boolean;
   bpm_source?: string | null;
   key_candidates?: KeyCandidate[];
+  beat_model?: BeatModelStage | null;
+  sections?: SectionStage | null;
   recording_allowed?: boolean;
   error?: string;
 }
@@ -172,7 +211,9 @@ export interface AppState {
     completed: number;
     current_path?: string | null;
     errors: string[];
+    cancelled?: boolean;
   };
+  analysis_settings?: AnalysisSettings;
   messages?: string[];
 }
 export const emptyEngine: EngineSnapshot = {

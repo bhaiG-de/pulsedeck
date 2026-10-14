@@ -130,7 +130,7 @@ test("source/zoom changes invalidate raster tiles; out-of-track windows remain b
   assert.equal(raster.tileBuilds, 3);
 });
 
-test("three-band drawing fills the view using shared gain and never paints a ghost peak layer", () => {
+test("three-band bars fill the view using shared gain, leave comb gaps and never paint a ghost peak layer", () => {
   let pixels: Uint8ClampedArray | undefined;
   const factory: CanvasFactory = (width, height) =>
     ({
@@ -175,7 +175,13 @@ test("three-band drawing fills the view using shared gain and never paints a gho
     filled >= 86 && filled <= 92,
     `expected a large colored envelope, got ${filled} pixels`,
   );
-  assert.deepEqual(colors, new Set(["0,85,225", "255,166,0", "255,255,255"]));
+  assert.deepEqual(
+    colors,
+    new Set(["63,125,255", "53,208,127", "244,244,242"]),
+  );
+  // The envelope is a comb: the column after each bar is an empty gap.
+  for (let y = 0; y < 100; y++)
+    assert.equal(pixels![(y * 1024 + 11) * 4 + 3], 0);
   raster.configure(
     source({
       samples: Array(16).fill(1),

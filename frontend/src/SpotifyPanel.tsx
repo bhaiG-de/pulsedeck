@@ -1006,6 +1006,11 @@ function SpotifyPanel({
                 <button
                   key={p.id}
                   className={`spotify-playlist ${collectionSelection === p.id ? "controller-selected" : ""}`}
+                  title={
+                    p.total !== null
+                      ? `${p.name} · ${p.total} track${p.total === 1 ? "" : "s"}`
+                      : p.name
+                  }
                   data-browser-id={p.id}
                   aria-pressed={collectionSelection === p.id}
                   onClick={() => {
@@ -1017,9 +1022,7 @@ function SpotifyPanel({
                 >
                   <Music2 size={16} />
                   <strong>{p.name}</strong>
-                  <span>
-                    {p.total !== null ? `${p.total} tracks` : "Playlist"}
-                  </span>
+                  <span>{p.total ?? ""}</span>
                 </button>
               ))}
               {playlistOffset !== null && (
@@ -1217,7 +1220,8 @@ function SpotifyPanel({
                             </td>
                             <td className="spotify-track-actions">
                               <button
-                                className="spotify-play"
+                                className="spotify-play load-a"
+                                aria-label="Load on deck A"
                                 disabled={
                                   !nativeStatus.connected ||
                                   !onLoadDeck ||
@@ -1230,10 +1234,11 @@ function SpotifyPanel({
                                 }
                                 title="Prepare audio for native deck A"
                               >
-                                Load A
+                                A
                               </button>
                               <button
-                                className="spotify-play"
+                                className="spotify-play load-b"
+                                aria-label="Load on deck B"
                                 disabled={
                                   !nativeStatus.connected ||
                                   !onLoadDeck ||
@@ -1246,7 +1251,7 @@ function SpotifyPanel({
                                 }
                                 title="Prepare audio for native deck B"
                               >
-                                Load B
+                                B
                               </button>
                               <button
                                 className="spotify-play"

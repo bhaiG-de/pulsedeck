@@ -1,0 +1,58 @@
+/* ── Next-track suggestions ───────────────────────────────────────────
+   Reuses the library browser: the energy choices sit in the playlist pane
+   and the suggestions in the track table. Only the extra columns, the
+   reason line and the key-clash flag are styled here. This sheet can load
+   before browser.css, so its selectors are one class more specific. */
+
+.track-table.next-table th:nth-child(2) {
+  width: auto;
+}
+.track-table.next-table th:nth-child(3) {
+  width: 36%;
+}
+.track-table.next-table th:nth-child(4) {
+  width: 58px;
+}
+.track-table.next-table th:nth-child(5) {
+  width: 56px;
+}
+.track-table.next-table th:nth-child(6) {
+  width: 56px;
+}
+.track-table.next-table th:nth-child(7) {
+  width: 56px;
+}
+
+/* "8A→9A · +1.5% · energy up": data, so mono, like the other readouts. */
+.next-reason {
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 10px !important;
+  color: var(--ink-2);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.next-reason.is-clash {
+  color: var(--fault-ink);
+}
+.key-tag.key-clash {
+  background: color-mix(in srgb, var(--fault) 24%, var(--screen));
+  box-shadow: inset 0 0 0 1px var(--fault);
+}
+
+.next-help {
+  margin: 10px 4px 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--ink-3);
+}
+.next-panel .empty-library p {
+  max-width: 44ch;
+}
+.next-panel .library-toolbar h2 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.next-panel .library-toolbar > div:first-child {
+  overflow: hidden;
+}

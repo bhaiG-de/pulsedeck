@@ -1,0 +1,8 @@
+# Model files are downloaded or generated; see README.md.
+models/
+# Decoded audio and frame data derived from local tracks. Never commit.
+ref/
+# Spike outputs contain local file paths.
+results*.json
+venv/
+beat_this/

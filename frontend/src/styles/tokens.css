@@ -1,0 +1,195 @@
+/* PulseDeck "Field Instrument" design tokens.
+   One rule runs through every finish: the chassis is a quiet, light-catching
+   body; black is reserved for screens and fader slots; colour lives only on
+   encoder caps and signal LEDs. Components consume these roles, never hex. */
+
+:root,
+[data-theme="aluminium"] {
+  color-scheme: light;
+  /* Body */
+  --chassis: #d2d3d5;
+  --chassis-deep: #c4c5c8;
+  --plate: #e1e2e4;
+  --plate-top: #e9eaec;
+  --seam: #afb0b4;
+  --seam-soft: #c6c7ca;
+  --well: #c3c4c7;
+  --well-deep: #b5b6ba;
+  /* Keys */
+  --key-top: #f4f4f5;
+  --key-bottom: #e3e4e6;
+  --key-edge: #b0b1b5;
+  --key-hi: rgba(255, 255, 255, 0.95);
+  --key-shadow: rgba(26, 28, 32, 0.26);
+  --key-pressed: #d8d9dc;
+  /* Ink printed on the body */
+  --ink: #18191b;
+  --ink-2: #45464a;
+  --ink-3: #6f7075;
+  --ink-4: #98999e;
+  /* Screens */
+  --screen: #0b0b0c;
+  --screen-raise: #151517;
+  --screen-line: #29292c;
+  --screen-ink: #f2f2f0;
+  --screen-dim: #8e8e91;
+  --screen-faint: #4b4b4f;
+  --bezel: #2c2c2f;
+  --slot: #111113;
+  /* Caps */
+  --cap-metal-top: #fbfbfb;
+  --cap-metal-bottom: #c4c5c8;
+  --cap-white: #f8f8f7;
+  --cap-graphite: #2c2d30;
+  --cap-blue: #3c86ff;
+  --cap-green: #27c25a;
+  --cap-orange: #ff5d1c;
+  /* Signals */
+  --signal: #ff5a1f;
+  --signal-ink: #c43c06;
+  --ok: #27c25a;
+  --ok-ink: #19803b;
+  --warn: #f5a524;
+  --warn-ink: #9a5b00;
+  --fault: #ff3b30;
+  --fault-ink: #c1261d;
+  --led-off: #a6a7ab;
+  /* Elevation */
+  --plate-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.75), 0 1px 1px rgba(0, 0, 0, 0.06),
+    0 10px 26px -18px rgba(0, 0, 0, 0.45);
+  --float-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.6) inset,
+    0 24px 60px -18px rgba(18, 20, 24, 0.5), 0 2px 6px rgba(18, 20, 24, 0.12);
+  --backdrop: rgba(196, 197, 200, 0.62);
+  --grain-opacity: 0.35;
+  --color-app-bg: #d2d3d5;
+}
+
+[data-theme="ivory"] {
+  color-scheme: light;
+  --chassis: #e5e2db;
+  --chassis-deep: #d9d5cc;
+  --plate: #f0eee9;
+  --plate-top: #f6f4f0;
+  --seam: #c9c4b9;
+  --seam-soft: #dcd8cf;
+  --well: #d6d2c8;
+  --well-deep: #c9c4b9;
+  --key-top: #fdfcfa;
+  --key-bottom: #efede8;
+  --key-edge: #c3beb2;
+  --key-hi: rgba(255, 255, 255, 1);
+  --key-shadow: rgba(48, 40, 28, 0.22);
+  --key-pressed: #e6e3dc;
+  --ink: #1f1e1c;
+  --ink-2: #4a4844;
+  --ink-3: #75726b;
+  --ink-4: #a09c93;
+  --screen: #141413;
+  --screen-raise: #1d1d1b;
+  --screen-line: #2e2e2b;
+  --screen-ink: #f4f2ed;
+  --screen-dim: #94918a;
+  --screen-faint: #4d4c48;
+  --bezel: #2d2c29;
+  --slot: #161614;
+  --cap-metal-top: #ffffff;
+  --cap-metal-bottom: #d4d0c6;
+  --cap-white: #fbfaf7;
+  --cap-graphite: #2a2926;
+  --cap-blue: #3b7ff0;
+  --cap-green: #2bb55a;
+  --cap-orange: #f0561d;
+  --signal: #f0561d;
+  --signal-ink: #b83c0b;
+  --ok: #2bb55a;
+  --ok-ink: #1f7a3f;
+  --warn: #e39a1b;
+  --warn-ink: #8a5300;
+  --fault: #e8412f;
+  --fault-ink: #b12a1b;
+  --led-off: #b9b4aa;
+  --plate-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.85), 0 1px 1px rgba(60, 48, 30, 0.06),
+    0 10px 26px -18px rgba(60, 48, 30, 0.4);
+  --float-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.7) inset,
+    0 24px 60px -18px rgba(48, 40, 28, 0.45), 0 2px 6px rgba(48, 40, 28, 0.1);
+  --backdrop: rgba(214, 210, 200, 0.6);
+  --grain-opacity: 0.3;
+  --color-app-bg: #e5e2db;
+}
+
+[data-theme="graphite"] {
+  color-scheme: dark;
+  --chassis: #141415;
+  --chassis-deep: #0d0d0e;
+  --plate: #1c1c1e;
+  --plate-top: #222224;
+  --seam: #050506;
+  --seam-soft: #2a2a2d;
+  --well: #0f0f10;
+  --well-deep: #080809;
+  --key-top: #303033;
+  --key-bottom: #262629;
+  --key-edge: #0a0a0b;
+  --key-hi: rgba(255, 255, 255, 0.08);
+  --key-shadow: rgba(0, 0, 0, 0.7);
+  --key-pressed: #1f1f22;
+  --ink: #ededee;
+  --ink-2: #bdbdc1;
+  --ink-3: #8a8b90;
+  --ink-4: #5f6065;
+  --screen: #040405;
+  --screen-raise: #0e0e10;
+  --screen-line: #222225;
+  --screen-ink: #f2f2f0;
+  --screen-dim: #8e8e91;
+  --screen-faint: #48484c;
+  --bezel: #000000;
+  --slot: #040405;
+  --cap-metal-top: #e2e2e3;
+  --cap-metal-bottom: #8c8d91;
+  --cap-white: #e6e6e5;
+  --cap-graphite: #3c3c40;
+  --cap-blue: #4a90ff;
+  --cap-green: #30cf63;
+  --cap-orange: #ff6626;
+  --signal: #ff6626;
+  --signal-ink: #ff8550;
+  --ok: #30cf63;
+  --ok-ink: #5fdc87;
+  --warn: #f5a524;
+  --warn-ink: #f7bd5c;
+  --fault: #ff4b40;
+  --fault-ink: #ff7a70;
+  --led-off: #3a3a3e;
+  --plate-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 1px 1px rgba(0, 0, 0, 0.5),
+    0 12px 28px -16px rgba(0, 0, 0, 0.9);
+  --float-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.06) inset,
+    0 28px 70px -16px rgba(0, 0, 0, 0.9), 0 2px 6px rgba(0, 0, 0, 0.5);
+  --backdrop: rgba(5, 5, 6, 0.6);
+  --grain-opacity: 0.18;
+  --color-app-bg: #141415;
+}
+
+:root {
+  /* Deck identity: the records' colours, the same in every finish. */
+  --deck-a: #f5d90a;
+  --deck-b: #86cfee;
+  /* Type */
+  --font-ui: "Hanken Grotesk", "Helvetica Neue", system-ui, sans-serif;
+  --font-mono: "DM Mono", ui-monospace, "SF Mono", monospace;
+  /* Geometry */
+  --r-plate: 12px;
+  --r-screen: 8px;
+  --r-key: 7px;
+  --r-pill: 999px;
+  --gap: 10px;
+  /* Motion */
+  --ease-key: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-sheet: cubic-bezier(0.2, 0.9, 0.1, 1);
+}
