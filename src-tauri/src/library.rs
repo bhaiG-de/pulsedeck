@@ -50,6 +50,9 @@ pub struct AnalysisMetadata {
     pub beat_model: Option<BeatModelStage>,
     pub sections: Option<SectionStage>,
     pub auto_cues: Option<AutoCues>,
+    pub neural_rhythm: Option<audio_analysis::NeuralRhythm>,
+    pub rhythm_error: Option<String>,
+    pub manual_grid_anchor_index: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -124,8 +127,7 @@ pub struct Library {
 /// Whether a cached Spotify analysis is complete enough to display and reuse.
 pub fn usable_spotify_analysis(uri: &str, a: &deck_engine::TrackAnalysis) -> bool {
     a.path == uri
-        && (a.analysis_version == audio_analysis::ANALYSIS_VERSION
-            || (audio_analysis::ANALYSIS_VERSION == 3 && a.analysis_version == 2))
+        && (2..=audio_analysis::ANALYSIS_VERSION).contains(&a.analysis_version)
         && !a.recording_allowed
         && a.waveform.len() == 4096
         && a.waveform_bands
@@ -227,7 +229,7 @@ impl Library {
         let json: Option<String> = self
             .db
             .query_row(
-                "SELECT metadata FROM spotify_analysis WHERE uri=?1 AND (version=?2 OR (?2=3 AND version=2))",
+                "SELECT metadata FROM spotify_analysis WHERE uri=?1 AND version BETWEEN 2 AND ?2",
                 params![uri, audio_analysis::ANALYSIS_VERSION],
                 |row| row.get(0),
             )
@@ -464,6 +466,9 @@ impl Library {
                 grid_offset = previous.beatgrid_offset_seconds;
                 metadata.beatgrid_source = Some("manual".into());
                 metadata.beatgrid_confidence = None;
+                if track.analysis.beatgrid_source.as_deref() != Some("manual") {
+                    metadata.manual_grid_anchor_index = previous.analysis.manual_grid_anchor_index;
+                }
             }
 
             if previous
@@ -618,6 +623,30 @@ impl Library {
                 .map_err(|e| e.to_string())?;
         }
         Ok(())
+    }
+
+    pub fn manual_grid(
+        &self,
+        path: &str,
+        offset: f64,
+        anchor: Option<usize>,
+    ) -> Result<(), String> {
+        let transaction = self.db.unchecked_transaction().map_err(|e| e.to_string())?;
+        self.metadata(path, None, None, Some(offset))?;
+        if let Some(record) = self.track_by_path(path)? {
+            let mut analysis = record.analysis;
+            analysis.manual_grid_anchor_index = anchor;
+            self.db
+                .execute(
+                    "UPDATE tracks SET analysis_json=?1 WHERE path=?2",
+                    params![
+                        serde_json::to_string(&analysis).map_err(|e| e.to_string())?,
+                        path
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+        }
+        transaction.commit().map_err(|e| e.to_string())
     }
 
     pub fn playlists(&self) -> Result<Vec<Playlist>, String> {
@@ -997,6 +1026,17 @@ pub fn export_xml(tracks: &[TrackRecord], playlists: &[Playlist]) -> Result<Stri
 mod tests {
     use super::*;
     #[test]
+    fn reanalysis_can_persist_a_remapped_manual_anchor_without_losing_the_origin() {
+        let lib = Library::from_connection(Connection::open_in_memory().unwrap()).unwrap();
+        let saved = lib.upsert(&track()).unwrap();
+        lib.manual_grid(&saved.path, 1.4, Some(2)).unwrap();
+        let mut updated = lib.track_by_path(&saved.path).unwrap().unwrap();
+        updated.analysis.manual_grid_anchor_index = Some(3);
+        let updated = lib.upsert(&updated).unwrap();
+        assert_eq!(updated.beatgrid_offset_seconds, 1.4);
+        assert_eq!(updated.analysis.manual_grid_anchor_index, Some(3));
+    }
+    #[test]
     fn song_tags_survive_reimport_and_restart_without_changing_track_metadata() {
         let path = std::env::temp_dir().join(format!("pd-tags-{}.sqlite", std::process::id()));
         let lib = Library::open(&path).unwrap();
@@ -1244,6 +1284,15 @@ mod tests {
             assert_eq!(restored.bpm, Some(127.8));
             assert_eq!(restored.camelot.as_deref(), Some("10A"));
             assert_eq!(restored.waveform_bands.unwrap().low.len(), 4096);
+            // Older usable cache entries still carry the DJ's manual edits.
+            analysis.analysis_version = 2;
+            analysis.bpm_source = Some("manual".into());
+            analysis.beatgrid_source = Some("manual".into());
+            analysis.beatgrid_offset_seconds = Some(0.234);
+            library.cache_spotify_analysis(&analysis).unwrap();
+            let legacy = library.spotify_analysis(uri).unwrap().unwrap();
+            assert_eq!(legacy.bpm_source.as_deref(), Some("manual"));
+            assert_eq!(legacy.beatgrid_offset_seconds, Some(0.234));
             analysis.analysis_version = 0;
             library.cache_spotify_analysis(&analysis).unwrap();
             assert!(library.spotify_analysis(uri).unwrap().is_none());

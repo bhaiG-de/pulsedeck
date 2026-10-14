@@ -1,39 +1,24 @@
-//! Neural beat and downbeat tracking with the Beat This! small model (JKU,
-//! MIT code and weights; see models/README.md). The model runs on CPU through
-//! tract on background threads, one track at a time, never in a render callback.
-//!
-//! Pipeline, matching the upstream reference (verified in research/beat-model-spike.md):
-//! mono mix → 22,050 Hz → 128-band log-mel at 50 fps → 1500-frame chunks →
-//! frame logits → local-maximum peaks → beat and downbeat times. The beats are
-//! then fitted to a constant grid whose offset sits on the dominant downbeat.
+//! Section spectrograms and compatibility metadata derived from the existing
+//! Beat This! final0 / RTen rhythm implementation. No second inference runtime.
 
-use std::{
-    io::Cursor,
-    sync::{Arc, Mutex, OnceLock},
-};
+use std::sync::OnceLock;
 
 use audioadapter_buffers::direct::InterleavedSlice;
 use rubato::{Fft, FixedSync, Resampler, WindowFunction};
 use rustfft::{num_complex::Complex32, FftPlanner};
 use serde::{Deserialize, Serialize};
-use tract_linalg::multithread::{multithread_tract_scope, Executor};
-use tract_onnx::prelude::*;
 
 /// Version of the stored beat-model stage. Bump when the model, its
 /// preprocessing, the grid fit or the sections cut in the same pass change in a
 /// way that should re-run analysis. 2: song sections.
-pub const BEAT_MODEL_VERSION: u32 = 2;
+pub const BEAT_MODEL_VERSION: u32 = 3;
 
-const MODEL: &[u8] = include_bytes!("../models/beat-this-small0.onnx");
 const SR: u32 = 22_050;
 const NFFT: usize = 1024;
 const HOP: usize = 441;
 const NMELS: usize = 128;
 const NBINS: usize = NFFT / 2 + 1;
-const CHUNK: usize = 1500;
-const BORDER: usize = 6;
 const FPS: f64 = 50.0;
-const THREADS: usize = 4;
 /// Beats closer than this to a grid line count as on the grid.
 const GRID_TOLERANCE: f64 = 0.035;
 
@@ -73,84 +58,45 @@ impl BeatModelStage {
     }
 }
 
-type Model = Arc<TypedRunnableModel>;
-
-fn model() -> Result<&'static Model, String> {
-    static MODEL_PLAN: OnceLock<Result<Model, String>> = OnceLock::new();
-    MODEL_PLAN
-        .get_or_init(|| {
-            tract_onnx::onnx()
-                .model_for_read(&mut Cursor::new(MODEL))
-                .and_then(|m| m.with_input_fact(0, f32::fact([1, CHUNK, NMELS]).into()))
-                .and_then(|m| m.into_optimized())
-                .and_then(|m| m.into_runnable())
-                .map_err(|e| format!("Beat model could not be prepared: {e}"))
-        })
-        .as_ref()
-        .map_err(Clone::clone)
-}
-
-/// Shared low-priority worker pool for the model's matrix multiplies.
-fn executor() -> Executor {
-    static POOL: OnceLock<Executor> = OnceLock::new();
-    POOL.get_or_init(|| {
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(THREADS)
-            .thread_name(|i| format!("pulsedeck-beat-{i}"))
-            .start_handler(|_| lower_thread_priority())
-            .build()
-            .map(|pool| Executor::MultiThread(Arc::new(pool)))
-            .unwrap_or(Executor::SingleThread)
-    })
-    .clone()
-}
-
-#[cfg(target_os = "macos")]
-fn lower_thread_priority() {
-    // Utility QoS keeps analysis away from interactive and audio work.
-    // SAFETY: plain syscall on the current thread with a valid QoS class.
-    unsafe {
-        libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_UTILITY, 0);
+/// Compatibility stage for UI and caches. The piecewise rhythm remains authoritative.
+pub fn stage_from_rhythm(rhythm: &crate::NeuralRhythm) -> BeatModelStage {
+    BeatModelStage {
+        version: BEAT_MODEL_VERSION,
+        grid: if rhythm.beats_per_bar == Some(4) {
+            fit_grid(&rhythm.beats_seconds, &rhythm.downbeats_seconds)
+        } else {
+            None
+        },
+        beats_seconds: rhythm.beats_seconds.iter().map(|&t| t as f32).collect(),
+        downbeats_seconds: rhythm.downbeats_seconds.iter().map(|&t| t as f32).collect(),
     }
 }
 
-#[cfg(not(target_os = "macos"))]
-fn lower_thread_priority() {}
-
-/// Run the beat model over decoded stereo PCM. Blocks the calling worker for
-/// roughly two seconds per minute of audio. `cancel` is polled between chunks.
 pub fn track_beats(
     samples: &[[f32; 2]],
     sample_rate: u32,
     cancel: &dyn Fn() -> bool,
 ) -> Result<BeatModelStage, String> {
-    track_beats_with_spectrogram(samples, sample_rate, cancel).map(|(stage, _)| stage)
+    if cancel() {
+        return Err("Beat analysis cancelled".into());
+    }
+    let rhythm = crate::analyze_neural_rhythm(samples, sample_rate)?;
+    if cancel() {
+        return Err("Beat analysis cancelled".into());
+    }
+    Ok(stage_from_rhythm(&rhythm))
 }
 
-/// [`track_beats`], also returning the log-mel spectrogram it computed so
-/// section detection can reuse it.
 pub fn track_beats_with_spectrogram(
     samples: &[[f32; 2]],
     sample_rate: u32,
     cancel: &dyn Fn() -> bool,
 ) -> Result<(BeatModelStage, Spectrogram), String> {
-    let model = model()?;
+    let stage = track_beats(samples, sample_rate, cancel)?;
     let spect = spectrogram(samples, sample_rate)?;
     if cancel() {
         return Err("Beat analysis cancelled".into());
     }
-    // One inference at a time bounds peak memory (about 250 MB per run).
-    static INFERENCE: Mutex<()> = Mutex::new(());
-    let _turn = INFERENCE.lock().unwrap_or_else(|e| e.into_inner());
-    let (beat, downbeat) =
-        multithread_tract_scope(executor(), || infer(model, &spect.frames, cancel))?;
-    let (beats, downbeats) = peaks(&beat, &downbeat);
-    let stage = BeatModelStage {
-        version: BEAT_MODEL_VERSION,
-        grid: fit_grid(&beats, &downbeats),
-        beats_seconds: beats.iter().map(|&t| t as f32).collect(),
-        downbeats_seconds: downbeats.iter().map(|&t| t as f32).collect(),
-    };
     Ok((stage, spect))
 }
 
@@ -318,126 +264,7 @@ fn log_mel(x: &[f32]) -> Vec<f32> {
     out
 }
 
-/// Chunk start frames, as in beat_this `split_piece` with `avoid_short_end`.
-fn chunk_starts(len: usize) -> Vec<isize> {
-    let step = (CHUNK - 2 * BORDER) as isize;
-    let mut starts: Vec<isize> = (0..)
-        .map(|i| i * step - BORDER as isize)
-        .take_while(|&s| s < len as isize - BORDER as isize)
-        .collect();
-    if starts.is_empty() {
-        starts.push(-(BORDER as isize));
-    }
-    if len > CHUNK - 2 * BORDER {
-        *starts.last_mut().expect("at least one chunk") = len as isize - (CHUNK - BORDER) as isize;
-    }
-    starts
-}
-
-/// beat_this `split_predict_aggregate` with keep-first overlap. Short pieces
-/// are zero-padded to the model's fixed 1500-frame input.
-fn infer(
-    model: &Model,
-    spect: &[f32],
-    cancel: &dyn Fn() -> bool,
-) -> Result<(Vec<f32>, Vec<f32>), String> {
-    let len = spect.len() / NMELS;
-    let mut beat = vec![-1000f32; len];
-    let mut downbeat = vec![-1000f32; len];
-    let mut chunk = vec![0f32; CHUNK * NMELS];
-    for &start in chunk_starts(len).iter().rev() {
-        if cancel() {
-            return Err("Beat analysis cancelled".into());
-        }
-        chunk.fill(0.0);
-        for i in 0..CHUNK {
-            let src = start + i as isize;
-            if (0..len as isize).contains(&src) {
-                let s = src as usize;
-                chunk[i * NMELS..(i + 1) * NMELS]
-                    .copy_from_slice(&spect[s * NMELS..(s + 1) * NMELS]);
-            }
-        }
-        let input = Tensor::from_shape(&[1, CHUNK, NMELS], &chunk).map_err(|e| e.to_string())?;
-        let out = model
-            .run(tvec!(input.into()))
-            .map_err(|e| format!("Beat model inference failed: {e}"))?;
-        let b = out[0]
-            .to_plain_array_view::<f32>()
-            .map_err(|e| e.to_string())?;
-        let d = out[1]
-            .to_plain_array_view::<f32>()
-            .map_err(|e| e.to_string())?;
-        for i in BORDER..CHUNK - BORDER {
-            let dst = start + i as isize;
-            if (0..len as isize).contains(&dst) {
-                beat[dst as usize] = b[[0, i]];
-                downbeat[dst as usize] = d[[0, i]];
-            }
-        }
-    }
-    Ok((beat, downbeat))
-}
-
-/// beat_this "minimal" post-processing: local maxima within ±3 frames above
-/// logit 0, adjacent peaks merged, downbeats snapped to the nearest beat.
-fn peaks(beat: &[f32], downbeat: &[f32]) -> (Vec<f64>, Vec<f64>) {
-    let times = |x: &[f32]| -> Vec<f64> {
-        let frames: Vec<usize> = (0..x.len())
-            .filter(|&i| {
-                let window = &x[i.saturating_sub(3)..(i + 4).min(x.len())];
-                x[i] > 0.0 && window.iter().all(|&v| v <= x[i])
-            })
-            .collect();
-        merge_adjacent(&frames)
-            .into_iter()
-            .map(|f| f / FPS)
-            .collect()
-    };
-    let beats = times(beat);
-    let mut downbeats: Vec<f64> = times(downbeat)
-        .into_iter()
-        .map(|d| {
-            beats
-                .iter()
-                .copied()
-                .min_by(|a, b| (a - d).abs().total_cmp(&(b - d).abs()))
-                .unwrap_or(d)
-        })
-        .collect();
-    downbeats.sort_by(f64::total_cmp);
-    downbeats.dedup();
-    (beats, downbeats)
-}
-
-/// beat_this `deduplicate_peaks(width=1)`: runs of frames each within one
-/// frame of the running mean collapse to that mean.
-fn merge_adjacent(frames: &[usize]) -> Vec<f64> {
-    let mut out = Vec::new();
-    let mut iter = frames.iter();
-    let Some(&first) = iter.next() else {
-        return out;
-    };
-    let (mut mean, mut count) = (first as f64, 1.0);
-    for &f in iter {
-        let f = f as f64;
-        if f - mean <= 1.0 {
-            count += 1.0;
-            mean += (f - mean) / count;
-        } else {
-            out.push(mean);
-            mean = f;
-            count = 1.0;
-        }
-    }
-    out.push(mean);
-    out
-}
-
-/// Fit the app's constant grid to model beats. BPM is searched within ±4% of
-/// the median beat interval for the phase that puts the most beats within
-/// 35 ms of a line, then refined by least squares over those beats. The offset
-/// lands on the bar phase most downbeats agree with.
+/// Optional constant-grid diagnostic; never replaces native event timing.
 pub fn fit_grid(beats: &[f64], downbeats: &[f64]) -> Option<ModelGrid> {
     if beats.len() < 8 {
         return None;
@@ -581,37 +408,6 @@ mod tests {
     }
 
     #[test]
-    fn chunks_follow_upstream_split_piece() {
-        assert_eq!(chunk_starts(100), [-6]);
-        assert_eq!(chunk_starts(1488), [-6]);
-        assert_eq!(chunk_starts(1489), [-6, -5]);
-        assert_eq!(chunk_starts(1500), [-6, 6]);
-        assert_eq!(chunk_starts(3000), [-6, 1482, 1506]);
-        let long = chunk_starts(21_804);
-        assert_eq!(long.len(), 15);
-        assert_eq!(&long[..4], [-6, 1482, 2970, 4458]);
-        assert_eq!(&long[13..], [19_338, 20_310]);
-    }
-
-    #[test]
-    fn peaks_pick_local_maxima_and_snap_downbeats() {
-        let mut beat = vec![-5f32; 200];
-        let mut down = vec![-5f32; 200];
-        for f in [10, 35, 60, 85, 110] {
-            beat[f] = 3.0;
-        }
-        // A flat two-frame peak merges to its mean; a sub-threshold bump is ignored.
-        beat[135] = 2.0;
-        beat[136] = 2.0;
-        beat[160] = -0.5;
-        down[11] = 1.0;
-        down[111] = 2.0;
-        let (beats, downs) = peaks(&beat, &down);
-        assert_eq!(beats, [0.2, 0.7, 1.2, 1.7, 2.2, 2.71]);
-        assert_eq!(downs, [0.2, 2.2]);
-    }
-
-    #[test]
     fn grid_fit_recovers_tempo_and_bar_phase_despite_gaps() {
         let bpm = 123.4;
         let period = 60.0 / bpm;
@@ -672,6 +468,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "requires installed full Beat This! models; run explicitly for integration"]
     fn model_tracks_a_synthetic_drum_loop() {
         let audio = drum_loop(120.0, 40.0, 44_100);
         let stage = track_beats(&audio, 44_100, &|| false).expect("model runs");

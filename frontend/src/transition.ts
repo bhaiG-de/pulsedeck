@@ -1,3 +1,4 @@
+import { gridBarBeat, type BeatGrid } from "./beat-grid.ts";
 import type { EngineSnapshot, SectionLabel } from "./types";
 import { SECTION_NAMES, type DisplaySection } from "./waveform-data.ts";
 
@@ -12,6 +13,9 @@ import { SECTION_NAMES, type DisplaySection } from "./waveform-data.ts";
 export interface DeckStructure {
   /** The grid's BPM, without the deck's tempo change. */
   bpm: number;
+  beatsPerBar?: number;
+  barTimes?: readonly number[];
+  grid?: BeatGrid;
   /** A downbeat (beat 1), in seconds. */
   offset: number;
   duration: number;
@@ -48,7 +52,25 @@ export interface TransitionPlan {
 }
 
 const MAIN = 0.75;
-const barSeconds = (deck: DeckStructure) => 240 / deck.bpm;
+const meter = (deck: DeckStructure) => deck.beatsPerBar ?? 4;
+const barSeconds = (deck: DeckStructure) => meter(deck) * 60 / deck.bpm;
+// The stored bars follow the same piecewise event clock as the engine.
+export function barPosition(deck: DeckStructure, seconds: number): number {
+  const times = deck.barTimes;
+  if (!times || times.length < 2) return (seconds - deck.offset) / barSeconds(deck);
+  let lo = 0, hi = times.length;
+  while (lo < hi) { const mid = (lo + hi) >>> 1; if (times[mid] <= seconds) lo = mid + 1; else hi = mid; }
+  const left = Math.max(0, Math.min(times.length - 2, lo - 1));
+  return left + (seconds - times[left]) / (times[left + 1] - times[left]);
+}
+export function barTime(deck: DeckStructure, bar: number): number {
+  const times = deck.barTimes;
+  if (!times || times.length < 2) return deck.offset + bar * barSeconds(deck);
+  const left = Math.max(0, Math.min(times.length - 2, Math.floor(bar)));
+  return times[left] + (bar - left) * (times[left + 1] - times[left]);
+}
+const advance = (deck: DeckStructure, seconds: number, bars: number) => barTime(deck, barPosition(deck, seconds) + bars);
+const distance = (deck: DeckStructure, from: number, to: number) => barPosition(deck, to) - barPosition(deck, from);
 
 export function usableStructure(
   deck: DeckStructure | null | undefined,
@@ -59,7 +81,8 @@ export function usableStructure(
     deck.bpm > 0 &&
     Number.isFinite(deck.offset) &&
     deck.duration > 0 &&
-    deck.sections.length > 0
+    deck.sections.length > 0 &&
+    (!deck.barTimes?.length || (deck.barTimes.length >= 2 && deck.barTimes.every((t, i, ts) => Number.isFinite(t) && (i === 0 || t > ts[i - 1]))))
   );
 }
 
@@ -93,8 +116,8 @@ export function phraseStarts(deck: DeckStructure): number[] {
   const bar = barSeconds(deck);
   const starts: number[] = [];
   for (const s of deck.sections)
-    for (let k = 0; s.start + k * 8 * bar < s.end - bar / 2; k++)
-      starts.push(s.start + k * 8 * bar);
+    for (let k = 0; advance(deck, s.start, k * 8) < s.end - bar / 2; k++)
+      starts.push(advance(deck, s.start, k * 8));
   return starts;
 }
 
@@ -110,8 +133,14 @@ export function togetherFit(bars: number, hipHop = false): number {
 
 /** Bar number as the waveform counts it (bar 1 starts on the grid's beat 1). */
 export function barNumber(deck: DeckStructure, seconds: number): number {
-  const index = Math.floor(((seconds - deck.offset) * deck.bpm) / 60 + 1e-8);
-  return Math.floor(index / 4) + (index >= 0 ? 1 : 0);
+  const native = deck.grid ? gridBarBeat(deck.grid, seconds) : null;
+  if (native) return Number(native.split(".")[0]);
+  const at = barPosition(deck, seconds);
+  // Stored barTimes may start after silent bars; keep numbering from bar one.
+  const first = deck.barTimes?.[0];
+  const origin = first === undefined ? 0 : Math.round((first - deck.offset) / barSeconds(deck));
+  const bar = Math.floor(at + 1e-8) + origin;
+  return bar + (bar >= 0 ? 1 : 0);
 }
 
 /**
@@ -125,7 +154,7 @@ export function planTransitions(
   outPosition: number,
   limit = 3,
 ): TransitionPlan[] {
-  if (!usableStructure(out) || !usableStructure(incoming)) return [];
+  if (!usableStructure(out) || !usableStructure(incoming) || meter(out) !== meter(incoming)) return [];
   const outBar = barSeconds(out);
   const inBar = barSeconds(incoming);
   const outEnd = out.sections[out.sections.length - 1].end;
@@ -159,8 +188,8 @@ export function planTransitions(
     if (firstMain)
       for (const target of [lastMain?.end, outEnd]) {
         if (target === undefined || target <= startAt) continue;
-        const bars = Math.round((target - startAt) / outBar);
-        const cue = firstMain.start - bars * inBar;
+        const bars = Math.round(distance(out, startAt, target));
+        const cue = advance(incoming, firstMain.start, -bars);
         if (
           bars >= 4 &&
           bars <= 64 &&
@@ -170,20 +199,20 @@ export function planTransitions(
           cues.push(Math.max(firstSection.start, cue));
       }
     for (const cueAt of cues) {
-      const toMain = firstMain ? (firstMain.start - cueAt) / inBar : null;
-      const landing = toMain === null ? null : startAt + toMain * outBar;
+      const toMain = firstMain ? distance(incoming, cueAt, firstMain.start) : null;
+      const landing = toMain === null ? null : advance(out, startAt, toMain);
       const togetherEnd = Math.min(outEnd, landing ?? outEnd);
       const togetherBars = Math.max(
         0,
-        Math.round((togetherEnd - startAt) / outBar),
+        Math.round(distance(out, startAt, togetherEnd)),
       );
       // Two full sections at once (a drop over a drop) is what to avoid.
       let clash = 0;
       const counted = Math.min(togetherBars, 64);
       for (let b = 0; b < counted; b++)
         clash += Math.min(
-          intensity(sectionAt(out, startAt + (b + 0.5) * outBar)),
-          intensity(sectionAt(incoming, cueAt + (b + 0.5) * inBar)),
+          intensity(sectionAt(out, advance(out, startAt, b + 0.5))),
+          intensity(sectionAt(incoming, advance(incoming, cueAt, b + 0.5))),
         );
       clash = counted ? clash / counted : 0.5;
       let landingFit = 0.5;
@@ -293,14 +322,14 @@ export function startCountdown(
   outPosition: number,
   inLetter: string,
 ): string | null {
-  const beats = ((plan.startAt - outPosition) * out.bpm) / 60;
+  const beats = distance(out, outPosition, plan.startAt) * meter(out);
   if (beats < -1) return null;
   if (beats < 0.5) return `START ${inLetter} NOW`;
   if (beats < 3.5) {
     const n = Math.round(beats);
     return `START ${inLetter} in ${n} beat${n === 1 ? "" : "s"}`;
   }
-  return `START ${inLetter} in ${Math.ceil(beats / 4 - 1e-6)}`;
+  return `START ${inLetter} in ${Math.ceil(beats / meter(out) - 1e-6)}`;
 }
 
 export interface LiveAlignment {
@@ -319,11 +348,9 @@ export function liveAlignment(
   outPosition: number,
   inPosition: number,
 ): LiveAlignment | null {
-  if (!usableStructure(out) || !usableStructure(incoming)) return null;
-  const outBar = barSeconds(out);
-  const inBar = barSeconds(incoming);
+  if (!usableStructure(out) || !usableStructure(incoming) || meter(out) !== meter(incoming)) return null;
   const project = (inSeconds: number) =>
-    outPosition + ((inSeconds - inPosition) / inBar) * outBar;
+    advance(out, outPosition, distance(incoming, inPosition, inSeconds));
   const main = incoming.sections.find(
     (s) => s.start > inPosition + 1e-3 && intensity(s) >= MAIN,
   );
@@ -341,7 +368,7 @@ export function liveAlignment(
       const nearest = phrases.reduce((a, b) =>
         Math.abs(b - projected) < Math.abs(a - projected) ? b : a,
       );
-      phraseOffsetBars = Math.round(((projected - nearest) / outBar) * 4) / 4;
+      phraseOffsetBars = Math.round(distance(out, nearest, projected) * meter(out)) / meter(out);
     }
   }
   return {

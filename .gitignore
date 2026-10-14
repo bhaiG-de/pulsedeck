@@ -1,4 +1,4 @@
-.toolchain/
+.toolchain
 target/
 node_modules/
 dist/
@@ -32,3 +32,4 @@ research/ghidra-projects/
 research/flx4-reference/
 src-tauri/gen/
 *.tsbuildinfo
+src-tauri/resources/beat-models/*.onnx

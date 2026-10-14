@@ -11,6 +11,7 @@ use tauri::Manager;
 pub struct DeckSourceStatus {
     pub preparing: bool,
     pub uri: Option<String>,
+    pub resolved_uri: Option<String>,
     pub error: Option<String>,
 }
 #[derive(Default)]
@@ -54,9 +55,18 @@ impl SourceJobs {
         job.status = DeckSourceStatus {
             preparing: true,
             uri: Some(uri),
+            resolved_uri: None,
             error: None,
         };
         Ok(cancel)
+    }
+    fn resolution(&self, deck: usize, cancel: &Arc<AtomicBool>, uri: Option<String>) {
+        if let Ok(mut jobs) = self.0.lock() {
+            let job = &mut jobs[deck];
+            if job.cancel.as_ref().is_some_and(|c| Arc::ptr_eq(c, cancel)) {
+                job.status.resolved_uri = uri;
+            }
+        }
     }
     fn finish(&self, deck: usize, cancel: &Arc<AtomicBool>, error: Option<String>) {
         if let Ok(mut jobs) = self.0.lock() {
@@ -160,6 +170,9 @@ pub async fn load_spotify_track(
                 },
                 cancel.clone(),
             )?;
+            state
+                .source_jobs
+                .resolution(deck, &cancel, source.metadata.resolved_uri.clone());
             let _commit = state
                 .source_jobs
                 .2
@@ -170,11 +183,18 @@ pub async fn load_spotify_track(
             {
                 return Err("Spotify preparation was replaced by a newer load".into());
             }
-            let cached = state
+            let mut cached = state
                 .library
                 .lock()
                 .map_err(|_| "Analysis cache unavailable")?
                 .spotify_analysis(&uri)?;
+            if source.metadata.resolved_uri.is_some() {
+                // Recompute timing/envelopes for a relinked release; retain explicit
+                // manual metadata via the engine's cache-independent override path.
+                if let Some(cached) = cached.as_mut() {
+                    cached.analysis_version = 0;
+                }
+            }
             let analysis = state.engine.load_decoded_source_cached(
                 ticket,
                 source.sample_rate,
@@ -191,21 +211,28 @@ pub async fn load_spotify_track(
             )?;
             crate::spotify_analysis::store(&app, &analysis)?;
             crate::control::restore_cues(&app, deck, &analysis.path)?;
+            if !state.beat_model_spotify.load(Ordering::Acquire) {
+                return Ok(analysis);
+            }
             if !crate::beat_stage_current(&analysis) {
                 if state.beat_model_spotify.load(Ordering::Acquire) {
                     crate::spawn_beat_model(&app, deck, request);
                 }
                 return Ok(analysis);
             }
-            // Spotify cues are not stored between loads: fill a fresh deck from
-            // the cached sections.
+            // Preserve the persisted source cues, including deleted auto cues.
+            let (_, saved_cues) = state
+                .library
+                .lock()
+                .map_err(|_| crate::poisoned())?
+                .source_cues(&analysis.path)?;
             match crate::place_auto_cues(
                 &app,
                 &state,
                 deck,
                 analysis.clone(),
-                Some(([None; 8], [None; 10])),
-                true,
+                Some((saved_cues.hot_cues, saved_cues.memory_cues)),
+                false,
             ) {
                 Ok(updated) => Ok(updated),
                 Err(e) => {

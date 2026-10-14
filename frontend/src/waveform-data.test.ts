@@ -180,3 +180,13 @@ test("pickup before the first grid beat retains a negative bar label at the cent
   assert.equal(waveformBarBeat(0, 120, 0.125), "-1.4");
   assert.equal(waveformBarBeat(0.125, 120, 0.125), "1.1");
 });
+
+
+test("section display uses native bar endpoints for the final variable-tempo section", () => {
+  const stage = { version: 2, bpm: 120, downbeat_offset_seconds: 0.2,
+    beats_per_bar: 3, bar_times: [0.2, 1.7, 3.4, 5.3, 7.4],
+    vocabulary: "dance" as const,
+    sections: [{start_seconds: 0.2, bars: 4, label: "intro" as const, energy: 0.5, groove: 0.5, rise: 0, group: 0}],
+  };
+  assert.equal(displaySections(stage, 10)[0].end, 7.4);
+});

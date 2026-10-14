@@ -11,17 +11,24 @@ lto = "thin"
 codegen-units = 1
 panic = "abort"
 
-# The beat model is unusably slow unoptimized; keep its numeric crates fast in
-# tests and dev builds.
-[profile.dev.package.audio-analysis]
+# Keep offline neural inference practical in desktop development builds.
+[profile.dev.package.beat-this]
 opt-level = 3
-[profile.dev.package.tract-core]
+[profile.dev.package.rten]
 opt-level = 3
-[profile.dev.package.tract-data]
+[profile.dev.package.rten-tensor]
 opt-level = 3
-[profile.dev.package.tract-linalg]
+[profile.dev.package.rten-gemm]
+opt-level = 3
+[profile.dev.package.rten-vecmath]
+opt-level = 3
+[profile.dev.package.rten-simd]
 opt-level = 3
 [profile.dev.package.rubato]
 opt-level = 3
+[profile.dev.package.realfft]
+opt-level = 3
 [profile.dev.package.rustfft]
+opt-level = 3
+[profile.dev.package.audio-analysis]
 opt-level = 3

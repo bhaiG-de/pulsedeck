@@ -56,6 +56,9 @@ impl Drop for PrepareRequest {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SpotifyTrackMetadata {
     pub uri: String,
+    /// Provider-listed playable release chosen for the requested URI.
+    #[serde(default)]
+    pub resolved_uri: Option<String>,
     pub title: String,
     pub artists: Vec<String>,
     pub album: String,
@@ -272,6 +275,7 @@ fn metadata(item: &AudioItem) -> SpotifyTrackMetadata {
     };
     SpotifyTrackMetadata {
         uri: item.uri.clone(),
+        resolved_uri: None,
         title: item.name.clone(),
         artists,
         album,
@@ -347,6 +351,39 @@ fn upstream_stage_error(stage: &str, error: librespot_core::Error) -> String {
     format!("Spotify {stage} failed ({:?}; {detail}) after Premium session sign-in and before audio decoding. This identifies a native service or metadata failure, not an audio-device error. No alternate application identity or token path was attempted.", error.kind)
 }
 
+/// Resolve only the alternatives explicitly advertised for this source by
+/// Spotify metadata. Keep upstream availability/explicit-content enforcement.
+async fn playable_item(session: &Session, item: AudioItem) -> Result<AudioItem, String> {
+    if item.availability.is_err() {
+        return Err("Spotify says the selected track is unavailable for this account".into());
+    }
+    if !item.files.is_empty() {
+        return Ok(item);
+    }
+    if let Some(alternatives) = item.alternatives {
+        for uri in alternatives.0 {
+            if !matches!(uri, SpotifyUri::Track { .. }) {
+                continue;
+            }
+            if let Ok(candidate) = AudioItem::get_file(session, uri).await {
+                if candidate.availability.is_ok() && !candidate.files.is_empty() {
+                    return Ok(candidate);
+                }
+            }
+        }
+    }
+    Err("Spotify supplied no playable release for the selected track".into())
+}
+
+fn selected_metadata(item: &AudioItem, requested: &str) -> SpotifyTrackMetadata {
+    let mut info = metadata(item);
+    if info.uri != requested {
+        info.resolved_uri = Some(info.uri.clone());
+    }
+    info.uri = requested.into();
+    info
+}
+
 async fn worker_prepare(request: &PrepareRequest, output: Arc<Output>) -> Result<(), String> {
     let track = validate_request(request)?;
     // The caller supplies a separately authorized native token. Validation pins
@@ -403,7 +440,10 @@ async fn worker_prepare(request: &PrepareRequest, output: Arc<Output>) -> Result
     let item = AudioItem::get_file(&session, track.clone())
         .await
         .map_err(|error| upstream_stage_error("full-track metadata retrieval", error))?;
-    let info = metadata(&item);
+    let item = playable_item(&session, item).await?;
+    let resolved_track = item.track_id.clone();
+    let resolved_uri = item.uri.clone();
+    let info = selected_metadata(&item, &request.track_uri);
     validate_duration(info.duration_ms)?;
     if request
         .expected_duration_ms
@@ -439,7 +479,7 @@ async fn worker_prepare(request: &PrepareRequest, output: Arc<Output>) -> Result
     let mut player = make_player();
     let mut events = player.get_player_event_channel();
     let mut retry_attempts = 0;
-    player.load(track.clone(), true, 0);
+    player.load(resolved_track.clone(), true, 0);
     let result = loop {
         if let Some(error) = output
             .failure
@@ -453,7 +493,7 @@ async fn worker_prepare(request: &PrepareRequest, output: Arc<Output>) -> Result
             break Err("Spotify ended this playback session; audio was not loaded".into());
         }
         match tokio::time::timeout(Duration::from_millis(100), events.recv()).await {
-            Ok(Some(PlayerEvent::EndOfTrack { track_id, .. })) if track_id == track => {
+            Ok(Some(PlayerEvent::EndOfTrack { track_id, .. })) if track_id == resolved_track => {
                 let frames = output.frames.load(Ordering::Acquire) as usize;
                 let checked = validate_integrity(frames, &info, request.expected_duration_ms);
                 if let Err(error) = checked {
@@ -466,7 +506,7 @@ async fn worker_prepare(request: &PrepareRequest, output: Arc<Output>) -> Result
                 .map_err(|_| "Could not encode playback completion".to_string())?;
                 break output.record(COMPLETE, &complete);
             }
-            Ok(Some(PlayerEvent::Unavailable { track_id, .. })) if track_id == track => {
+            Ok(Some(PlayerEvent::Unavailable { track_id, .. })) if track_id == resolved_track => {
                 if diagnostics::retryable_before_audio(
                     output.frames.load(Ordering::Acquire),
                     retry_attempts,
@@ -481,13 +521,13 @@ async fn worker_prepare(request: &PrepareRequest, output: Arc<Output>) -> Result
                     diagnostics::reset();
                     player = make_player();
                     events = player.get_player_event_channel();
-                    player.load(track.clone(), true, 0);
+                    player.load(resolved_track.clone(), true, 0);
                     continue;
                 }
                 break Err(diagnostics::unavailable_error());
             }
             Ok(Some(PlayerEvent::TrackChanged { audio_item }))
-                if audio_item.uri != request.track_uri =>
+                if audio_item.uri != resolved_uri =>
             {
                 break Err(
                     "Spotify selected a different source; it was not loaded into the deck".into(),
@@ -685,6 +725,11 @@ fn read_output(
                 if info.uri != request.track_uri {
                     return Err("Prepared Spotify source did not match the selected track".into());
                 }
+                if let Some(uri) = &info.resolved_uri {
+                    if !matches!(SpotifyUri::from_uri(uri), Ok(SpotifyUri::Track { .. })) {
+                        return Err("Worker returned an invalid resolved Spotify source".into());
+                    }
+                }
                 validate_duration(info.duration_ms)?;
                 metadata = Some(info);
             }
@@ -840,6 +885,7 @@ mod tests {
     fn info(duration: u64) -> SpotifyTrackMetadata {
         SpotifyTrackMetadata {
             uri: request(duration).track_uri.clone(),
+            resolved_uri: None,
             title: "Fixture".into(),
             artists: vec!["Fixture artist".into()],
             album: "Test album".into(),
@@ -859,6 +905,29 @@ mod tests {
             }
             write_record(out, PCM, &bytes).unwrap();
         }
+    }
+    #[test]
+    fn relink_wire_preserves_requested_identity_and_rejects_unrelated_identity() {
+        let mut selected = info(1000);
+        selected.resolved_uri = Some("spotify:track:67Hna13dNDkZvBpTXRIaOJ".into());
+        let mut wire = MAGIC.to_vec();
+        record_json(&mut wire, METADATA, &selected);
+        pcm(&mut wire, SAMPLE_RATE as usize, 0.25, -0.25);
+        record_json(
+            &mut wire,
+            COMPLETE,
+            &Completion {
+                frames: SAMPLE_RATE as u64,
+                sample_rate: SAMPLE_RATE,
+            },
+        );
+        let decoded = read_output(&mut Cursor::new(wire), &request(1000)).unwrap();
+        assert_eq!(decoded.metadata.uri, request(1000).track_uri);
+        assert_eq!(decoded.metadata.resolved_uri, selected.resolved_uri);
+        selected.uri = "spotify:track:67Hna13dNDkZvBpTXRIaOJ".into();
+        let mut wrong = MAGIC.to_vec();
+        record_json(&mut wrong, METADATA, &selected);
+        assert!(read_output(&mut Cursor::new(wrong), &request(1000)).is_err());
     }
     #[test]
     fn request_and_memory_bounds_are_enforced_before_network() {

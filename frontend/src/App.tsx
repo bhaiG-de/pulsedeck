@@ -58,12 +58,15 @@ import {
 import Waveform from "./Waveform";
 import AnalysisInfo from "./AnalysisInfo";
 import TrackDrawer from "./TrackDrawer";
+import { beatPhaseDelta } from "./mixing-view";
 import {
-  beatPosition,
-  beatPhaseDelta,
-  shiftBeatOne,
-  snapToBeat,
-} from "./mixing-view";
+  deckBeatGrid,
+  reportedBeatPosition,
+  snapToGridBeat,
+  gridStatus,
+  gridBeatPosition,
+  gridBeatTime,
+} from "./beat-grid";
 import {
   withTrackMetadata,
   type EngineTransport,
@@ -240,6 +243,19 @@ function DeckWaveform({
     () => displaySections(track?.sections, duration),
     [track?.sections, duration],
   );
+  const beatGrid = useMemo(
+    () => deckBeatGrid(deck, track),
+    [
+      track,
+      deck.bpm,
+      deck.beatgrid_offset_seconds,
+      deck.beatgrid_uniform,
+      deck.beatgrid_valid,
+      deck.beatgrid_downbeat,
+      deck.beatgrid_manual,
+      deck.beatgrid_anchor_index,
+    ],
+  );
   const heldPosition = useRef<number | null>(null);
   const currentSource = useRef(track?.path);
   currentSource.current = track?.path;
@@ -268,14 +284,18 @@ function DeckWaveform({
         loopStart={deck.loop_start_seconds}
         loopEnd={deck.loop_end_seconds}
         loopActive={deck.loop_active}
+        beatGrid={beatGrid}
         beatgridOffset={gridOffset}
+        beatgridValid={!!deck.beatgrid_valid}
+        beatgridDownbeat={!!deck.beatgrid_downbeat}
         onSeek={(seconds) =>
           command({
             type: "seek",
             deck: id,
-            seconds: snapSeek
-              ? snapToBeat(seconds, baseBpm, gridOffset, duration)
-              : seconds,
+            seconds:
+              snapSeek && deck.beatgrid_valid
+                ? snapToGridBeat(beatGrid, seconds, duration)
+                : seconds,
           })
         }
         playing={!!deck.playing}
@@ -333,15 +353,7 @@ function DeckWaveform({
   );
 }
 function WaveformAlignment({ decks }: { decks: DeckSnapshot[] }) {
-  const phases = decks.map((d) =>
-    d.track
-      ? beatPosition(
-          val(d.position_seconds),
-          val(d.bpm, val(d.track.bpm)),
-          val(d.beatgrid_offset_seconds),
-        )
-      : null,
-  );
+  const phases = decks.map(reportedBeatPosition);
   const delta = beatPhaseDelta(phases[0] ?? null, phases[1] ?? null);
   const bpms = decks.map(
     (d) => val(d.bpm, val(d.track?.bpm)) * (1 + val(d.tempo_percent) / 100),
@@ -349,7 +361,7 @@ function WaveformAlignment({ decks }: { decks: DeckSnapshot[] }) {
   return (
     <div
       className="waveform-alignment"
-      title="Beat phase from the decks' current beatgrids. Check the first-beat alignment before relying on it."
+      title="Beat phase reported by the native deck clock, including detected tempo changes and manual grid corrections. Verify musical downbeat alignment."
     >
       <span>BEAT ALIGN</span>
       <div className="phase-gauge">
@@ -371,6 +383,9 @@ function WaveformAlignment({ decks }: { decks: DeckSnapshot[] }) {
         {decks.every((d) => !!d.track && val(d.bpm, val(d.track.bpm)) > 0)
           ? `Δ ${(bpms[1] - bpms[0]).toFixed(2)} BPM`
           : "Load both decks"}
+        {decks.every((d) => !!d.track) && !decks.every((d) => d.beatgrid_valid)
+          ? " · Grid unknown"
+          : ""}
       </span>
     </div>
   );
@@ -422,6 +437,19 @@ function Deck({
   );
   const position = val(deck.position_seconds, val(deck.position));
   const baseBpm = val(deck.bpm, val(track?.bpm, val(deck.original_bpm)));
+  const beatGrid = useMemo(
+    () => deckBeatGrid(deck, track),
+    [
+      track,
+      deck.bpm,
+      deck.beatgrid_offset_seconds,
+      deck.beatgrid_uniform,
+      deck.beatgrid_valid,
+      deck.beatgrid_downbeat,
+      deck.beatgrid_manual,
+      deck.beatgrid_anchor_index,
+    ],
+  );
   const tempo = val(deck.tempo_percent);
   const bpm = baseBpm * (1 + tempo / 100);
   const hotcues = deck.hot_cues || Array(8).fill(null);
@@ -560,13 +588,21 @@ function Deck({
       "grid-apply": async () => {
         const bpm = controlNumber(+gridBpm, 30, 300);
         const offset = controlNumber(+gridOffset, 0, duration);
-        await waveformCommand({ type: "set_bpm", deck: id, bpm });
+        if (Math.abs(bpm - baseBpm) > 0.01) await waveformCommand({ type: "set_bpm", deck: id, bpm });
         await waveformCommand({
           type: "set_beatgrid",
           deck: id,
           offset_seconds: offset,
         });
         setEditGrid(false);
+      },
+      "grid-align-here": async () => {
+        await waveformCommand({
+          type: "set_beatgrid",
+          deck: id,
+          offset_seconds: position,
+        });
+        setGridOffset(position.toFixed(3));
       },
       "jog-cancel": finishJog,
     },
@@ -701,7 +737,7 @@ function Deck({
             const bpm = Number(gridBpm);
             const offset = Number(gridOffset);
             if (bpm >= 30 && bpm <= 300 && Number.isFinite(offset)) {
-              send("set_bpm", { bpm });
+              if (Math.abs(bpm - baseBpm) > 0.01) send("set_bpm", { bpm });
               send("set_beatgrid", { offset_seconds: offset });
               setEditGrid(false);
             }
@@ -738,10 +774,10 @@ function Deck({
           <label>
             BEAT 1 (s)
             <input
-              aria-label={`Deck ${id + 1} first beat offset`}
+              aria-label={`Deck ${id + 1} bar one origin`}
               type="number"
               min={0}
-              step={0.01}
+              step={0.001}
               value={gridOffset}
               onChange={(e) => setGridOffset(e.target.value)}
             />
@@ -758,7 +794,7 @@ function Deck({
                 title={`Move beat 1 one beat ${step < 0 ? "earlier" : "later"}`}
                 onClick={() =>
                   setGridOffset(
-                    shiftBeatOne(+gridOffset, +gridBpm, step).toFixed(3),
+                    Math.max(0, Math.min(duration, gridBeatTime(beatGrid, Math.round(gridBeatPosition(beatGrid, +gridOffset) ?? 0) + step) ?? +gridOffset + step * 60 / +gridBpm)).toFixed(3),
                   )
                 }
               >
@@ -770,6 +806,9 @@ function Deck({
             <Check size={12} />
             Apply grid
           </button>
+          <small title={track?.rhythm_error ?? undefined}>
+            {gridStatus(deck, track)}
+          </small>
         </form>
       )}
       <div className="deck-track-preview">
@@ -799,17 +838,16 @@ function Deck({
           loopStart={deck.loop_start_seconds}
           loopEnd={deck.loop_end_seconds}
           loopActive={deck.loop_active}
+          beatGrid={beatGrid}
           beatgridOffset={val(deck.beatgrid_offset_seconds)}
+          beatgridValid={!!deck.beatgrid_valid}
+          beatgridDownbeat={!!deck.beatgrid_downbeat}
           onSeek={(seconds) =>
             send("seek", {
-              seconds: snapSeek
-                ? snapToBeat(
-                    seconds,
-                    baseBpm,
-                    val(deck.beatgrid_offset_seconds),
-                    duration,
-                  )
-                : seconds,
+              seconds:
+                snapSeek && deck.beatgrid_valid
+                  ? snapToGridBeat(beatGrid, seconds, duration)
+                  : seconds,
             })
           }
         />
@@ -968,12 +1006,13 @@ function Deck({
                 CUE
               </button>
               <button
-                className={`play ${deck.playing ? "active" : ""}`}
-                aria-label={deck.playing ? "Pause" : "Play"}
+                className={`play ${deck.playing || deck.launch_pending ? "active" : ""}`}
+                aria-label={deck.launch_pending ? "Cancel queued launch" : deck.playing ? "Pause" : "Play"}
+                title={deck.launch_pending ? "Queued for the next master beat; click to cancel" : "Play / pause"}
                 disabled={!title}
                 onClick={() => send("toggle_play")}
               >
-                {deck.playing ? (
+                {deck.launch_pending ? "QUEUED" : deck.playing ? (
                   <Pause size={20} fill="currentColor" />
                 ) : (
                   <Play size={20} fill="currentColor" />
@@ -3811,9 +3850,9 @@ export default function App() {
                   <div className="migration-card">
                     <h4>Update library analysis</h4>
                     <p>
-                      Run the beat model on tracks analyzed before it existed.
-                      It takes about two seconds per minute of audio, and decks
-                      keep playing. Manual BPM and grid edits are kept.
+                      Add song sections to older analyses. Existing Beat This!
+                      timing is reused; missing analysis is computed in the
+                      background. Manual BPM and grid edits are kept.
                     </p>
                     {analysis?.active ? (
                       <button
@@ -3851,9 +3890,9 @@ export default function App() {
                   <div className="migration-card">
                     <h4>Spotify tracks</h4>
                     <p>
-                      Analyze Spotify tracks with the beat model when they load
-                      or when you analyze a page. When off, they keep the
-                      existing tempo detection.
+                      Add song sections when Spotify tracks load or when you
+                      analyze a page. Beat and downbeat detection continues
+                      through the existing Beat This! implementation.
                     </p>
                     <label className="checkbox">
                       <input
@@ -3865,7 +3904,7 @@ export default function App() {
                           })
                         }
                       />
-                      Also run the beat model on Spotify tracks
+                      Also analyze song sections on Spotify tracks
                     </label>
                   </div>
                   <div className="migration-card">

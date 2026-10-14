@@ -570,3 +570,6 @@
   color: var(--fault-ink);
   overflow-wrap: anywhere;
 }
+
+.grid-editor > small { flex-basis: 100%; color: var(--ink-3); font-size: 9px; }
+.transport .play { font-size: 9px; }

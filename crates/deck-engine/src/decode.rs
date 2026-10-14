@@ -37,7 +37,16 @@ pub fn analyze_file_with_beat_model(
     path: &Path,
     cancel: &dyn Fn() -> bool,
 ) -> Result<(TrackAnalysis, Option<String>), String> {
-    let track = decode_file(path)?;
+    analyze_file_cached_with_sections(path, None, cancel)
+}
+
+/// Extend cached native timing with sections without repeating model inference.
+pub fn analyze_file_cached_with_sections(
+    path: &Path,
+    cached: Option<TrackAnalysis>,
+    cancel: &dyn Fn() -> bool,
+) -> Result<(TrackAnalysis, Option<String>), String> {
+    let track = decode_file_cached(path, cached)?;
     if cancel() {
         return Err("Beat analysis cancelled".into());
     }
@@ -57,9 +66,22 @@ pub fn analyze_beats_and_sections(
     analysis: &mut TrackAnalysis,
     cancel: &dyn Fn() -> bool,
 ) -> Result<(), String> {
-    let (stage, spect) =
-        audio_analysis::track_beats_with_spectrogram(samples, sample_rate, cancel)?;
-    apply_beat_model(analysis, stage);
+    if cancel() {
+        return Err("Beat analysis cancelled".into());
+    }
+    let rhythm = analysis.neural_rhythm.as_ref().ok_or_else(|| {
+        analysis
+            .rhythm_error
+            .clone()
+            .unwrap_or_else(|| "Beat model timing unavailable".into())
+    })?;
+    let stage = audio_analysis::stage_from_rhythm(rhythm);
+    let spect = audio_analysis::spectrogram(samples, sample_rate)?;
+    if cancel() {
+        return Err("Beat analysis cancelled".into());
+    }
+    // Record the stage without flattening the existing clock or changing its BPM.
+    analysis.beat_model = Some(stage);
     analysis.sections = analysis
         .bpm
         .zip(analysis.beatgrid_offset_seconds)
@@ -91,11 +113,62 @@ fn sections_on(
         .sections
         .as_ref()
         .and_then(|s| s.vocabulary_override);
-    audio_analysis::detect_sections(
+    let rhythm = analysis.neural_rhythm.as_ref();
+    let meter = rhythm
+        .and_then(|r| r.beats_per_bar)
+        .unwrap_or(4)
+        .clamp(2, 12);
+    let mut times = Vec::new();
+    if let Some(rhythm) = rhythm
+        .filter(|r| r.beats_seconds.len() >= 2 && analysis.bpm_source.as_deref() != Some("manual"))
+    {
+        let anchor = analysis
+            .manual_grid_anchor_index
+            .unwrap_or_else(|| {
+                crate::grid::nearest_index(
+                    &rhythm.beats_seconds,
+                    rhythm
+                        .downbeats_seconds
+                        .first()
+                        .copied()
+                        .unwrap_or(offset_seconds),
+                )
+            })
+            .min(rhythm.beats_seconds.len() - 1);
+        let origin = rhythm.beats_seconds[anchor];
+        let scale = rhythm.bpm / bpm;
+        if analysis.beatgrid_source.as_deref() == Some("manual") {
+            for i in 0..rhythm.beats_seconds.len() {
+                if (i as isize - anchor as isize).rem_euclid(meter as isize) == 0 {
+                    times.push(offset_seconds + (rhythm.beats_seconds[i] - origin) * scale);
+                }
+            }
+        } else {
+            times.extend(
+                rhythm
+                    .downbeats_seconds
+                    .iter()
+                    .map(|t| offset_seconds + (t - origin) * scale),
+            );
+        }
+        times.retain(|t| *t >= 0.0 && *t <= analysis.duration_seconds);
+    } else if analysis.beatgrid_source.as_deref() == Some("manual") {
+        let bar = meter as f64 * 60.0 / bpm;
+        let offset = offset_seconds.rem_euclid(bar);
+        let count = ((analysis.duration_seconds - offset) / bar)
+            .floor()
+            .max(0.0) as usize;
+        times.extend((0..=count).map(|i| offset + i as f64 * bar));
+    }
+    audio_analysis::detect_sections_on_bars(
         spect,
         analysis.duration_seconds,
-        bpm,
-        offset_seconds,
+        audio_analysis::SectionGrid {
+            bpm,
+            offset_seconds,
+            beats_per_bar: meter,
+            bar_times: &times,
+        },
         vocabulary,
     )
 }
@@ -105,7 +178,7 @@ fn sections_on(
 fn grid_knows_beat_one(analysis: &TrackAnalysis) -> bool {
     matches!(
         analysis.beatgrid_source.as_deref(),
-        Some("model" | "manual")
+        Some("beat_this" | "model" | "manual")
     )
 }
 
@@ -114,6 +187,10 @@ fn grid_knows_beat_one(analysis: &TrackAnalysis) -> bool {
 /// stays visible as a candidate, and a half/double or tag disagreement marks
 /// the BPM ambiguous. The stage is always recorded so it is not re-run.
 pub fn apply_beat_model(analysis: &mut TrackAnalysis, stage: audio_analysis::BeatModelStage) {
+    if analysis.neural_rhythm.is_some() {
+        analysis.beat_model = Some(stage);
+        return;
+    }
     if let Some(grid) = stage.usable_grid() {
         let confidence = grid.on_grid.clamp(0.0, 1.0);
         let manual_bpm = analysis.bpm_source.as_deref() == Some("manual");
@@ -325,11 +402,13 @@ fn decode_source_cached(
             track.analysis.bpm_confidence = 1.0;
             track.analysis.bpm_source = Some("tag".into());
             track.analysis.bpm_ambiguous = false;
-            let phase =
-                audio_analysis::estimate_phase(&track.samples, track.sample_rate, Some(bpm));
-            track.analysis.beatgrid_offset_seconds = phase.as_ref().map(|p| p.offset_seconds);
-            track.analysis.beatgrid_confidence = phase.as_ref().map(|p| p.confidence);
-            track.analysis.beatgrid_source = phase.map(|_| "tag".into());
+            if track.analysis.neural_rhythm.is_none() {
+                let phase =
+                    audio_analysis::estimate_phase(&track.samples, track.sample_rate, Some(bpm));
+                track.analysis.beatgrid_offset_seconds = phase.as_ref().map(|p| p.offset_seconds);
+                track.analysis.beatgrid_confidence = phase.as_ref().map(|p| p.confidence);
+                track.analysis.beatgrid_source = phase.map(|_| "tag".into());
+            }
         }
     }
     Ok(track)
@@ -359,6 +438,21 @@ pub(crate) fn prepare_pcm_cached(
         frame[0] = sanitize(frame[0]);
         frame[1] = sanitize(frame[1]);
     }
+    let overrides = cached.as_ref().map(|a| {
+        (
+            a.bpm_source.as_deref() == Some("manual"),
+            a.bpm,
+            a.beatgrid_source.as_deref() == Some("manual"),
+            a.beatgrid_offset_seconds,
+            a.neural_rhythm
+                .as_ref()
+                .and_then(|g| {
+                    a.manual_grid_anchor_index
+                        .and_then(|i| g.beats_seconds.get(i))
+                })
+                .copied(),
+        )
+    });
     let mut analysis = cached
         .filter(|a| {
             a.path == info.location
@@ -389,7 +483,32 @@ pub(crate) fn prepare_pcm_cached(
             }
         });
     }
+    let neural_stale = analysis.analysis_version < audio_analysis::ANALYSIS_VERSION;
     analysis.analysis_version = audio_analysis::ANALYSIS_VERSION;
+    if neural_stale || analysis.neural_rhythm.is_none() || analysis.rhythm_error.is_some() {
+        apply_neural_rhythm(&mut analysis, &pcm, sample_rate);
+    }
+    if let Some((manual_bpm, bpm, manual_grid, offset, anchor_time)) = overrides {
+        if manual_bpm {
+            analysis.bpm = bpm;
+            analysis.bpm_source = Some("manual".into());
+            analysis.bpm_confidence = 1.0;
+            analysis.bpm_ambiguous = false;
+        }
+        if manual_grid {
+            analysis.beatgrid_offset_seconds = offset;
+            analysis.beatgrid_source = Some("manual".into());
+            analysis.beatgrid_confidence = None;
+            analysis.manual_grid_anchor_index = analysis.neural_rhythm.as_ref().map(|g| {
+                crate::grid::nearest_index(&g.beats_seconds, anchor_time.or(offset).unwrap_or(0.0))
+            });
+        }
+    }
+    if analysis.bpm_source.as_deref() != Some("manual") {
+        if let Some(rhythm) = &analysis.neural_rhythm {
+            analysis.bpm_ambiguous = neural_tempo_ambiguous(rhythm);
+        }
+    }
     analysis.recording_allowed = recording_allowed;
     analysis.title = info.title;
     analysis.artist = info.artist;
@@ -418,7 +537,10 @@ pub(crate) fn analyze_pcm(
     let (tempo, phase) = audio_analysis::analyze_rhythm(pcm, sample_rate);
     let waveform = audio_analysis::analyze_waveform(pcm, sample_rate, 4096);
     let key = audio_analysis::analyze_key(pcm, sample_rate);
-    TrackAnalysis {
+    let mut analysis = TrackAnalysis {
+        neural_rhythm: None,
+        rhythm_error: None,
+        manual_grid_anchor_index: None,
         id: info.id.clone(),
         path: info.location.clone(),
         title: info.title.clone(),
@@ -445,6 +567,89 @@ pub(crate) fn analyze_pcm(
         beat_model: None,
         sections: None,
         auto_cues: None,
+    };
+    apply_neural_rhythm(&mut analysis, pcm, sample_rate);
+    analysis
+}
+
+fn neural_tempo_ambiguous(rhythm: &audio_analysis::NeuralRhythm) -> bool {
+    if rhythm
+        .bar_evidence
+        .iter()
+        .any(|e| !e.pulse_repairs.is_empty() || e.half_phase_corrected)
+    {
+        return true;
+    }
+    if rhythm.beats_seconds.len() < 65 {
+        return false;
+    }
+    let mut rates: Vec<f64> = rhythm
+        .beats_seconds
+        .windows(33)
+        .map(|w| 1920.0 / (w[32] - w[0]))
+        .collect();
+    rates.sort_by(f64::total_cmp);
+    let low = rates[(rates.len() - 1) * 2 / 100];
+    let high = rates[(rates.len() - 1) * 98 / 100];
+    // A sustained large tempo spread can represent intentional changes or an
+    // octave interpretation switch. It needs passage-level review in either case.
+    low > 0.0 && high / low > 1.6
+}
+
+fn apply_neural_rhythm(analysis: &mut TrackAnalysis, pcm: &[[f32; 2]], rate: u32) {
+    // Unit fixtures exercise deterministic DSP; actual inference has a separate
+    // full-model integration test. Application builds always use the model.
+    if cfg!(test) {
+        return;
+    }
+    match audio_analysis::analyze_neural_rhythm(pcm, rate) {
+        Ok(rhythm) => {
+            if analysis.beatgrid_source.as_deref() == Some("manual") {
+                let phase_changed = analysis.neural_rhythm.as_ref().is_some_and(|old| {
+                    old.bar_evidence.iter().any(|e| e.half_phase_corrected)
+                        != rhythm.bar_evidence.iter().any(|e| e.half_phase_corrected)
+                });
+                let anchor_time = if phase_changed {
+                    analysis.beatgrid_offset_seconds
+                } else {
+                    analysis
+                        .neural_rhythm
+                        .as_ref()
+                        .and_then(|g| {
+                            analysis
+                                .manual_grid_anchor_index
+                                .and_then(|i| g.beats_seconds.get(i))
+                        })
+                        .copied()
+                }
+                .or(analysis.beatgrid_offset_seconds)
+                .unwrap_or(0.0);
+                analysis.manual_grid_anchor_index = Some(crate::grid::nearest_index(
+                    &rhythm.beats_seconds,
+                    anchor_time,
+                ));
+            }
+            if analysis.bpm_source.as_deref() != Some("manual")
+                && analysis.bpm_source.as_deref() != Some("tag")
+            {
+                analysis.bpm = Some(rhythm.bpm);
+                analysis.bpm_source = Some("beat_this".into());
+                analysis.bpm_confidence = rhythm.beat_confidence;
+                analysis.bpm_ambiguous = neural_tempo_ambiguous(&rhythm);
+            }
+            if analysis.beatgrid_source.as_deref() != Some("manual") {
+                analysis.beatgrid_offset_seconds = rhythm
+                    .downbeats_seconds
+                    .first()
+                    .copied()
+                    .or_else(|| rhythm.beats_seconds.first().copied());
+                analysis.beatgrid_source = Some("beat_this".into());
+                analysis.beatgrid_confidence = Some(rhythm.beat_confidence);
+            }
+            analysis.rhythm_error = None;
+            analysis.neural_rhythm = Some(rhythm);
+        }
+        Err(error) => analysis.rhythm_error = Some(error),
     }
 }
 
@@ -473,6 +678,9 @@ pub(crate) fn demo_track(deck: usize) -> Arc<TrackData> {
     }
     let waveform = audio_analysis::analyze_waveform(&pcm, rate, 4096);
     let analysis = TrackAnalysis {
+        neural_rhythm: None,
+        rhythm_error: None,
+        manual_grid_anchor_index: None,
         id: format!("demo:{deck}"),
         path: format!("demo:{deck}"),
         title: format!("Demo {} — {bpm:.0} BPM", deck + 1),
@@ -555,6 +763,9 @@ pub(crate) fn sample_track(slot: usize) -> Arc<TrackData> {
         samples,
         sample_rate: rate,
         analysis: TrackAnalysis {
+            neural_rhythm: None,
+            rhythm_error: None,
+            manual_grid_anchor_index: None,
             id: format!("sample:{slot}"),
             path: format!("sample:{slot}"),
             title: names[sound].into(),
@@ -772,11 +983,54 @@ mod cached_phase_upgrade_tests {
         (pcm, info, cached)
     }
     #[test]
+    fn invalidated_release_cache_recomputes_waveform_and_preserves_explicit_overrides() {
+        let (pcm, info, mut cached) = fixture();
+        cached.analysis_version = 0;
+        cached.bpm = Some(130.0);
+        cached.bpm_source = Some("manual".into());
+        cached.beatgrid_offset_seconds = Some(0.297);
+        cached.beatgrid_source = Some("manual".into());
+        let t = prepare_pcm_cached(pcm, 8000, info, false, Some(cached)).unwrap();
+        assert_eq!(t.analysis.bpm, Some(130.0));
+        assert_eq!(t.analysis.beatgrid_offset_seconds, Some(0.297));
+        assert_eq!(t.analysis.beatgrid_source.as_deref(), Some("manual"));
+        assert_ne!(t.analysis.waveform, vec![0.432; 4096]);
+        assert!(!t.analysis.recording_allowed);
+    }
+    #[test]
+    fn sustained_octave_switch_is_reported_separately_from_model_activation_scores() {
+        let mut r = audio_analysis::NeuralRhythm {
+            beats_seconds: vec![],
+            downbeats_seconds: vec![],
+            bpm: 120.0,
+            beat_confidence: 0.99,
+            downbeat_confidence: 0.99,
+            model: "fixture".into(),
+            analysis_seconds: 0.0,
+            bar_evidence: Vec::new(),
+            beats_per_bar: None,
+        };
+        let mut t = 0.0;
+        for _ in 0..180 {
+            r.beats_seconds.push(t);
+            t += 0.5;
+        }
+        assert!(!neural_tempo_ambiguous(&r));
+        for _ in 0..90 {
+            r.beats_seconds.push(t);
+            t += 0.25;
+        }
+        assert!(neural_tempo_ambiguous(&r));
+    }
+    #[test]
     fn version_two_reuses_bpm_key_waveforms_and_only_adds_pcm_phase() {
         let (pcm, info, cached) = fixture();
         let bands = cached.waveform_bands.clone();
         let track = prepare_pcm_cached(pcm, 8000, info, false, Some(cached)).unwrap();
-        assert_eq!(track.analysis.analysis_version, 3);
+        assert_eq!(
+            track.analysis.analysis_version,
+            audio_analysis::ANALYSIS_VERSION
+        );
         assert_eq!(track.analysis.bpm, Some(127.3));
         assert_eq!(track.analysis.key.as_deref(), Some("cached key"));
         assert_eq!(track.analysis.waveform, vec![0.432; 4096]);
@@ -792,7 +1046,10 @@ mod cached_phase_upgrade_tests {
         cached.beatgrid_confidence = Some(1.0);
         cached.beatgrid_source = Some("manual".into());
         let track = prepare_pcm_cached(pcm, 8000, info, false, Some(cached)).unwrap();
-        assert_eq!(track.analysis.analysis_version, 3);
+        assert_eq!(
+            track.analysis.analysis_version,
+            audio_analysis::ANALYSIS_VERSION
+        );
         assert_eq!(track.analysis.beatgrid_offset_seconds, Some(0.297));
         assert_eq!(track.analysis.beatgrid_source.as_deref(), Some("manual"));
     }
@@ -885,5 +1142,29 @@ mod beat_model_tests {
             a.beat_model.as_ref().map(|s| s.beats_seconds.len()),
             Some(10)
         );
+    }
+    #[test]
+    fn derived_stage_keeps_native_timing_and_manual_provenance() {
+        let mut a = analysis(127.0, "manual");
+        a.beatgrid_source = Some("manual".into());
+        a.manual_grid_anchor_index = Some(3);
+        a.neural_rhythm = Some(audio_analysis::NeuralRhythm {
+            beats_seconds: vec![0.17, 0.68, 1.23, 1.81, 2.45],
+            downbeats_seconds: vec![0.17, 2.45],
+            bpm: 120.0,
+            beat_confidence: 0.8,
+            downbeat_confidence: 0.7,
+            model: "fixture".into(),
+            analysis_seconds: 0.0,
+            bar_evidence: Vec::new(),
+            beats_per_bar: Some(4),
+        });
+        let before = a.neural_rhythm.as_ref().unwrap().beats_seconds.clone();
+        apply_beat_model(&mut a, stage(130.0, 0.4, 300));
+        assert_eq!(a.bpm, Some(127.0));
+        assert_eq!(a.bpm_source.as_deref(), Some("manual"));
+        assert_eq!(a.beatgrid_offset_seconds, Some(0.1));
+        assert_eq!(a.manual_grid_anchor_index, Some(3));
+        assert_eq!(a.neural_rhythm.unwrap().beats_seconds, before);
     }
 }

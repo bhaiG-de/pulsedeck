@@ -5,7 +5,8 @@ use std::path::Path;
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct AnalysisSettings {
-    /// Run the neural beat model on Spotify sources as well as local files.
+    /// Add sections on Spotify sources as well as local files. Core Beat This!
+    /// inference remains part of the existing source preparation pipeline.
     pub beat_model_spotify: bool,
     /// Fill empty hot cue pads from song sections.
     pub auto_hot_cues: bool,

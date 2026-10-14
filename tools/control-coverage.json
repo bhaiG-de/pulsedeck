@@ -53,11 +53,40 @@
     "spotify_decks::cancel_spotify_load": "deck.load.cancel",
     "spotify::spotify_native_status": "spotify.native.status",
     "spotify::spotify_native_begin_login": "spotify.native.login",
-    "spotify::spotify_native_disconnect": "spotify.native.disconnect"
+    "spotify::spotify_native_disconnect": "spotify.native.disconnect",
+    "update_library_analysis": "library.analysis.update",
+    "cancel_library_analysis": "library.analysis.cancel",
+    "set_analysis_settings": "analysis.settings.set",
+    "set_section_vocabulary": "deck.sections.vocabulary",
+    "suggest::suggest_next": "library.suggest_next",
+    "suggest::clear_play_history": "library.history.clear"
   },
-  "transport_handlers": ["control::control_request", "control::ui_reply", "control::ui_publish"],
-  "midi_actions": ["Button", "Knob", "JogTouch", "Jog", "PadMode", "Pad", "Browse", "Load", "GlobalButton", "FxSelect", "FxBeat", "FxEnable", "FxTarget"],
-  "unsupported_controls": ["MicGain", "AndroidMono", "SmartFaderNext", "shifted LoopIn/LoopOut"],
+  "transport_handlers": [
+    "control::control_request",
+    "control::ui_reply",
+    "control::ui_publish"
+  ],
+  "midi_actions": [
+    "Button",
+    "Knob",
+    "JogTouch",
+    "Jog",
+    "PadMode",
+    "Pad",
+    "Browse",
+    "Load",
+    "GlobalButton",
+    "FxSelect",
+    "FxBeat",
+    "FxEnable",
+    "FxTarget"
+  ],
+  "unsupported_controls": [
+    "MicGain",
+    "AndroidMono",
+    "SmartFaderNext",
+    "shifted LoopIn/LoopOut"
+  ],
   "dialog_equivalents": {
     "choose_tracks": "library.import takes paths; app.import-dialog opens the native picker",
     "choose_sample": "sampler.load takes path and zero-based slot",

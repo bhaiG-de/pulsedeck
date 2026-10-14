@@ -2,7 +2,7 @@ use control_protocol::{ControlError, Request};
 use serde_json::{json, Map, Value};
 use std::path::PathBuf;
 
-pub const HELP: &str = "PulseDeck control CLI (pulsedeckctl)\n\nOpen PulseDeck, then use:\n  pulsedeckctl status --json\n  pulsedeckctl deck A load --path /music/song.flac\n  pulsedeckctl deck A play|pause|cue|seek --at 32s\n  pulsedeckctl deck A hotcue A set --at 32s\n  pulsedeckctl deck A tempo set --percent -2\n  pulsedeckctl deck A eq set --low 0.7\n  pulsedeckctl mixer crossfader set -0.5\n  pulsedeckctl library tracks --search ambient\n  pulsedeckctl playlist create --name Work\n  pulsedeckctl playlist add local:7 --track local:42\n  pulsedeckctl ui theme set anatomy-dark\n  pulsedeckctl commands list --json\n  pulsedeckctl call METHOD --args '{\"key\":\"value\"}'\n  pulsedeckctl command --file request.json\n  pulsedeckctl batch run --file plan.json\n  pulsedeckctl state watch [--count 10] [--interval 250ms]\n  pulsedeckctl session --stdio\n\nGlobal: --json --socket PATH --timeout 30s --no-wait\n        --expected-load-revision N --request-id ID\nNative slots are zero-based in JSON; named hot cues A-H / samples 1-16.\nUse commands list/describe for the complete callable catalog.\n";
+pub const HELP: &str = "PulseDeck control CLI (pulsedeckctl)\n\nOpen PulseDeck, then use:\n  pulsedeckctl status --json\n  pulsedeckctl deck A load --path /music/song.flac\n  pulsedeckctl deck A play|pause|cue|seek --at 32s\n  pulsedeckctl deck B launch --clock A --clock-revision 1 --at 64s\n  pulsedeckctl deck A grid set --offset 0.125s\n  pulsedeckctl deck A hotcue A set --at 32s\n  pulsedeckctl deck A tempo set --percent -2\n  pulsedeckctl deck A eq set --low 0.7\n  pulsedeckctl mixer crossfader set -0.5\n  pulsedeckctl library tracks --search ambient\n  pulsedeckctl playlist create --name Work\n  pulsedeckctl playlist add local:7 --track local:42\n  pulsedeckctl ui theme set anatomy-dark\n  pulsedeckctl commands list --json\n  pulsedeckctl call METHOD --args '{\"key\":\"value\"}'\n  pulsedeckctl command --file request.json\n  pulsedeckctl batch run --file plan.json\n  pulsedeckctl state watch [--count 10] [--interval 250ms]\n  pulsedeckctl session --stdio\n\nGlobal: --json --socket PATH --timeout 30s --no-wait\n        --expected-load-revision N --request-id ID\nNative slots are zero-based in JSON; named hot cues A-H / samples 1-16.\nUse commands list/describe for the complete callable catalog.\n";
 #[derive(Debug)]
 pub struct Invocation {
     pub request: Request,
@@ -557,6 +557,7 @@ fn allowed_flags(words: &[&str]) -> Vec<String> {
         ["deck", _, "load"] => &["path", "track", "uri", "demo", "replace_playing"],
         ["deck", _, "cue", "set"] | ["deck", _, "hotcue", _, "set"] => &["at", "current"],
         ["deck", _, "seek"] => &["at", "snap"],
+        ["deck", _, "launch"] => &["clock", "clock_revision", "at", "quantize"],
         ["deck", _, "jump"] | ["deck", _, "loop", "set"] => &["beats"],
         ["deck", _, "tempo", "set"] => &["percent"],
         ["deck", _, "pitch", "set"] => &["semitones"],
@@ -566,7 +567,7 @@ fn allowed_flags(words: &[&str]) -> Vec<String> {
         ["deck", _, "jog"] => &["delta", "scratch"],
         ["deck", _, "scrub", "to"] => &["at", "duration"],
         ["deck", _, "scrub", "end"] => &["at"],
-        ["deck", _, "wait"] => &["ramps"],
+        ["deck", _, "wait"] => &["ramps", "launches"],
         ["mixer", _, "ramp"] => &["to", "over", "clock", "quantize"],
         ["mixer", _, "set"] => &["position", "gain", "mix"],
         ["sampler", "slot", _, "load"] => &["path"],
@@ -630,6 +631,25 @@ fn deck_request(
         ["analyze"] => return Ok(Request::new("deck.analyze", json!(flags))),
         ["wait"] => return Ok(Request::new("engine.wait", json!(flags))),
         ["play"] => "play",
+        ["launch"] => {
+            c["clock"] = required(&flags, "clock")?.clone();
+            c["clock_revision"] =
+                json!(text(required(&flags, "clock_revision")?)
+                    .parse::<u64>()
+                    .map_err(|_| invalid("Clock revision must be a non-negative integer"))?);
+            c["quantize"] = json!(flags
+                .get("quantize")
+                .map(|v| number(&text(v)))
+                .transpose()?
+                .unwrap_or(1.0));
+            c["at_seconds"] = flags
+                .get("at")
+                .map(|v| seconds(&text(v)))
+                .transpose()?
+                .map_or(Value::Null, |s| json!(s));
+            "play_quantized"
+        }
+        ["launch", "cancel"] => "cancel_launch",
         ["pause"] => "pause",
         ["toggle-play"] => "toggle_play",
         ["master"] => "set_master",
@@ -925,6 +945,30 @@ mod tests {
         );
         assert_eq!(r.request.expected_load_revision, Some(7));
         assert!(r.json);
+    }
+    #[test]
+    fn launch_and_grid_commands_keep_units_and_both_source_guards() {
+        let r = p("deck B launch --clock A --clock-revision 9 --at 32125ms --quantize 4 --expected-load-revision 7");
+        assert_eq!(
+            r.request.args,
+            json!({"type":"play_quantized","deck":"B","clock":"A","clock_revision":9,"at_seconds":32.125,"quantize":4.0})
+        );
+        assert_eq!(r.request.expected_load_revision, Some(7));
+        assert_eq!(
+            p("deck A grid set --offset 125ms").request.args,
+            json!({"type":"set_beatgrid","deck":"A","offset_seconds":0.125})
+        );
+        assert_eq!(
+            p("deck B launch cancel").request.args,
+            json!({"type":"cancel_launch","deck":"B"})
+        );
+        assert!(parse(
+            &"deck B launch --clock A --clock-revision -1"
+                .split_whitespace()
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        )
+        .is_err());
     }
     #[test]
     fn partial_eq_and_sampler_bank_two() {

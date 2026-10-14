@@ -29,6 +29,7 @@ impl Smooth {
 
 pub(crate) struct Deck {
     pub track: Option<Arc<TrackData>>,
+    pub grid: Option<Arc<audio_analysis::NeuralRhythm>>,
     pub prepared: Option<Arc<TrackData>>,
     pub preparation_generation: u64,
     pub prepared_generation: u64,
@@ -60,6 +61,12 @@ pub(crate) struct Deck {
     pub reverb: Smooth,
     pub bpm: Option<f64>,
     pub grid_offset: f64,
+    pub grid_valid: bool,
+    pub grid_downbeat: bool,
+    pub grid_manual: bool,
+    pub grid_uniform: bool,
+    pub grid_anchor_index: usize,
+    pub grid_scale: f64,
     band_low: [f32; 2],
     band_high: [f32; 2],
     filter_low: [[f32; 2]; 2],
@@ -89,6 +96,7 @@ impl Deck {
     fn new() -> Self {
         Self {
             track: None,
+            grid: None,
             prepared: None,
             preparation_generation: 0,
             prepared_generation: 0,
@@ -120,6 +128,12 @@ impl Deck {
             reverb: Smooth::new(0.0),
             bpm: None,
             grid_offset: 0.0,
+            grid_valid: false,
+            grid_downbeat: false,
+            grid_manual: false,
+            grid_uniform: false,
+            grid_anchor_index: 0,
+            grid_scale: 1.0,
             band_low: [0.0; 2],
             band_high: [0.0; 2],
             filter_low: [[0.0; 2]; 2],
@@ -167,6 +181,79 @@ impl Deck {
     }
     pub fn rate(&self) -> f64 {
         1.0 + self.tempo / 100.0
+    }
+    fn neural_grid(&self) -> Option<&audio_analysis::NeuralRhythm> {
+        if self.grid_uniform {
+            return None;
+        }
+        self.grid
+            .as_deref()
+            .or_else(|| self.track.as_ref()?.analysis.neural_rhythm.as_ref())
+            .filter(|g| g.beats_seconds.len() >= 2)
+    }
+    pub fn grid_position(&self, seconds: f64) -> f64 {
+        if let Some(g) = self.neural_grid() {
+            let anchor = self.grid_anchor_index.min(g.beats_seconds.len() - 1);
+            let original = g.beats_seconds[anchor] + (seconds - self.grid_offset) / self.grid_scale;
+            crate::grid::position(&g.beats_seconds, original) - anchor as f64
+        } else {
+            (seconds - self.grid_offset) * self.bpm.unwrap_or(120.0) / 60.0
+        }
+    }
+    pub fn grid_time(&self, beat: f64) -> f64 {
+        if let Some(g) = self.neural_grid() {
+            let anchor = self.grid_anchor_index.min(g.beats_seconds.len() - 1);
+            self.grid_offset
+                + (crate::grid::time(&g.beats_seconds, beat + anchor as f64)
+                    - g.beats_seconds[anchor])
+                    * self.grid_scale
+        } else {
+            self.grid_offset + beat * 60.0 / self.bpm.unwrap_or(120.0)
+        }
+    }
+    pub fn grid_period(&self) -> f64 {
+        if let Some(g) = self.neural_grid() {
+            let origin = g.beats_seconds[self.grid_anchor_index];
+            let original = origin + (self.seconds() - self.grid_offset) / self.grid_scale;
+            let next = g.beats_seconds.partition_point(|t| *t <= original);
+            let left = next.saturating_sub(1).min(g.beats_seconds.len() - 2);
+            (g.beats_seconds[left + 1] - g.beats_seconds[left]) * self.grid_scale
+        } else {
+            60.0 / self.bpm.unwrap_or(120.0)
+        }
+    }
+    pub fn grid_bpm(&self) -> Option<f64> {
+        self.neural_grid()
+            .map(|g| g.bpm / self.grid_scale)
+            .or(self.bpm)
+    }
+    pub fn snapped_grid_time(&self, seconds: f64) -> f64 {
+        let mut beat = self.grid_position(seconds).round();
+        if let Some(g) = self.neural_grid() {
+            let origin = g.beats_seconds[self.grid_anchor_index];
+            let raw_start = origin - self.grid_offset / self.grid_scale;
+            let raw_end = origin
+                + (self.duration_frames() / self.sample_rate() - self.grid_offset)
+                    / self.grid_scale;
+            let first = g.beats_seconds.partition_point(|t| *t < raw_start);
+            let end = g.beats_seconds.partition_point(|t| *t < raw_end);
+            if first >= end {
+                return f64::NAN;
+            }
+            beat = (beat + self.grid_anchor_index as f64).clamp(first as f64, (end - 1) as f64)
+                - self.grid_anchor_index as f64;
+        }
+        let time = self.grid_time(beat);
+        if time < 0.0 {
+            self.grid_time(self.grid_position(0.0).ceil())
+        } else {
+            time
+        }
+    }
+    pub fn preparation_pending(&self) -> bool {
+        (self.keylock || self.pitch.abs() > 0.0001)
+            && (self.prepared_generation != self.preparation_generation
+                || (self.prepared_rate - self.rate()).abs() > 1e-6)
     }
     pub fn fade_in(&mut self) {
         self.attack = 0.0;
@@ -382,10 +469,21 @@ struct ControlRamp {
     target_revision: Option<u64>,
     position_revision: Option<u64>,
 }
+#[derive(Clone, Copy)]
+pub(crate) struct ScheduledLaunch {
+    clock: usize,
+    pub at_seconds: f64,
+    revisions: [u64; 2],
+    positions: [u64; 2],
+    rates: [f64; 2],
+    bpms: [Option<f64>; 2],
+    grids: [f64; 2],
+}
 pub(crate) struct Mixer {
     pub applied_fence: u64,
     pub load_revisions: [u64; 2],
     ramps: [Option<ControlRamp>; 17],
+    pub launches: [Option<ScheduledLaunch>; 2],
     pub decks: [Deck; 2],
     pub sample_rate: u32,
     pub master_gain: Smooth,
@@ -398,6 +496,7 @@ pub(crate) struct Mixer {
     pub samples: [Arc<TrackData>; 16],
     pub sample_positions: [Option<f64>; 16],
     smoothing: f32,
+    sync_smoothing: f64,
     smoothing_rate: u32,
     fade_value: f32,
     fade_gains: [f32; 2],
@@ -408,6 +507,7 @@ impl Mixer {
             applied_fence: 0,
             load_revisions: [0; 2],
             ramps: [None; 17],
+            launches: [None; 2],
             decks: [Deck::new(), Deck::new()],
             sample_rate: 48_000,
             master_gain: Smooth::new(0.8),
@@ -420,12 +520,14 @@ impl Mixer {
             samples: std::array::from_fn(crate::decode::sample_track),
             sample_positions: [None; 16],
             smoothing: 0.0,
+            sync_smoothing: 0.0,
             smoothing_rate: 0,
             fade_value: f32::NAN,
             fade_gains: [0.70710677; 2],
         }
     }
     pub fn load(&mut self, deck: usize, track: Arc<TrackData>) -> Option<Arc<TrackData>> {
+        self.launches.fill(None);
         let d = &mut self.decks[deck];
         if d.track
             .as_ref()
@@ -468,6 +570,115 @@ impl Mixer {
             .and_then(|t| t.analysis.beatgrid_offset_seconds)
             .filter(|x| x.is_finite())
             .unwrap_or(0.0);
+        d.grid_valid = d.track.as_ref().is_some_and(|t| {
+            t.analysis.rhythm_error.is_none()
+                && t.analysis
+                    .beatgrid_offset_seconds
+                    .is_some_and(f64::is_finite)
+        });
+        d.grid_downbeat = d.grid_valid
+            && d.track
+                .as_ref()
+                .is_some_and(|t| t.analysis.beatgrid_source.as_deref() == Some("manual"));
+        d.grid_manual = d.grid_downbeat;
+        d.grid_uniform = d
+            .track
+            .as_ref()
+            .is_some_and(|t| t.analysis.bpm_source.as_deref() == Some("manual"));
+        d.grid_scale = 1.0;
+        d.grid_anchor_index = 0;
+        if let Some(track) = d.track.as_ref() {
+            if let Some(g) = track
+                .analysis
+                .neural_rhythm
+                .as_ref()
+                .filter(|g| g.beats_seconds.len() >= 2)
+            {
+                let first = g
+                    .downbeats_seconds
+                    .first()
+                    .copied()
+                    .unwrap_or(g.beats_seconds[0]);
+                d.grid_anchor_index = track
+                    .analysis
+                    .manual_grid_anchor_index
+                    .unwrap_or_else(|| {
+                        if d.grid_manual {
+                            crate::grid::nearest_index(&g.beats_seconds, d.grid_offset)
+                        } else {
+                            g.beats_seconds.partition_point(|t| *t < first)
+                        }
+                    })
+                    .min(g.beats_seconds.len() - 1);
+                if !d.grid_manual {
+                    d.grid_offset = g.beats_seconds[d.grid_anchor_index];
+                }
+                if track.analysis.bpm_source.as_deref() == Some("manual") {
+                    d.grid_scale = 1.0;
+                }
+                d.grid_valid = track.analysis.rhythm_error.is_none() || d.grid_manual;
+                d.grid_downbeat =
+                    d.grid_manual || (!d.grid_uniform && !g.downbeats_seconds.is_empty());
+            }
+        }
+        previous
+    }
+    pub fn update_grid(
+        &mut self,
+        deck: usize,
+        grid: Arc<audio_analysis::NeuralRhythm>,
+    ) -> Option<Arc<audio_analysis::NeuralRhythm>> {
+        self.launches.fill(None);
+        self.ramps.fill(None);
+        let d = &mut self.decks[deck];
+        let previous_bpm = d.grid_bpm();
+        let uniform = d.grid_uniform;
+        let previous_phase_corrected = d
+            .neural_grid()
+            .is_some_and(|old| old.bar_evidence.iter().any(|e| e.half_phase_corrected));
+        let previous_anchor = d
+            .neural_grid()
+            .and_then(|g| g.beats_seconds.get(d.grid_anchor_index))
+            .copied()
+            .unwrap_or(d.grid_offset);
+        let previous = d.grid.replace(grid);
+        let g = d.grid.as_ref().unwrap();
+        if d.grid_manual {
+            let phase_changed =
+                previous_phase_corrected != g.bar_evidence.iter().any(|e| e.half_phase_corrected);
+            // A human already compensated the old phase: bind to their source
+            // time when a new detector explicitly replaces that phase.
+            let anchor = if phase_changed {
+                d.grid_offset
+            } else {
+                previous_anchor
+            };
+            d.grid_anchor_index = crate::grid::nearest_index(&g.beats_seconds, anchor);
+        } else {
+            let first = g
+                .downbeats_seconds
+                .first()
+                .copied()
+                .unwrap_or(g.beats_seconds[0]);
+            d.grid_anchor_index = g
+                .beats_seconds
+                .partition_point(|t| *t < first)
+                .min(g.beats_seconds.len() - 1);
+            d.grid_offset = g.beats_seconds[d.grid_anchor_index];
+        }
+        // Preserve an explicitly retimed grid; otherwise adopt the new detector tempo.
+        d.grid_scale = if (d.grid_scale - 1.0).abs() > 1e-8 {
+            g.bpm / previous_bpm.unwrap_or(g.bpm)
+        } else {
+            1.0
+        };
+        d.bpm = if uniform {
+            previous_bpm
+        } else {
+            Some(g.bpm / d.grid_scale)
+        };
+        d.grid_valid = true;
+        d.grid_downbeat = d.grid_manual || (!uniform && !g.downbeats_seconds.is_empty());
         previous
     }
     /// Copy the source transport at this exact render boundary, sharing immutable PCM.
@@ -478,6 +689,8 @@ impl Mixer {
         generation: u64,
     ) -> [Option<Arc<TrackData>>; 2] {
         let source = &self.decks[1 - deck];
+        let grid = source.grid.clone();
+        let uniform = source.grid_uniform;
         let prepared = if source.prepared_generation == source.preparation_generation
             && (source.prepared_rate - source.rate()).abs() < 1e-6
         {
@@ -500,6 +713,11 @@ impl Mixer {
             source.grid_offset,
             source.prepared_rate,
             source.last_loop_region,
+            source.grid_valid,
+            source.grid_downbeat,
+            source.grid_manual,
+            source.grid_anchor_index,
+            source.grid_scale,
         );
         let old_prepared = self.decks[deck].prepared.take();
         let old_track = self.load(deck, track);
@@ -518,6 +736,13 @@ impl Mixer {
         d.grid_offset = state.11;
         d.prepared_rate = state.12;
         d.last_loop_region = state.13;
+        d.grid_valid = state.14;
+        d.grid_downbeat = state.15;
+        d.grid_manual = state.16;
+        d.grid_anchor_index = state.17;
+        d.grid_scale = state.18;
+        d.grid = grid;
+        d.grid_uniform = uniform;
         d.preparation_generation = generation;
         d.prepared_generation = if prepared.is_some() { generation } else { 0 };
         d.prepared = prepared;
@@ -525,8 +750,11 @@ impl Mixer {
         [old_track, old_prepared]
     }
     pub fn unload(&mut self, deck: usize) -> [Option<Arc<TrackData>>; 2] {
+        self.launches.fill(None);
         let d = &mut self.decks[deck];
         d.playing = false;
+        d.grid_valid = false;
+        d.grid_downbeat = false;
         d.cue_preview = false;
         d.position = 0.;
         d.position_revision = d.position_revision.wrapping_add(1);
@@ -545,6 +773,36 @@ impl Mixer {
         [d.track.take(), d.prepared.take()]
     }
     pub fn command(&mut self, command: EngineCommand) {
+        // Manual changes supersede a queued launch even within one buffer.
+        if matches!(
+            &command,
+            EngineCommand::Play { .. }
+                | EngineCommand::Pause { .. }
+                | EngineCommand::Cue { .. }
+                | EngineCommand::CuePress { .. }
+                | EngineCommand::Seek { .. }
+                | EngineCommand::TriggerHotCue { .. }
+                | EngineCommand::BeatJump { .. }
+                | EngineCommand::SetTempo { .. }
+                | EngineCommand::SetBpm { .. }
+                | EngineCommand::SetBeatgrid { .. }
+                | EngineCommand::SetSync { .. }
+                | EngineCommand::Sync { .. }
+                | EngineCommand::Jog { .. }
+                | EngineCommand::JogTouch { .. }
+                | EngineCommand::ScrubTo { .. }
+                | EngineCommand::SetLoop { .. }
+                | EngineCommand::SetPitch { .. }
+                | EngineCommand::SetKeylock { .. }
+        ) {
+            if let Some(deck) = command.deck() {
+                for (target, pending) in self.launches.iter_mut().enumerate() {
+                    if target == deck || pending.is_some_and(|p| p.clock == deck) {
+                        *pending = None;
+                    }
+                }
+            }
+        }
         use EngineCommand::*;
         match &command {
             SetCrossfader { .. } => self.ramps[0] = None,
@@ -585,14 +843,11 @@ impl Mixer {
                 let mut delay = 0.0;
                 if let Some(deck) = clock {
                     let d = &self.decks[deck];
-                    let period = 60.0 / d.bpm.unwrap_or(120.0);
+                    let position = d.grid_position(d.seconds());
+                    let start = quantize.map_or(position, |q| (position / q).ceil() * q);
+                    delay = ((d.grid_time(start) - d.seconds()) / d.rate()).max(0.0);
                     if let Some(beats) = beats {
-                        duration = beats * period / d.rate();
-                    }
-                    if let Some(quantize) = quantize {
-                        let position = (d.seconds() - d.grid_offset) / period;
-                        let next = (position / quantize).ceil() * quantize;
-                        delay = ((next - position) * period / d.rate()).max(0.0);
+                        duration = (d.grid_time(start + beats) - d.grid_time(start)) / d.rate();
                     }
                 }
                 let from = self.target_value(target);
@@ -613,6 +868,7 @@ impl Mixer {
             }
             CancelRamps => self.ramps.fill(None),
             Play { deck } => {
+                self.launches[deck] = None;
                 let d = &mut self.decks[deck];
                 if d.track.is_some() {
                     if d.position >= d.duration_frames() {
@@ -621,9 +877,73 @@ impl Mixer {
                     d.playing = true;
                 }
             }
-            Pause { deck } => self.decks[deck].playing = false,
+            PlayQuantized {
+                deck,
+                clock,
+                clock_revision,
+                at_seconds,
+                quantize,
+            } => {
+                let a = &self.decks[clock];
+                let b = &self.decks[deck];
+                if self.load_revisions[clock] != clock_revision
+                    || !a.playing
+                    || b.playing
+                    || !a.grid_valid
+                    || !b.grid_valid
+                    || a.loop_region.is_some()
+                    || b.loop_region.is_some()
+                    || a.jog_touch
+                    || b.jog_touch
+                    || b.track.is_none()
+                    || b.preparation_pending()
+                {
+                    return;
+                }
+                let (Some(a_bpm), Some(b_bpm)) = (a.grid_bpm(), b.grid_bpm()) else {
+                    return;
+                };
+                if !(b.sync_enabled && clock == self.master_deck)
+                    && (a_bpm * a.rate() - b_bpm * b.rate()).abs() > 0.01
+                {
+                    return;
+                }
+                let beat = a.grid_position(a.seconds());
+                let at = at_seconds
+                    .unwrap_or(a.grid_time((beat / quantize).floor().mul_add(quantize, quantize)));
+                if !at.is_finite()
+                    || at < a.seconds()
+                    || at >= a.duration_frames() / a.sample_rate()
+                    || (a.snapped_grid_time(at) - at).abs() > 0.001
+                {
+                    return;
+                }
+                let entry = b.snapped_grid_time(b.seconds());
+                if !entry.is_finite()
+                    || entry < 0.0
+                    || entry >= b.duration_frames() / b.sample_rate()
+                {
+                    return;
+                }
+                self.decks[deck].seek(entry);
+                self.decks[deck].sync_correction = 0.0;
+                self.launches[deck] = Some(ScheduledLaunch {
+                    clock,
+                    at_seconds: at,
+                    revisions: self.load_revisions,
+                    positions: self.decks.each_ref().map(|d| d.position_revision),
+                    rates: self.decks.each_ref().map(Deck::rate),
+                    bpms: self.decks.each_ref().map(|d| d.bpm),
+                    grids: self.decks.each_ref().map(|d| d.grid_offset),
+                });
+            }
+            CancelLaunch { deck } => self.launches[deck] = None,
+            Pause { deck } => {
+                self.launches[deck] = None;
+                self.decks[deck].playing = false;
+            }
             TogglePlay { deck } => {
-                let playing = self.decks[deck].playing;
+                let playing = self.decks[deck].playing || self.launches[deck].is_some();
                 self.command(if playing {
                     Pause { deck }
                 } else {
@@ -746,12 +1066,10 @@ impl Mixer {
                     d.last_loop_region = Some(region);
                 }
                 d.loop_region = beats.map(|beats| {
-                    let period = 60.0 / d.bpm.unwrap_or(120.0);
-                    let start = (((d.seconds() - d.grid_offset) / period).floor() * period
-                        + d.grid_offset)
-                        .max(0.0)
-                        * d.sample_rate();
-                    let end = (start + beats * period * d.sample_rate()).min(d.duration_frames());
+                    let beat = d.grid_position(d.seconds()).floor();
+                    let start = d.grid_time(beat).max(0.0) * d.sample_rate();
+                    let end =
+                        (d.grid_time(beat + beats) * d.sample_rate()).min(d.duration_frames());
                     (start, end.max(start + 1.0))
                 });
                 if let Some(region) = d.loop_region {
@@ -873,7 +1191,7 @@ impl Mixer {
             SetKeylock { deck, enabled } => self.decks[deck].keylock = enabled,
             BeatJump { deck, beats } => {
                 let d = &mut self.decks[deck];
-                let time = d.seconds() + beats * 60.0 / d.bpm.unwrap_or(120.0);
+                let time = d.grid_time(d.grid_position(d.seconds()) + beats);
                 d.seek(time);
             }
             SetTempo { deck, percent } => self.decks[deck].tempo = percent,
@@ -933,16 +1251,17 @@ impl Mixer {
                     self.master_deck
                 };
                 let leader = &self.decks[other];
-                let leader_tempo = leader.bpm.unwrap_or(120.0) * leader.rate();
-                let leader_phase = ((leader.seconds() - leader.grid_offset)
-                    / (60.0 / leader.bpm.unwrap_or(120.0)))
-                .rem_euclid(1.0);
+                let leader_period = leader.grid_period();
+                let leader_rate = leader.rate();
+                let leader_phase = leader.grid_position(leader.seconds()).rem_euclid(1.0);
                 let d = &mut self.decks[deck];
-                if let Some(bpm) = d.bpm {
-                    d.tempo = ((leader_tempo / bpm - 1.0) * 100.0).clamp(-90.0, 100.0);
-                    let period = 60.0 / bpm;
-                    let beat = ((d.seconds() - d.grid_offset) / period).floor();
-                    d.seek(d.grid_offset + (beat + leader_phase) * period);
+                if d.grid_bpm().is_some() {
+                    d.tempo = ((leader_rate * d.grid_period() / leader_period - 1.0) * 100.0)
+                        .clamp(-90.0, 100.0);
+                    if d.playing {
+                        let beat = d.grid_position(d.seconds()).floor();
+                        d.seek(d.grid_time(beat + leader_phase));
+                    }
                 }
             }
             SetSync { deck, enabled } => {
@@ -955,6 +1274,7 @@ impl Mixer {
                 }
             }
             SetMaster { deck } => {
+                self.launches.fill(None);
                 self.master_deck = deck;
                 self.decks[deck].sync_enabled = false;
             }
@@ -980,11 +1300,36 @@ impl Mixer {
                 self.decks[deck].echo.target = echo;
                 self.decks[deck].reverb.target = reverb;
             }
-            SetBpm { deck, bpm } => self.decks[deck].bpm = Some(bpm),
+            SetBpm { deck, bpm } => {
+                let d = &mut self.decks[deck];
+                if d.grid_bpm()
+                    .is_none_or(|previous| (previous - bpm).abs() > 0.01)
+                {
+                    d.grid_uniform = true;
+                    d.grid_downbeat = d.grid_manual;
+                    d.grid_scale = 1.0;
+                }
+                d.bpm = Some(bpm);
+            }
             SetBeatgrid {
                 deck,
                 offset_seconds,
-            } => self.decks[deck].grid_offset = offset_seconds,
+                anchor_index,
+            } => {
+                let d = &mut self.decks[deck];
+                if let Some(g) = d.neural_grid() {
+                    let index = (d.grid_position(offset_seconds).round()
+                        + d.grid_anchor_index as f64)
+                        .clamp(0.0, (g.beats_seconds.len() - 1) as f64)
+                        as usize;
+                    d.grid_anchor_index =
+                        anchor_index.unwrap_or(index).min(g.beats_seconds.len() - 1);
+                }
+                d.grid_offset = offset_seconds;
+                d.grid_valid = true;
+                d.grid_downbeat = true;
+                d.grid_manual = true;
+            }
         }
     }
     fn target_mut(&mut self, target: ControlTarget) -> &mut Smooth {
@@ -1039,33 +1384,91 @@ impl Mixer {
             }
         }
     }
+    fn advance_launches(&mut self) {
+        for deck in 0..2 {
+            let Some(pending) = self.launches[deck] else {
+                continue;
+            };
+            let valid = self.load_revisions == pending.revisions
+                && self.decks[pending.clock].playing
+                && !self.decks[deck].playing
+                && self.decks.iter().enumerate().all(|(i, d)| {
+                    d.grid_valid
+                        && !d.jog_touch
+                        && d.loop_region.is_none()
+                        && d.position_revision == pending.positions[i]
+                        && (d.rate() - pending.rates[i]).abs() < 1e-9
+                        && d.bpm == pending.bpms[i]
+                        && d.grid_offset == pending.grids[i]
+                })
+                && !self.decks[deck].preparation_pending();
+            if !valid {
+                self.launches[deck] = None;
+                continue;
+            }
+            // Sample-clock comparison, not a wall-clock timer or UI poll.
+            if self.decks[pending.clock].seconds() >= pending.at_seconds {
+                self.launches[deck] = None;
+                self.decks[deck].sync_correction = 0.0;
+                self.decks[deck].playing = true;
+                self.decks[deck].fade_in();
+            }
+        }
+    }
     #[inline]
     pub fn frame(&mut self) -> ([f32; 2], [f32; 2]) {
+        if self.smoothing_rate != self.sample_rate {
+            self.smoothing_rate = self.sample_rate;
+            self.smoothing = 1.0 - (-1.0 / (self.sample_rate as f32 * 0.008)).exp();
+            self.sync_smoothing = 1.0 - (-1.0 / (self.sample_rate as f64 * 0.030)).exp();
+        }
+        self.advance_launches();
         self.advance_ramps();
-        let leader_phase = (self.decks[self.master_deck].seconds()
-            - self.decks[self.master_deck].grid_offset)
-            * self.decks[self.master_deck].bpm.unwrap_or(120.0)
-            / 60.0;
+        let leader_phase =
+            self.decks[self.master_deck].grid_position(self.decks[self.master_deck].seconds());
+        let leader_period = self.decks[self.master_deck].grid_period();
+        let leader_rate = self.decks[self.master_deck].rate();
+        let leader_playing =
+            self.decks[self.master_deck].playing && !self.decks[self.master_deck].jog_touch;
+        let sync_smoothing = self.sync_smoothing;
         let leader_bpm = self.decks[self.master_deck]
-            .bpm
+            .grid_bpm()
             .map(|bpm| bpm * self.decks[self.master_deck].rate());
         for deck in 0..2 {
-            if deck != self.master_deck && self.decks[deck].sync_enabled {
-                if let (Some(target), Some(bpm)) = (leader_bpm, self.decks[deck].bpm) {
-                    self.decks[deck].tempo = ((target / bpm - 1.0) * 100.0).clamp(-90.0, 100.0);
-                    let follower =
-                        (self.decks[deck].seconds() - self.decks[deck].grid_offset) * bpm / 60.0;
+            if deck != self.master_deck
+                && self.decks[deck].sync_enabled
+                && self.decks[deck].grid_valid
+                && self.decks[self.master_deck].grid_valid
+            {
+                if !self.decks[deck].playing && self.launches[deck].is_some() {
+                    continue;
+                }
+                if leader_bpm.is_some() && self.decks[deck].grid_bpm().is_some() {
+                    let local_rate = leader_rate * self.decks[deck].grid_period() / leader_period;
+                    let desired_tempo = ((local_rate - 1.0) * 100.0).clamp(-90.0, 100.0);
+                    if leader_playing && self.decks[deck].playing {
+                        self.decks[deck].tempo +=
+                            (desired_tempo - self.decks[deck].tempo) * sync_smoothing;
+                    } else {
+                        self.decks[deck].tempo = desired_tempo;
+                    }
+                    let follower = self.decks[deck].grid_position(self.decks[deck].seconds());
                     let difference = (leader_phase - follower + 0.5).rem_euclid(1.0) - 0.5;
-                    self.decks[deck].sync_correction = (difference * 0.1).clamp(-0.02, 0.02);
+                    let d = &mut self.decks[deck];
+                    if leader_playing && d.playing && !d.jog_touch && d.cursor_target.is_none() {
+                        // Feed forward the source-time slope of both observed grids.
+                        // Mean BPM alone cannot track locally varying beat intervals.
+                        // Bound and smooth varispeed correction; never seek live audio.
+                        let target = (difference * 0.5).clamp(-0.08, 0.08);
+                        d.sync_correction += (target - d.sync_correction) * sync_smoothing;
+                    } else {
+                        d.sync_correction = 0.0;
+                    }
                 }
             }
         }
         let left = self.decks[0].render(self.sample_rate);
         let right = self.decks[1].render(self.sample_rate);
-        if self.smoothing_rate != self.sample_rate {
-            self.smoothing_rate = self.sample_rate;
-            self.smoothing = 1.0 - (-1.0 / (self.sample_rate as f32 * 0.008)).exp();
-        }
         let smoothing = self.smoothing;
         let channel_left = self.decks[0].channel_fader.tick(smoothing);
         let channel_right = self.decks[1].channel_fader.tick(smoothing);
@@ -1228,6 +1631,7 @@ mod analyzed_phase_load_tests {
         mixer.load(0, track);
         assert_eq!(mixer.decks[0].grid_offset, 0.173);
         mixer.command(EngineCommand::SetBeatgrid {
+            anchor_index: None,
             deck: 0,
             offset_seconds: 0.287,
         });
@@ -1678,6 +2082,7 @@ mod flx4_controls_tests {
         mixer.command(EngineCommand::MemoryCueSave { deck: 0 });
         mixer.command(EngineCommand::SetCue { deck: 0 });
         mixer.command(EngineCommand::SetBeatgrid {
+            anchor_index: None,
             deck: 0,
             offset_seconds: 0.173,
         });
@@ -1897,5 +2302,448 @@ mod active_loop_tests {
         mixer.command(EngineCommand::ToggleActiveLoop { deck: 0 });
         assert_eq!(mixer.decks[0].loop_region, Some(bounds));
         assert_eq!(mixer.decks[0].loop_edit, None);
+    }
+}
+
+#[cfg(test)]
+mod quantized_launch_tests {
+    use super::*;
+    fn track(bpm: f64, offset: Option<f64>) -> Arc<TrackData> {
+        let mut track = crate::decode::demo_track(0);
+        let data = Arc::get_mut(&mut track).unwrap();
+        data.samples = vec![[0.2; 2]; 32_000];
+        data.sample_rate = 8000;
+        data.analysis.duration_seconds = 4.0;
+        data.analysis.sample_rate = 8000;
+        data.analysis.bpm = Some(bpm);
+        data.analysis.beatgrid_offset_seconds = offset;
+        data.analysis.beatgrid_source = offset.map(|_| "analysis".into());
+        track
+    }
+    fn mixer() -> Mixer {
+        let mut m = Mixer::new();
+        m.load(0, track(125.0, Some(0.173)));
+        m.load(1, track(128.0, Some(0.211)));
+        m.command(EngineCommand::SetTempo {
+            deck: 1,
+            percent: (125.0 / 128.0 - 1.0) * 100.0,
+        });
+        m.command(EngineCommand::Play { deck: 0 });
+        m
+    }
+    fn arm(m: &mut Mixer, at_seconds: Option<f64>) {
+        m.command(EngineCommand::PlayQuantized {
+            deck: 1,
+            clock: 0,
+            clock_revision: m.load_revisions[0],
+            at_seconds,
+            quantize: 1.0,
+        });
+        assert!(m.launches[1].is_some());
+    }
+    #[test]
+    fn launch_uses_sample_clock_with_distinct_offsets_and_tempos() {
+        for output_rate in [44_100, 48_000, 96_000] {
+            let mut m = mixer();
+            m.sample_rate = output_rate;
+            let at = 0.173 + 3.0 * 60.0 / 125.0;
+            arm(&mut m, Some(at));
+            while !m.decks[1].playing {
+                assert!(m.decks[1].seconds() == 0.211);
+                m.frame();
+                assert!(m.decks[0].seconds() < at + 0.001);
+            }
+            assert!(m.launches[1].is_none());
+            let phases = m
+                .decks
+                .each_ref()
+                .map(|d| (d.seconds() - d.grid_offset) * d.bpm.unwrap() / 60.0);
+            let error = (phases[1] - phases[0] + 0.5).rem_euclid(1.0) - 0.5;
+            assert!(
+                error.abs() < 125.0 / 60.0 / output_rate as f64 * 1.01,
+                "{error}"
+            );
+        }
+    }
+    #[test]
+    fn next_beat_is_resolved_natively() {
+        let mut m = mixer();
+        arm(&mut m, None);
+        assert!((m.launches[1].unwrap().at_seconds - 0.173).abs() < 1e-12);
+    }
+    #[test]
+    fn manual_changes_cancel_without_starting_incoming_audio() {
+        for command in [
+            EngineCommand::Seek {
+                deck: 0,
+                seconds: 0.3,
+            },
+            EngineCommand::Pause { deck: 0 },
+            EngineCommand::Seek {
+                deck: 1,
+                seconds: 0.4,
+            },
+            EngineCommand::SetTempo {
+                deck: 0,
+                percent: 1.0,
+            },
+            EngineCommand::SetBeatgrid {
+                anchor_index: None,
+                deck: 0,
+                offset_seconds: 0.2,
+            },
+            EngineCommand::SetLoop {
+                deck: 0,
+                beats: Some(4.0),
+            },
+            EngineCommand::CancelLaunch { deck: 1 },
+        ] {
+            let mut m = mixer();
+            arm(&mut m, Some(1.613));
+            m.command(command);
+            m.frame();
+            assert!(m.launches[1].is_none());
+            assert!(!m.decks[1].playing);
+        }
+    }
+    #[test]
+    fn source_replacement_cannot_launch_old_or_new_track() {
+        for deck in [0, 1] {
+            let mut m = mixer();
+            arm(&mut m, Some(1.613));
+            m.load(deck, track(125.0, Some(0.1)));
+            m.load_revisions[deck] += 1;
+            m.frame();
+            assert!(m.launches[1].is_none());
+            assert!(!m.decks[1].playing);
+        }
+    }
+    #[test]
+    fn late_or_unknown_grid_launch_does_not_fall_back_to_immediate_play() {
+        let mut m = mixer();
+        m.command(EngineCommand::Seek {
+            deck: 0,
+            seconds: 2.0,
+        });
+        m.command(EngineCommand::PlayQuantized {
+            deck: 1,
+            clock: 0,
+            clock_revision: 0,
+            at_seconds: Some(1.613),
+            quantize: 1.0,
+        });
+        assert!(m.launches[1].is_none());
+        m.load(1, track(125.0, None));
+        m.command(EngineCommand::PlayQuantized {
+            deck: 1,
+            clock: 0,
+            clock_revision: 0,
+            at_seconds: None,
+            quantize: 1.0,
+        });
+        assert!(m.launches[1].is_none());
+        assert!(!m.decks[1].playing);
+    }
+    #[test]
+    fn grid_realign_preserves_transport_and_cues_and_estimate_is_not_bar_one() {
+        let mut m = mixer();
+        assert!(m.decks[0].grid_valid);
+        assert!(!m.decks[0].grid_downbeat);
+        m.command(EngineCommand::SetCuePoint {
+            deck: 0,
+            seconds: 0.5,
+        });
+        m.command(EngineCommand::SetHotCuePoint {
+            deck: 0,
+            index: 2,
+            seconds: 1.0,
+        });
+        m.frame();
+        let before = (
+            m.decks[0].position,
+            m.decks[0].position_revision,
+            m.decks[0].cue,
+            m.decks[0].hot_cues,
+        );
+        m.command(EngineCommand::SetBeatgrid {
+            anchor_index: None,
+            deck: 0,
+            offset_seconds: 0.297,
+        });
+        assert_eq!(
+            before,
+            (
+                m.decks[0].position,
+                m.decks[0].position_revision,
+                m.decks[0].cue,
+                m.decks[0].hot_cues
+            )
+        );
+        assert!(m.decks[0].playing && m.decks[0].grid_valid && m.decks[0].grid_downbeat);
+        assert_eq!(m.decks[0].grid_offset, 0.297);
+    }
+}
+
+#[cfg(test)]
+mod neural_grid_transport_tests {
+    use super::*;
+    fn rhythm(shift: f64) -> audio_analysis::NeuralRhythm {
+        audio_analysis::NeuralRhythm {
+            beats_seconds: vec![0.2, 0.7, 1.3, 1.9, 2.6, 3.2]
+                .into_iter()
+                .map(|x| x + shift)
+                .collect(),
+            downbeats_seconds: vec![0.2 + shift, 2.6 + shift],
+            bpm: 120.0,
+            beat_confidence: 0.8,
+            downbeat_confidence: 0.7,
+            model: "fixture".into(),
+            analysis_seconds: 0.0,
+            bar_evidence: Vec::new(),
+            beats_per_bar: None,
+        }
+    }
+    fn track(shift: f64) -> Arc<TrackData> {
+        let mut t = crate::decode::demo_track(0);
+        let d = Arc::get_mut(&mut t).unwrap();
+        d.analysis.neural_rhythm = Some(rhythm(shift));
+        d.analysis.bpm = Some(120.0);
+        d.analysis.beatgrid_source = Some("beat_this".into());
+        t
+    }
+    #[test]
+    fn continuous_sync_tracks_local_nonuniform_slopes_without_phase_drift() {
+        let mut m = Mixer::new();
+        for deck in 0..2 {
+            let mut t = track(0.0);
+            let data = Arc::get_mut(&mut t).unwrap();
+            let mut beats = vec![0.2];
+            for i in 0..60 {
+                let interval = if deck == 0 {
+                    0.5
+                } else {
+                    [0.48, 0.5, 0.52, 0.48, 0.54, 0.46][i % 6]
+                };
+                beats.push(beats.last().unwrap() + interval);
+            }
+            let grid = data.analysis.neural_rhythm.as_mut().unwrap();
+            grid.downbeats_seconds = beats.iter().step_by(4).copied().collect();
+            grid.beats_seconds = beats;
+            m.load(deck, t);
+            m.command(EngineCommand::Seek { deck, seconds: 0.2 });
+            m.command(EngineCommand::Play { deck });
+        }
+        m.command(EngineCommand::SetSync {
+            deck: 1,
+            enabled: true,
+        });
+        let mut worst = 0.0_f64;
+        for _ in 0..12 * 48_000 {
+            m.frame();
+            let a = m.decks[0].grid_position(m.decks[0].seconds());
+            let b = m.decks[1].grid_position(m.decks[1].seconds());
+            worst = worst.max(((b - a + 0.5).rem_euclid(1.0) - 0.5).abs());
+        }
+        assert!(worst < 0.02, "phase drift {worst}");
+    }
+    #[test]
+    fn initial_sync_matches_local_period_even_when_summary_tempos_match() {
+        let mut m = Mixer::new();
+        for deck in 0..2 {
+            let mut t = track(0.0);
+            let g = Arc::get_mut(&mut t)
+                .unwrap()
+                .analysis
+                .neural_rhythm
+                .as_mut()
+                .unwrap();
+            g.bpm = 120.0;
+            let period = if deck == 0 { 0.5 } else { 0.75 };
+            g.beats_seconds = (0..40).map(|i| 0.2 + i as f64 * period).collect();
+            g.downbeats_seconds = g.beats_seconds.iter().step_by(4).copied().collect();
+            m.load(deck, t);
+            m.command(EngineCommand::Seek { deck, seconds: 0.2 });
+        }
+        m.command(EngineCommand::Sync { deck: 1 });
+        m.command(EngineCommand::SetSync {
+            deck: 1,
+            enabled: true,
+        });
+        for _ in 0..128 {
+            m.frame();
+        }
+        assert!((m.decks[1].tempo - 50.0).abs() < 1e-8);
+        assert!(
+            (m.decks[1].grid_period() / m.decks[1].rate() - m.decks[0].grid_period()).abs() < 1e-8
+        );
+    }
+    #[test]
+    fn paused_sync_preserves_cue_and_queued_launch_with_different_local_tempo() {
+        let mut m = Mixer::new();
+        for deck in 0..2 {
+            let mut t = track(0.0);
+            let g = Arc::get_mut(&mut t)
+                .unwrap()
+                .analysis
+                .neural_rhythm
+                .as_mut()
+                .unwrap();
+            let period = if deck == 0 { 0.5 } else { 0.75 };
+            g.bpm = 120.0;
+            g.beats_seconds = (0..40).map(|i| 0.2 + i as f64 * period).collect();
+            g.downbeats_seconds = g.beats_seconds.iter().step_by(4).copied().collect();
+            m.load(deck, t);
+            m.command(EngineCommand::Seek { deck, seconds: 0.2 });
+        }
+        m.command(EngineCommand::Seek {
+            deck: 0,
+            seconds: 0.45,
+        });
+        m.command(EngineCommand::Play { deck: 0 });
+        m.command(EngineCommand::SetSync {
+            deck: 1,
+            enabled: true,
+        });
+        assert!((m.decks[1].seconds() - 0.2).abs() < 1e-10);
+        m.command(EngineCommand::PlayQuantized {
+            deck: 1,
+            clock: 0,
+            clock_revision: 0,
+            at_seconds: Some(1.2),
+            quantize: 1.0,
+        });
+        assert!(m.launches[1].is_some());
+        for _ in 0..40_000 {
+            m.frame();
+        }
+        assert!(m.decks[1].playing && m.launches[1].is_none());
+        assert!((m.decks[1].tempo - 50.0).abs() < 1e-8);
+    }
+    #[test]
+    fn reanalysis_rebinds_manual_anchor_when_decoder_changes_beat_count() {
+        let mut m = Mixer::new();
+        m.load(0, track(0.0));
+        m.command(EngineCommand::SetBeatgrid {
+            deck: 0,
+            offset_seconds: 1.4,
+            anchor_index: Some(2),
+        });
+        let mut next = rhythm(0.0);
+        next.beats_seconds.insert(1, 0.45);
+        m.update_grid(0, Arc::new(next));
+        assert_eq!(m.decks[0].grid_anchor_index, 3);
+        assert_eq!(m.decks[0].grid_offset, 1.4);
+        assert!((m.decks[0].grid_time(2.0) - 2.7).abs() < 1e-8);
+    }
+    #[test]
+    fn manual_anchor_survives_explicit_model_half_phase_replacement() {
+        let mut m = Mixer::new();
+        m.load(0, track(0.0));
+        m.command(EngineCommand::SetBeatgrid {
+            deck: 0,
+            offset_seconds: 0.8,
+            anchor_index: Some(2),
+        });
+        let mut next = rhythm(0.0);
+        for t in &mut next.beats_seconds {
+            *t -= 0.5;
+        }
+        for t in &mut next.downbeats_seconds {
+            *t -= 0.5;
+        }
+        next.bar_evidence.push(audio_analysis::BarEvidence {
+            beats_per_bar: 4,
+            half_phase_corrected: true,
+            pulse_repairs: vec![],
+            recurrence: 0.9,
+            strong_windows: 3,
+            windows: 3,
+        });
+        m.update_grid(0, Arc::new(next));
+        assert_eq!(m.decks[0].grid_offset, 0.8);
+        assert!((m.decks[0].grid_time(0.0) - 0.8).abs() < 1e-8);
+        assert_eq!(m.decks[0].grid_anchor_index, 2);
+    }
+    #[test]
+    fn manual_double_tempo_has_a_complete_uniform_grid_without_truncating_source() {
+        let mut m = Mixer::new();
+        m.load(0, track(0.0));
+        m.command(EngineCommand::SetBpm {
+            deck: 0,
+            bpm: 240.0,
+        });
+        assert!(m.decks[0].grid_uniform);
+        assert_eq!(m.decks[0].grid_bpm(), Some(240.0));
+        assert!(!m.decks[0].grid_downbeat);
+        m.command(EngineCommand::SetBeatgrid {
+            deck: 0,
+            offset_seconds: 0.2,
+            anchor_index: None,
+        });
+        assert!((m.decks[0].grid_time(80.0) - 20.2).abs() < 1e-8);
+        assert!((m.decks[0].snapped_grid_time(20.21) - 20.2).abs() < 1e-8);
+        m.update_grid(0, Arc::new(rhythm(0.01)));
+        assert!(m.decks[0].grid_uniform);
+        assert_eq!(m.decks[0].grid_bpm(), Some(240.0));
+    }
+    #[test]
+    fn loop_jump_and_manual_origin_use_actual_nonuniform_events() {
+        let mut m = Mixer::new();
+        m.load(0, track(0.0));
+        m.command(EngineCommand::Seek {
+            deck: 0,
+            seconds: 1.3,
+        });
+        m.command(EngineCommand::BeatJump {
+            deck: 0,
+            beats: 2.0,
+        });
+        assert!((m.decks[0].seconds() - 2.6).abs() < 1e-8);
+        m.command(EngineCommand::SetLoop {
+            deck: 0,
+            beats: Some(1.0),
+        });
+        let (a, b) = m.decks[0].loop_region.unwrap();
+        assert!((a / m.decks[0].sample_rate() - 2.6).abs() < 1e-8);
+        assert!((b / m.decks[0].sample_rate() - 3.2).abs() < 1e-8);
+        m.command(EngineCommand::SetBeatgrid {
+            deck: 0,
+            offset_seconds: 1.4,
+            anchor_index: Some(2),
+        });
+        assert!((m.decks[0].grid_time(2.0) - 2.7).abs() < 1e-8);
+        let old_pos = m.decks[0].seconds();
+        m.update_grid(0, Arc::new(rhythm(0.01)));
+        assert!(m.decks[0].grid_manual);
+        assert_eq!(m.decks[0].grid_anchor_index, 2);
+        assert_eq!(m.decks[0].grid_offset, 1.4);
+        assert_eq!(m.decks[0].seconds(), old_pos);
+        assert!((m.decks[0].grid_time(2.0) - 2.7).abs() < 1e-8);
+    }
+    #[test]
+    fn scheduled_launch_follows_detected_clock_event_and_snaps_incoming_event() {
+        let mut m = Mixer::new();
+        m.load(0, track(0.0));
+        m.load(1, track(0.1));
+        m.command(EngineCommand::Seek {
+            deck: 1,
+            seconds: 1.35,
+        });
+        m.command(EngineCommand::Play { deck: 0 });
+        m.command(EngineCommand::PlayQuantized {
+            deck: 1,
+            clock: 0,
+            clock_revision: 0,
+            at_seconds: Some(1.3),
+            quantize: 1.0,
+        });
+        assert!(m.launches[1].is_some());
+        assert!((m.decks[1].seconds() - 1.4).abs() < 1e-8);
+        while !m.decks[1].playing {
+            m.frame();
+            assert!(m.decks[0].seconds() < 1.301);
+        }
+        assert!((m.decks[0].grid_position(m.decks[0].seconds()) - 2.0).abs() < 0.0001);
+        assert!((m.decks[1].grid_position(m.decks[1].seconds()) - 2.0).abs() < 0.0001);
     }
 }

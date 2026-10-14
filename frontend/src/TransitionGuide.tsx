@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { DeckSnapshot, EngineSnapshot } from "./types";
+import { deckBeatGrid, reportedBeatPosition } from "./beat-grid";
 import { SECTION_NAMES, displaySections } from "./waveform-data";
 import {
   barNumber,
@@ -29,18 +30,22 @@ function useStructure(deck: DeckSnapshot | undefined): DeckStructure | null {
   const bpm = num(deck?.bpm, num(track?.bpm));
   const offset = num(deck?.beatgrid_offset_seconds);
   return useMemo(() => {
-    if (!track) return null;
+    if (!track || !deck?.beatgrid_valid || !deck.beatgrid_downbeat) return null;
+    if (track.sections && (Math.abs(track.sections.bpm - bpm) > 0.01 || Math.abs(track.sections.downbeat_offset_seconds - offset) > 0.002)) return null;
     const duration = num(track.duration_seconds, num(deck?.duration_seconds));
     return {
       bpm,
       offset,
+      grid: deckBeatGrid(deck, track),
+      barTimes: track.sections?.bar_times,
+      beatsPerBar: track.sections?.beats_per_bar ?? track.neural_rhythm?.beats_per_bar ?? 4,
       duration,
       sections: displaySections(track.sections, duration),
       vocabulary:
         track.sections?.vocabulary_override ?? track.sections?.vocabulary,
     };
     // The track object keeps its identity between transport frames.
-  }, [track, bpm, offset]);
+  }, [track, bpm, offset, deck?.beatgrid_valid, deck?.beatgrid_downbeat, deck?.beatgrid_manual, deck?.beatgrid_uniform, deck?.beatgrid_anchor_index]);
 }
 
 export interface TransitionGuideState {
@@ -81,9 +86,7 @@ export function useTransitionGuide(
   const inStructure = incoming === null ? null : structures[incoming];
   const outPosition =
     out === null ? 0 : num(engine.decks[out]?.position_seconds);
-  const beat = outStructure?.bpm
-    ? Math.floor((outPosition * outStructure.bpm) / 60)
-    : 0;
+  const beat = out === null ? 0 : Math.floor(reportedBeatPosition(engine.decks[out]) ?? 0);
   const live = !!roles?.live;
   const plans = useMemo(
     () =>
@@ -117,6 +120,10 @@ export function useTransitionGuide(
   const inColor = DECK_COLORS[incoming];
   if (!outStructure?.sections.length || !inStructure?.sections.length) {
     state.text = "Needs song sections on both decks (beat analysis)";
+    return state;
+  }
+  if (outStructure.beatsPerBar !== inStructure.beatsPerBar) {
+    state.text = "Mix guide needs matching meters on both decks";
     return state;
   }
   const guides: [WaveformGuide[], WaveformGuide[]] = [[], []];

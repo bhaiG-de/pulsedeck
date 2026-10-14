@@ -11,12 +11,10 @@ are resolved by Cargo and npm using the committed lockfiles. Third-party
 application binaries, downloaded manuals and local inspection captures are
 not distributed in this repository.
 
-The beat model in `crates/audio-analysis/models/beat-this-small0.onnx` is
-converted from the Beat This! `small0` checkpoint by the Institute of
-Computational Perception, JKU Linz, released with its code under the MIT
-license. Its permission notice is preserved in
-`crates/audio-analysis/models/LICENSE-beat-this`; the conversion is described in
-`crates/audio-analysis/models/README.md`.
+The active Beat This! final0 and mel models are MIT licensed and described in
+`src-tauri/resources/beat-models/README.md`. The bundled notices there cover
+Beat This!, beat-this-rs and the BSD temporal decoder. The incoming small-model
+tract spike is historical research; its ONNX weights are not shipped.
 
 Anatomy theme palette values are adapted from [Anatomy](https://github.com/wheresryan22/anatomy),
 Copyright (c) 2026 Ryan, under the MIT license. Its permission notice is

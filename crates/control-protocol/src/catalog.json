@@ -340,6 +340,9 @@
         },
         "ramps": {
           "type": "boolean"
+        },
+        "launches": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false,
@@ -1419,7 +1422,7 @@
     "example_args": {
       "target": "app",
       "action": "theme",
-      "value": "anatomy-dark"
+      "value": "graphite"
     },
     "input_schema": {
       "type": "object",
@@ -1439,7 +1442,7 @@
       ]
     },
     "description": "ui call",
-    "example_cli": "pulsedeckctl call ui.call --args '{\"target\":\"app\",\"action\":\"theme\",\"value\":\"anatomy-dark\"}' --json"
+    "example_cli": "pulsedeckctl call ui.call --args '{\"target\":\"app\",\"action\":\"theme\",\"value\":\"graphite\"}' --json"
   },
   {
     "command": "events.get",
@@ -1810,5 +1813,170 @@
       ]
     },
     "example_cli": "pulsedeckctl library track tags local:1 --tags '[\"Afro house\",\"chill vibe\"]' --json"
+  },
+  {
+    "command": "analysis.settings.get",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "Read section and automatic cue settings",
+    "example_cli": "pulsedeckctl call analysis.settings.get --args '{}' --json"
+  },
+  {
+    "command": "analysis.settings.set",
+    "example_args": {
+      "settings": {
+        "beat_model_spotify": true,
+        "auto_hot_cues": true,
+        "auto_memory_cues": true
+      }
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "settings": {
+          "type": "object",
+          "properties": {
+            "beat_model_spotify": {
+              "type": "boolean"
+            },
+            "auto_hot_cues": {
+              "type": "boolean"
+            },
+            "auto_memory_cues": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "beat_model_spotify",
+            "auto_hot_cues",
+            "auto_memory_cues"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "settings"
+      ]
+    },
+    "description": "Set section and automatic cue settings",
+    "example_cli": "pulsedeckctl call analysis.settings.set --args '{\"settings\":{\"beat_model_spotify\":true,\"auto_hot_cues\":true,\"auto_memory_cues\":true}}' --json"
+  },
+  {
+    "command": "library.analysis.update",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "Update local song sections from Beat This! timing",
+    "example_cli": "pulsedeckctl call library.analysis.update --args '{}' --json"
+  },
+  {
+    "command": "library.analysis.cancel",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "Cancel library section analysis",
+    "example_cli": "pulsedeckctl call library.analysis.cancel --args '{}' --json"
+  },
+  {
+    "command": "deck.sections.vocabulary",
+    "example_args": {
+      "deck": "A",
+      "vocabulary": "dance"
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "deck": {
+          "type": [
+            "integer",
+            "string"
+          ],
+          "enum": [
+            "A",
+            "B",
+            0,
+            1
+          ]
+        },
+        "vocabulary": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "dance",
+            "hip_hop",
+            null
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "deck"
+      ]
+    },
+    "description": "Choose section labels; null restores detection",
+    "example_cli": "pulsedeckctl call deck.sections.vocabulary --args '{\"deck\":\"A\",\"vocabulary\":\"dance\"}' --json"
+  },
+  {
+    "command": "library.suggest_next",
+    "example_args": {
+      "energy_direction": "keep"
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "deck": {
+          "type": [
+            "integer",
+            "string"
+          ],
+          "enum": [
+            "A",
+            "B",
+            0,
+            1
+          ]
+        },
+        "energy_direction": {
+          "type": "string",
+          "enum": [
+            "up",
+            "keep",
+            "down"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "Rank compatible next tracks against the audible deck",
+    "example_cli": "pulsedeckctl call library.suggest_next --args '{\"energy_direction\":\"keep\"}' --json"
+  },
+  {
+    "command": "library.history.clear",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "Clear the session played-track history",
+    "example_cli": "pulsedeckctl call library.history.clear --args '{}' --json"
   }
 ]

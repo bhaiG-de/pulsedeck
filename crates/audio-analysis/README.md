@@ -1,4 +1,15 @@
-# Offline musical analysis, version 3
+# Offline musical analysis, version 11
+
+`analyze_neural_rhythm` additionally runs the pinned full Beat This! `final0` model
+through a pure Rust RTen runtime. It returns complete beat/downbeat timelines,
+median BPM, separate uncalibrated model activation scores, provenance and elapsed
+analysis time. Missing assets, silence and invalid/fewer-than-four event results
+return an explicit error. Default BSD DBN postprocessing selects competing
+whole-track 3/4/5/7 meter hypotheses at 55–300 BPM; it preserves nonuniform selected
+event times but does constrain meter/tempo. Concave beat-logit maxima are refined by at most half a frame (10 ms); all downbeats share the same refined beat events. This improves measured timing without claiming sample precision. No madmom model weights are used.
+Independent acoustic bar recurrence can override a conflicting meter on sufficiently supported material. Explicit half-pulse reconstructions and guarded phase replacements remain visible in `bar_evidence` and require review. These heuristics have measured failures; see [labeled validation](../../research/labeled-rhythm-validation.md).
+Benchmark-only minimal mode leaves raw peak timing unconstrained. See
+[model setup and limits](../../src-tauri/resources/beat-models/README.md).
 
 This crate implements independent public DSP for decoded stereo PCM. It does not
 load rekordbox models, call proprietary analysis libraries, read provider tokens,
@@ -96,28 +107,11 @@ held-out tracks with independently verified references for that assessment.
 
 ## Neural beat stage
 
-`track_beats` runs the bundled Beat This! small model (`models/README.md`) over
-decoded PCM: mono mix, a single-block FFT resampler to 22,050 Hz, 128-band
-log-mel at 50 fps, 1500-frame chunks, then the upstream local-maximum peak
-picking. It returns beat and downbeat times plus a constant-grid fit: BPM is
-searched within ±4% of the median beat interval for the phase that puts the
-most beats within 35 ms of a line, refined by least squares, and the offset is
-placed on the bar phase most downbeats agree with. The grid is used only when at
-least 16 beats exist and half of them sit on it.
-
-Inference runs on a four-thread utility-priority pool, one track at a time
-(about 250 MB transient), at roughly two seconds per minute of audio on an M3
-Pro. It never runs in a render callback. The stage is versioned separately
-(`BEAT_MODEL_VERSION`) so DSP analysis version 3 stays valid. Tests check the
-log-mel front end against torchaudio reference values, chunking against the
-upstream split, the grid fit on jittered beats with gaps, and an end-to-end run
-on a synthetic drum loop. Agreement with the reference implementation is not an
-accuracy benchmark; use `deck-engine`'s `beat_eval` example on hand-checked tracks.
+`track_beats` uses the existing pinned full Beat This! final0 model and RTen runtime. `stage_from_rhythm` derives compatibility metadata from an already analyzed `NeuralRhythm`, without a second inference pass. The optional constant-grid fit is diagnostic only: it never replaces the native beat/downbeat event clock, BPM provenance or manual edits. The application derives section features from its decoded RAM audio. The incoming small-model/tract spike remains historical research; its weights and runtime are not shipped.
 
 ## Song sections and automatic cues
 
-`detect_sections` cuts a track into sections on its grid, reusing the beat
-model's log-mel spectrogram, so it adds well under a second per track. Every
+`detect_sections_on_bars` cuts sections on actual native bar timestamps, including variable tempo and 3/4/5/7 meter. A section spectrogram supplies the timbre and energy features. `detect_sections` remains a constant-grid compatibility helper. Every
 full bar from the grid's beat 1 gets 16 timbre bands plus overall, bass and
 treble level and bass onset strength. Silent bars at either end are dropped.
 Dynamic programming over the z-scored bar vectors minimises within-section

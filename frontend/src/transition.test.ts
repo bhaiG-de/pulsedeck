@@ -278,3 +278,29 @@ test("the playing deck the crowd hears goes out; the other comes in", () => {
   // Behind a closed crossfader the playing deck is not heard.
   assert.equal(transitionRoles(engine((e) => (e.crossfader = 1))), null);
 });
+
+
+test("variable tempo plans and countdowns follow native bar events", () => {
+  const source = deck(120, [["intro", 16], ["drop", 80], ["outro", 16]]);
+  const times = [0.173];
+  for (let i = 0; i < 112; i++) times.push(times[i] + (i < 80 ? 2 : 2.8));
+  const remapped: DeckStructure = {
+    ...source, offset: times[0], barTimes: times, beatsPerBar: 4,
+    duration: times[112] + 1,
+    sections: source.sections.map(s => ({...s, start: times[Math.round(s.start / 2)], end: times[Math.round(s.end / 2)]})),
+  };
+  const incoming = deck(120, [["intro", 16], ["drop", 32], ["outro", 16]]);
+  const [plan] = planTransitions(remapped, incoming, times[80]);
+  close(plan.startAt, times[96]);
+  close(plan.landing, times[112]);
+  assert.equal(plan.togetherBars, 16);
+  assert.equal(startCountdown(plan, remapped, times[88], "B"), "START B in 8");
+  close(liveAlignment(remapped, incoming, times[96], 0)?.landing ?? null, times[112]);
+});
+
+test("mix guide declines incompatible meters instead of equating unequal bars", () => {
+  const a = {...playing, beatsPerBar: 3};
+  const b = {...waiting, beatsPerBar: 4};
+  assert.deepEqual(planTransitions(a, b, 0), []);
+  assert.equal(liveAlignment(a, b, 0, 0), null);
+});

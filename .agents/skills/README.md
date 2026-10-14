@@ -1,6 +1,8 @@
 # PulseDeck DJ skills
 
-These seven repository-local skills teach an AI agent with shell access to operate the existing `pulsedeckctl` CLI. PulseDeck supplies observations and executes controls; the agent makes musical choices. There is no MCP server, new musical analysis subsystem, or fixed DJ decision engine.
+These seven repository-local skills teach an AI agent with shell access to operate `pulsedeckctl`. PulseDeck supplies full Beat This! beat/downbeat analysis, manual grid correction, native queued launches and mixer controls; the agent chooses musical entries/exits and phrases from evidence. Skills do not install another analysis service or DJ decision engine.
+
+Default analysis includes native BSD madmom-style DBN decoding, selecting a whole-track meter of three, four, five or seven beats per bar over 55–300 BPM. Offset-only grid realignment preserves neural event intervals; manual BPM correction selects a constant-tempo whole-track grid. Effective loaded grid flags take precedence over original neural provenance. Neither decoded bars nor manual bar numbering establishes musical phrases or demonstrated rekordbox parity.
 
 | Skill | Use it for |
 | --- | --- |
@@ -29,7 +31,7 @@ To install standalone copies in a client-managed skill directory, run `python3 t
 
 “Explain the transition and wait” uses planning mode and read-only observations. “Mix from A to B now” authorizes the transition procedure; don't ask again for each already-authorized step. “Get B ready but don't begin” authorizes preparation, not master-output playback. “Play this playlist and handle transitions” authorizes repeated performance within the requested scope, with continuous verification. On a takeover request, stop issuing automated changes and verify cancellation/state instead of restoring a cached plan over the user's controls.
 
-Read only the relevant skill and shared references. [Musical evidence](references/musical-evidence.md) explains confidence, grids, phrase hypotheses and waveform limits; [CLI reference](references/cli.md) centralizes discovery, identity guards, completion stages, errors, jobs and cancellation. Concrete example IDs/times must be replaced by selected, observed values. No skill claims waveform inspection is listening, that a grid proves a downbeat, or that shell polling provides exact phrase-timed transport.
+Read relevant skills and shared references. [Musical evidence](references/musical-evidence.md) distinguishes actual beat events, predicted downbeats, manual overrides, phrase hypotheses and listening limits; [CLI reference](references/cli.md) covers discovery, guards, queued launch, stages, jobs and cancellation. Replace example IDs/times with observed values. Model scores are uncalibrated; warnings require manual validation before automated beatmixing. Native timing does not establish phrase quality or rekordbox parity.
 
 ## Trial and validation
 

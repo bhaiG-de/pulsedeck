@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::beats::Spectrogram;
 
 /// Version of the stored section stage; bump when detection or labels change.
-pub const SECTIONS_VERSION: u32 = 1;
+pub const SECTIONS_VERSION: u32 = 2;
 const TIMBRE_GROUPS: usize = 16;
 const MIN_BARS: usize = 4;
 const MAX_BARS: usize = 64;
@@ -56,6 +56,11 @@ pub struct Section {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SectionStage {
+    /// Actual source-time bar boundaries, including the final endpoint.
+    #[serde(default)]
+    pub bar_times: Vec<f64>,
+    #[serde(default = "default_meter")]
+    pub beats_per_bar: usize,
     pub version: u32,
     /// The grid the bars were cut from.
     pub bpm: f64,
@@ -68,6 +73,10 @@ pub struct SectionStage {
     pub sections: Vec<Section>,
 }
 
+fn default_meter() -> usize {
+    4
+}
+
 impl SectionStage {
     pub fn effective_vocabulary(&self) -> Vocabulary {
         self.vocabulary_override.unwrap_or(self.vocabulary)
@@ -75,7 +84,11 @@ impl SectionStage {
 
     /// Whether the sections were cut from this grid.
     pub fn matches_grid(&self, bpm: f64, offset_seconds: f64) -> bool {
-        let bar = 240.0 / bpm;
+        if !self.bar_times.is_empty() {
+            return (self.bpm - bpm).abs() < 0.01
+                && (offset_seconds - self.downbeat_offset_seconds).abs() < 0.002;
+        }
+        let bar = self.beats_per_bar as f64 * 60.0 / bpm;
         let phase = (offset_seconds - self.downbeat_offset_seconds).rem_euclid(bar);
         (self.bpm - bpm).abs() < 0.01 && phase.min(bar - phase) < 0.002
     }
@@ -111,6 +124,7 @@ impl SectionStage {
 
 struct Bar {
     start: f64,
+    end: f64,
     level: f32,
     low: f32,
     high: f32,
@@ -132,7 +146,51 @@ pub fn detect_sections(
     }
     let bar = 240.0 / bpm;
     let offset = downbeat_offset_seconds.rem_euclid(bar);
-    let bars = bar_features(spect, duration_seconds, bar, offset);
+    let count = ((duration_seconds - offset) / bar).floor().max(0.0) as usize;
+    let times: Vec<f64> = (0..=count).map(|i| offset + i as f64 * bar).collect();
+    detect_sections_on_bars(
+        spect,
+        duration_seconds,
+        SectionGrid {
+            bpm,
+            offset_seconds: offset,
+            beats_per_bar: 4,
+            bar_times: &times,
+        },
+        vocabulary_override,
+    )
+}
+
+pub struct SectionGrid<'a> {
+    pub bpm: f64,
+    pub offset_seconds: f64,
+    pub beats_per_bar: usize,
+    pub bar_times: &'a [f64],
+}
+
+/// Segment actual source-time bars, retaining variable tempo and detected meter.
+pub fn detect_sections_on_bars(
+    spect: &Spectrogram,
+    duration_seconds: f64,
+    grid: SectionGrid<'_>,
+    vocabulary_override: Option<Vocabulary>,
+) -> Option<SectionStage> {
+    if !grid.bpm.is_finite()
+        || grid.bpm <= 0.0
+        || !grid.offset_seconds.is_finite()
+        || !duration_seconds.is_finite()
+        || duration_seconds <= 0.0
+        || !(2..=12).contains(&grid.beats_per_bar)
+        || grid.bar_times.len() < 9
+        || grid
+            .bar_times
+            .iter()
+            .any(|t| !t.is_finite() || *t < 0.0 || *t > duration_seconds + 1e-6)
+        || grid.bar_times.windows(2).any(|w| w[1] <= w[0])
+    {
+        return None;
+    }
+    let bars = bar_features(spect, grid.bar_times);
     if bars.len() < 8 {
         return None;
     }
@@ -140,10 +198,14 @@ pub fn detect_sections(
     let mut sections = summarise(&bars, &boundaries);
     group_by_sound(&bars, &boundaries, &mut sections);
     let vocabulary = detect_vocabulary(&sections);
+    let mut bar_times: Vec<f64> = bars.iter().map(|bar| bar.start).collect();
+    bar_times.push(bars.last()?.end);
     let mut stage = SectionStage {
+        bar_times,
+        beats_per_bar: grid.beats_per_bar,
         version: SECTIONS_VERSION,
-        bpm,
-        downbeat_offset_seconds: offset,
+        bpm: grid.bpm,
+        downbeat_offset_seconds: grid.offset_seconds,
         vocabulary,
         vocabulary_override,
         sections,
@@ -154,7 +216,7 @@ pub fn detect_sections(
 
 /// Features for every full bar from the first downbeat, without the silent
 /// lead-in and tail.
-fn bar_features(spect: &Spectrogram, duration: f64, bar: f64, offset: f64) -> Vec<Bar> {
+fn bar_features(spect: &Spectrogram, times: &[f64]) -> Vec<Bar> {
     let fps = Spectrogram::FRAMES_PER_SECOND;
     let centres = Spectrogram::band_centres();
     let low: Vec<usize> = (0..centres.len()).filter(|&b| centres[b] < 150.0).collect();
@@ -166,10 +228,10 @@ fn bar_features(spect: &Spectrogram, duration: f64, bar: f64, offset: f64) -> Ve
     };
     let frames = spect.frame_count();
     let mut bars = Vec::new();
-    let mut start = offset;
-    while start + bar <= duration + 1e-6 {
+    for pair in times.windows(2) {
+        let (start, end) = (pair[0], pair[1]);
         let f0 = (start * fps).round() as usize;
-        let f1 = (((start + bar) * fps).round() as usize).min(frames);
+        let f1 = ((end * fps).round() as usize).min(frames);
         if f1 <= f0 + 1 {
             break;
         }
@@ -193,13 +255,13 @@ fn bar_features(spect: &Spectrogram, duration: f64, bar: f64, offset: f64) -> Ve
         timbre.iter_mut().for_each(|v| *v /= n);
         bars.push(Bar {
             start,
+            end,
             level: level / n,
             low: lo / n,
             high: hi / n,
             kick: kick / n,
             timbre,
         });
-        start += bar;
     }
     // Drop silent bars at either end (below a tenth of the median loudness).
     let mut levels: Vec<f32> = bars.iter().map(|b| b.level).collect();
@@ -366,7 +428,7 @@ fn summarise(bars: &[Bar], starts: &[usize]) -> Vec<Section> {
                 });
             let slope = if den > 0.0 { num / den } else { 0.0 };
             Section {
-                start_seconds: (bars[i].start * 1e4).round() / 1e4,
+                start_seconds: bars[i].start,
                 bars: (j - i) as u32,
                 label: None,
                 energy: energy[s],
@@ -894,6 +956,8 @@ mod tests {
     #[test]
     fn grid_match_tolerates_whole_bar_offsets() {
         let stage = SectionStage {
+            bar_times: Vec::new(),
+            beats_per_bar: 4,
             version: SECTIONS_VERSION,
             bpm: 120.0,
             downbeat_offset_seconds: 0.25,
@@ -908,6 +972,8 @@ mod tests {
 
     fn stage_with(starts: &[(f64, Option<SectionLabel>)]) -> SectionStage {
         SectionStage {
+            bar_times: Vec::new(),
+            beats_per_bar: 4,
             version: SECTIONS_VERSION,
             bpm: 120.0,
             downbeat_offset_seconds: 0.0,
@@ -969,6 +1035,8 @@ mod tests {
             ]
         );
         let stage = SectionStage {
+            bar_times: Vec::new(),
+            beats_per_bar: 4,
             version: SECTIONS_VERSION,
             bpm: 128.0,
             downbeat_offset_seconds: 0.0,
@@ -1069,5 +1137,51 @@ mod tests {
         );
         assert_eq!((off.hot, off.memory), (again.hot, again.memory));
         assert_eq!(off.record, again.record);
+    }
+    #[test]
+    fn sections_follow_variable_three_beat_bars_without_flattening() {
+        let spect = Spectrogram {
+            frames: vec![1.0; 128 * 10_000],
+        };
+        let mut times = vec![0.173];
+        for i in 0..64 {
+            times.push(times.last().unwrap() + if i < 32 { 1.5 } else { 2.1 });
+        }
+        let stage = detect_sections_on_bars(
+            &spect,
+            200.0,
+            SectionGrid {
+                bpm: 120.0,
+                offset_seconds: 0.173,
+                beats_per_bar: 3,
+                bar_times: &times,
+            },
+            None,
+        )
+        .unwrap();
+        assert_eq!(stage.beats_per_bar, 3);
+        assert_eq!(stage.bar_times, times);
+        assert!(stage.matches_grid(120.0, 0.173));
+        assert!(!stage.matches_grid(120.0, 1.673));
+        assert_eq!(stage.sections.iter().map(|s| s.bars).sum::<u32>(), 64);
+        assert!(stage
+            .sections
+            .iter()
+            .all(|s| times.contains(&s.start_seconds)));
+        assert!(stage.bar_times[64] - (stage.downbeat_offset_seconds + 64.0 * 1.5) > 19.0);
+        let mut invalid = times.clone();
+        invalid[10] = invalid[9];
+        assert!(detect_sections_on_bars(
+            &spect,
+            200.0,
+            SectionGrid {
+                bpm: 120.0,
+                offset_seconds: 0.173,
+                beats_per_bar: 3,
+                bar_times: &invalid
+            },
+            None
+        )
+        .is_none());
     }
 }

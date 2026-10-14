@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { ChevronDown, LoaderCircle, RefreshCw } from "lucide-react";
-import type { TrackRecord, Vocabulary } from "./types";
+import type { DeckSnapshot, TrackRecord, Vocabulary } from "./types";
 import {
   SECTION_COLORS,
   SECTION_NAMES,
@@ -16,6 +16,8 @@ const strength = (value: number | undefined | null) =>
     : null;
 const scoreText = (value: number | null) =>
   value === null ? "unknown" : `${Math.round(value * 100)} / 100`;
+const modelScoreText = (value: number | null) =>
+  value === null ? "unknown" : value.toFixed(2);
 
 export default function AnalysisInfo({
   track,
@@ -24,6 +26,7 @@ export default function AnalysisInfo({
   baseBpm,
   onChooseBpm,
   controlTarget,
+  deck,
 }: {
   track: TrackRecord;
   onReanalyze: () => Promise<void>;
@@ -31,16 +34,23 @@ export default function AnalysisInfo({
   baseBpm: number;
   onChooseBpm: (bpm: number) => void;
   controlTarget?: string;
+  deck?: DeckSnapshot;
 }) {
   const [details, setDetails] = useState(false);
   const [reanalyzing, setReanalyzing] = useState(false);
   const [error, setError] = useState("");
-  const rhythm = strength(track.bpm_confidence),
+  const model = track.neural_rhythm;
+  const pulseRepairs = model?.bar_evidence?.flatMap(e => e.pulse_repairs ?? []) ?? [];
+  const rhythm = strength(model?.beat_confidence ?? track.bpm_confidence),
+    downbeat = strength(model?.downbeat_confidence),
     key = strength(track.key_confidence);
-  const ambiguous = !!track.bpm_ambiguous;
+  const ambiguous = !!track.bpm_ambiguous && !deck?.beatgrid_uniform;
+  const referenceBpm = model?.bpm ?? track.bpm;
   const manual =
     track.bpm_source === "manual" ||
-    (!!track.bpm && Math.abs(baseBpm - track.bpm) > 0.005);
+    (!!referenceBpm && Math.abs(baseBpm - referenceBpm) > 0.005);
+  const manualGrid = deck?.beatgrid_manual ?? track.beatgrid_source === "manual";
+  const validGrid = deck?.beatgrid_valid ?? track.beatgrid_offset_seconds != null;
   const tagged = track.bpm_source === "tag" || track.bpm_source === "import";
   // Only what a DJ has to act on before mixing; scores live in the popover.
   const flags: string[] = [];
@@ -119,22 +129,46 @@ export default function AnalysisInfo({
         <div className="analysis-popover">
           <h4>Analysis support</h4>
           <p>
-            These scores describe rhythm and tonal evidence. They are heuristic
-            strengths, not probabilities of a correct BPM or key.
+            {model
+              ? "Beat and downbeat scores summarize model responses around detected events. They are uncalibrated, not probabilities that the grid is correct. Key scores remain heuristic strengths."
+              : "These scores describe rhythm and tonal evidence. They are heuristic strengths, not probabilities of a correct BPM or key."}
           </p>
           <p>
-            {track.beatgrid_source === "manual"
-              ? "The grid origin was set manually."
-              : track.beatgrid_source === "model"
-                ? "Grid lines follow the beat model. The stronger lines mark beat 1 of each bar; if a bar starts elsewhere, shift beat 1 in the grid editor."
-                : track.beatgrid_confidence != null
-                  ? "Grid lines follow an estimated periodic beat origin. The stronger markers group four beats; they do not identify a verified musical downbeat."
-                  : "Align the first beat in the grid editor before relying on the beat lines."}
+            {deck?.beatgrid_uniform
+              ? "The BPM override uses a constant tempo grid across the track. Align bar one on a known downbeat. Original model events remain in the analysis."
+              : model
+                ? manualGrid
+                  ? "The selected beat is aligned manually as bar 1. Detected beat intervals are retained. Stronger markers follow the detected meter from the selected anchor."
+                  : "Grid lines follow detected source-time beat events, including changes in tempo. The detector compares three-, four-, five- and seven-beat meter hypotheses. Stronger markers and bar labels follow its predicted downbeats. Verify the musical alignment by listening or adjust it in the grid editor."
+                : manualGrid
+                  ? "The periodic grid origin was set manually as bar 1. Stronger markers count four beats from that origin."
+                  : track.beatgrid_confidence != null
+                    ? "Grid lines follow estimated periodic beats. The musical downbeat and bar origin remain unconfirmed."
+                    : "Align the first beat in the grid editor before relying on the beat lines."}
           </p>
+          {model && <p>Detector: {model.model}</p>}
+          {track.rhythm_error && (
+            <p className="analysis-caution" title={track.rhythm_error}>
+              {model
+                ? "The latest beat analysis failed; the existing model timeline remains available."
+                : validGrid
+                  ? "Beat model analysis failed. The current grid uses a manual or estimated fallback; verify it before syncing."
+                  : "Beat model analysis failed. Align the grid manually or reanalyze before syncing."}
+            </p>
+          )}
           <div className="analysis-current">
             <span>
-              Rhythm support<strong>{scoreText(rhythm)}</strong>
+              {model ? "Beat score · uncalibrated" : "Rhythm support"}
+              <strong>
+                {model ? modelScoreText(rhythm) : scoreText(rhythm)}
+              </strong>
             </span>
+            {model && (
+              <span>
+                Downbeat score · uncalibrated
+                <strong>{modelScoreText(downbeat)}</strong>
+              </span>
+            )}
             <span>
               Key strength<strong>{scoreText(key)}</strong>
             </span>
@@ -154,13 +188,18 @@ export default function AnalysisInfo({
           )}
           {ambiguous && (
             <p className="analysis-caution">
-              More than one tempo is plausible. Check the beatgrid and half /
-              double tempo before syncing.
+              {model
+                ? "Local beat timing spans a wide tempo range. This may be a tempo change or a half/double interpretation switch. Check the intended passage and pulse before syncing."
+                : "More than one tempo is plausible. Check the beatgrid and half / double tempo before syncing."}
             </p>
           )}{" "}
+          {model?.beats_per_bar && <p>Detected {model.beats_per_bar} beats per bar. Verify bar alignment before mixing.</p>}
+          {!!pulseRepairs.length && <p>Acoustic pulse correction reconstructed {pulseRepairs.reduce((n,r) => n+r.inserted_beats,0)} beats in {pulseRepairs.length} passages. Check these passages before syncing.</p>}
           {!!track.bpm_candidates?.length && (
             <>
-              <h5>Tempo candidates</h5>
+              <h5>
+                {model ? "Spectral tempo alternatives" : "Tempo candidates"}
+              </h5>
               <div className="bpm-candidates">
                 {track.bpm_candidates.slice(0, 5).map((candidate, i) => (
                   <button

@@ -920,10 +920,10 @@ mod tests {
             "keylock": false, "preparation_pending": false
         });
         serde_json::from_value(serde_json::json!({
-            "sample_rate": 48000, "output_channels": 2, "buffer_frames": 256, "running": true,
+            "sample_rate": 48000, "output_channels": 2, "buffer_frames": 256, "running": true, "load_revisions": [0,0],
             "rendered_frames": 0, "master_peak": [0.0, 0.0], "cue_peak": [0.0, 0.0],
             "underruns": 0, "master_gain": 1.0, "crossfader": crossfader, "cue_gain": 1.0,
-            "cue_mix": 0.0, "sampler_gain": 1.0, "decks": [deck.clone(), deck]
+            "cue_mix": 0.0, "sampler_gain": 1.0, "sampler_positions_seconds": vec![Option::<f64>::None; 16], "active_ramps": vec![false; 17], "decks": [deck.clone(), deck]
         }))
         .unwrap()
     }

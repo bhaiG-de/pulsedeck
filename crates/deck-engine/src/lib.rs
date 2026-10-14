@@ -4,6 +4,7 @@
 mod automation_tests;
 mod decode;
 mod dsp;
+mod grid;
 mod model;
 mod recording;
 mod snapshot;
@@ -14,8 +15,8 @@ use cpal::{
 };
 use decode::TrackData;
 pub use decode::{
-    analyze_beats_and_sections, analyze_file, analyze_file_with_beat_model, apply_beat_model,
-    refresh_sections, AudioSourceInfo,
+    analyze_beats_and_sections, analyze_file, analyze_file_cached_with_sections,
+    analyze_file_with_beat_model, apply_beat_model, refresh_sections, AudioSourceInfo,
 };
 use dsp::Mixer;
 pub use model::*;
@@ -41,11 +42,25 @@ pub struct SourceLoadTicket {
     owner: usize,
 }
 enum Retired {
+    Grid(Arc<audio_analysis::NeuralRhythm>),
     Track(Arc<TrackData>),
     Recorder(recording::Recorder),
 }
+// Cue arrays stay inline so the audio callback allocates and frees nothing.
+#[allow(clippy::large_enum_variant)]
 enum RenderCommand {
+    AutoCues {
+        deck: usize,
+        revision: u64,
+        hot: ([Option<f64>; 8], [Option<f64>; 8]),
+        memory: ([Option<f64>; 10], [Option<f64>; 10]),
+    },
     Fence(u64),
+    UpdateGrid {
+        deck: usize,
+        revision: u64,
+        grid: Arc<audio_analysis::NeuralRhythm>,
+    },
     Unload {
         revision: u64,
         deck: usize,
@@ -97,15 +112,51 @@ impl RenderState {
         // At most 64 commands per callback, with space reserved before popping an
         // asset-changing command. A full retirement ring defers work; never free PCM here.
         for _ in 0..64 {
-            if self.retired.slots() < 3 {
+            if self.retired.slots() < 4 {
                 break;
             }
             let Ok(command) = self.commands.pop() else {
                 break;
             };
             match command {
+                RenderCommand::AutoCues {
+                    deck,
+                    revision,
+                    hot,
+                    memory,
+                } => {
+                    if self.mixer.load_revisions[deck] == revision {
+                        let d = &mut self.mixer.decks[deck];
+                        for i in 0..8 {
+                            if d.hot_cues[i] == hot.0[i] {
+                                d.hot_cues[i] = hot.1[i];
+                            }
+                        }
+                        // A memory edit can reorder all slots. Skip this update when
+                        // any slot changed, preserving the DJ's whole memory list.
+                        if d.memory_cues == memory.0 {
+                            d.memory_cues = memory.1;
+                        }
+                    }
+                }
+                RenderCommand::UpdateGrid {
+                    deck,
+                    revision,
+                    grid,
+                } => {
+                    if self.mixer.load_revisions[deck] == revision {
+                        if let Some(old) = self.mixer.update_grid(deck, grid) {
+                            let _ = self.retired.push(Retired::Grid(old));
+                        }
+                    } else {
+                        let _ = self.retired.push(Retired::Grid(grid));
+                    }
+                }
                 RenderCommand::Fence(sequence) => self.mixer.applied_fence = sequence,
                 RenderCommand::Unload { deck, revision } => {
+                    if let Some(old) = self.mixer.decks[deck].grid.take() {
+                        let _ = self.retired.push(Retired::Grid(old));
+                    }
                     self.mixer.load_revisions[deck] = revision;
                     for track in self.mixer.unload(deck).into_iter().flatten() {
                         let _ = self.retired.push(Retired::Track(track));
@@ -126,6 +177,9 @@ impl RenderState {
                     track,
                     revision,
                 } => {
+                    if let Some(old) = self.mixer.decks[deck].grid.take() {
+                        let _ = self.retired.push(Retired::Grid(old));
+                    }
                     self.mixer.load_revisions[deck] = revision;
                     if !track.analysis.recording_allowed {
                         if let Some(old) = self.recording.take() {
@@ -146,6 +200,9 @@ impl RenderState {
                     track,
                     generation,
                 } => {
+                    if let Some(old) = self.mixer.decks[deck].grid.take() {
+                        let _ = self.retired.push(Retired::Grid(old));
+                    }
                     if !track.analysis.recording_allowed {
                         if let Some(old) = self.recording.take() {
                             old.stats.active.store(false, Ordering::Release);
@@ -371,6 +428,7 @@ impl EngineHandle {
                 while let Ok(retired) = retire_consumer.pop() {
                     match retired {
                         Retired::Track(track) => drop(track),
+                        Retired::Grid(grid) => drop(grid),
                         Retired::Recorder(recorder) => drop(recorder),
                     }
                 }
@@ -584,10 +642,139 @@ impl EngineHandle {
     }
     pub fn command_for_revision(
         &self,
-        command: EngineCommand,
+        mut command: EngineCommand,
         expected: Option<u64>,
     ) -> Result<(), String> {
         command.validate()?;
+        let transport = if matches!(
+            command,
+            EngineCommand::Play { .. }
+                | EngineCommand::TogglePlay { .. }
+                | EngineCommand::PlayQuantized { .. }
+        ) {
+            self.snapshot()
+        } else {
+            self.transport_snapshot()
+        };
+        if let EngineCommand::Play { deck } | EngineCommand::TogglePlay { deck } = command {
+            let d = &transport.decks[deck];
+            if d.launch_pending {
+                if matches!(command, EngineCommand::TogglePlay { .. }) {
+                    command = EngineCommand::CancelLaunch { deck };
+                } else {
+                    return Ok(());
+                }
+            } else if !d.playing && d.sync_enabled {
+                let clock = transport
+                    .decks
+                    .iter()
+                    .position(|d| d.is_master)
+                    .unwrap_or(1 - deck);
+                if clock != deck && transport.decks[clock].playing {
+                    command = EngineCommand::PlayQuantized {
+                        deck,
+                        clock,
+                        clock_revision: transport.load_revisions[clock],
+                        at_seconds: None,
+                        quantize: 1.0,
+                    };
+                }
+            }
+        }
+        if let EngineCommand::Sync { deck }
+        | EngineCommand::SetSync {
+            deck,
+            enabled: true,
+        } = command
+        {
+            let master = transport
+                .decks
+                .iter()
+                .position(|d| d.is_master)
+                .unwrap_or(0);
+            let clock = if master == deck { 1 - deck } else { master };
+            if !transport.decks[deck].beatgrid_valid || !transport.decks[clock].beatgrid_valid {
+                return Err(
+                    "Beat sync requires detected or manually aligned grids on both decks".into(),
+                );
+            }
+        }
+        if let EngineCommand::PlayQuantized {
+            deck,
+            clock,
+            clock_revision,
+            at_seconds,
+            quantize,
+        } = command
+        {
+            let a = &transport.decks[clock];
+            let b = &transport.decks[deck];
+            if self.load_revision(clock) != clock_revision {
+                return Err("Loaded source revision conflict on launch clock".into());
+            }
+            if !transport.running || !a.playing || b.playing {
+                return Err("Quantized launch requires running audio, a playing clock and a paused incoming deck".into());
+            }
+            if !a.beatgrid_valid || !b.beatgrid_valid {
+                return Err(
+                    "Quantized launch requires detected or manually aligned grids on both decks"
+                        .into(),
+                );
+            }
+            if a.jog_touch
+                || b.jog_touch
+                || a.loop_start_seconds.is_some()
+                || b.loop_start_seconds.is_some()
+            {
+                return Err("Release jog holds and loops before scheduling a launch".into());
+            }
+            if b.preparation_pending {
+                return Err(
+                    "Wait for incoming tempo/pitch preparation before scheduling a launch".into(),
+                );
+            }
+            let (Some(a_bpm), Some(b_bpm)) = (a.bpm, b.bpm) else {
+                return Err("Quantized launch requires BPM on both decks".into());
+            };
+            if !(b.sync_enabled && a.is_master)
+                && (a_bpm * a.playback_rate - b_bpm * b.playback_rate).abs() > 0.01
+            {
+                return Err("Match effective BPM within 0.01 before scheduling a launch".into());
+            }
+            let beat = a
+                .grid_position(a.position_seconds)
+                .ok_or("Clock grid is unavailable")?;
+            let at = at_seconds.unwrap_or(
+                a.grid_time(((beat / quantize).floor() + 1.0) * quantize)
+                    .ok_or("Clock grid is unavailable")?,
+            );
+            if at <= a.position_seconds
+                || (a.snapped_grid_time(at).ok_or("Clock grid is unavailable")? - at).abs() > 0.001
+            {
+                return Err("Launch timestamp must be a future beat on the clock grid".into());
+            }
+            let entry = b
+                .snapped_grid_time(b.position_seconds)
+                .ok_or("Incoming grid is unavailable")?;
+            let tracks = self
+                .shared
+                .tracks
+                .lock()
+                .map_err(|_| "Track cache poisoned")?;
+            if tracks[clock]
+                .as_ref()
+                .is_none_or(|t| at >= t.duration_seconds)
+                || tracks[deck]
+                    .as_ref()
+                    .is_none_or(|t| entry < 0.0 || entry >= t.duration_seconds)
+            {
+                return Err(
+                    "Launch clock and snapped incoming entry must lie inside their tracks".into(),
+                );
+            }
+            // Explicit phrase timestamps stay fixed; next-boundary requests
+            // resolve inside the renderer so queue latency cannot miss a beat.
+        }
         let command_deck = command.deck();
         let preparation_deck = match &command {
             EngineCommand::SetTempo { deck, .. }
@@ -964,6 +1151,18 @@ impl EngineHandle {
         offset_seconds: f64,
     ) -> Result<TrackAnalysis, String> {
         let (source, mut analysis, generation) = self.loaded_source(deck)?;
+        let transport = self.transport_snapshot();
+        let d = &transport.decks[deck];
+        analysis.bpm = Some(bpm);
+        if d.beatgrid_uniform {
+            analysis.bpm_source = Some("manual".into());
+        }
+        if d.beatgrid_manual {
+            analysis.beatgrid_source = Some("manual".into());
+            analysis.beatgrid_confidence = None;
+            analysis.manual_grid_anchor_index = d.beatgrid_anchor_index;
+        }
+        analysis.beatgrid_offset_seconds = Some(offset_seconds);
         decode::refresh_sections(
             &source.samples,
             source.sample_rate,
@@ -973,6 +1172,30 @@ impl EngineHandle {
         )?;
         self.replace_loaded_metadata(deck, generation, analysis)
     }
+    /// Merge generated cues only where the DJ has not edited the observed slots.
+    pub fn merge_auto_cues(
+        &self,
+        deck: usize,
+        revision: u64,
+        hot: ([Option<f64>; 8], [Option<f64>; 8]),
+        memory: ([Option<f64>; 10], [Option<f64>; 10]),
+    ) -> Result<(), String> {
+        EngineCommand::RestoreHotCues { deck, cues: hot.1 }.validate()?;
+        EngineCommand::RestoreMemoryCues {
+            deck,
+            cues: memory.1,
+        }
+        .validate()?;
+        if self.load_revision(deck) != revision {
+            return Err("Track changed during cue analysis".into());
+        }
+        self.enqueue(RenderCommand::AutoCues {
+            deck,
+            revision,
+            hot,
+            memory,
+        })
+    }
     /// Change the loaded deck's metadata in place (vocabulary choice, auto-cue
     /// record) if the same track is still loaded.
     pub fn update_loaded_analysis(
@@ -981,12 +1204,24 @@ impl EngineHandle {
         track_id: &str,
         change: impl FnOnce(&mut TrackAnalysis),
     ) -> Result<TrackAnalysis, String> {
-        let (_, mut analysis, generation) = self.loaded_source(deck)?;
+        if deck > 1 {
+            return Err("Deck must be 0 or 1".into());
+        }
+        let mut tracks = self
+            .shared
+            .tracks
+            .lock()
+            .map_err(|_| "Track cache poisoned")?;
+        let analysis = tracks[deck].as_mut().ok_or("Deck has no loaded track")?;
         if analysis.id != track_id {
             return Err("Track changed".into());
         }
-        change(&mut analysis);
-        self.replace_loaded_metadata(deck, generation, analysis)
+        change(analysis);
+        let result = analysis.clone();
+        self.shared
+            .metadata_revision
+            .fetch_add(1, Ordering::Release);
+        Ok(result)
     }
     fn loaded_source(&self, deck: usize) -> Result<(Arc<TrackData>, TrackAnalysis, u64), String> {
         if deck > 1 {
@@ -1020,6 +1255,15 @@ impl EngineHandle {
         generation: u64,
         analysis: TrackAnalysis,
     ) -> Result<TrackAnalysis, String> {
+        self.replace_loaded_metadata_with_grid(deck, generation, analysis, false)
+    }
+    fn replace_loaded_metadata_with_grid(
+        &self,
+        deck: usize,
+        generation: u64,
+        mut analysis: TrackAnalysis,
+        update_grid: bool,
+    ) -> Result<TrackAnalysis, String> {
         let mut tracks = self
             .shared
             .tracks
@@ -1031,6 +1275,26 @@ impl EngineHandle {
                 .is_none_or(|track| track.id != analysis.id)
         {
             return Err("Track changed during analysis".into());
+        }
+        if let Some(current) = tracks[deck].as_ref() {
+            // Section workers do not own cue edits or a vocabulary choice made
+            // while their spectrogram was being computed.
+            analysis.auto_cues = current.auto_cues.clone();
+            if let Some(sections) = analysis.sections.as_mut() {
+                if let Some(previous) = current.sections.as_ref() {
+                    sections.vocabulary_override = previous.vocabulary_override;
+                    sections.relabel();
+                }
+            }
+        }
+        if update_grid {
+            if let Some(grid) = analysis.neural_rhythm.clone() {
+                self.enqueue(RenderCommand::UpdateGrid {
+                    deck,
+                    revision: self.load_revision(deck),
+                    grid: Arc::new(grid),
+                })?;
+            }
         }
         tracks[deck] = Some(analysis.clone());
         self.shared
@@ -1062,11 +1326,23 @@ impl EngineHandle {
             analysis.bpm_source = current.bpm_source;
             analysis.bpm_confidence = current.bpm_confidence;
             analysis.bpm_ambiguous = false;
-            let phase =
-                audio_analysis::estimate_phase(&source.samples, source.sample_rate, analysis.bpm);
-            analysis.beatgrid_offset_seconds = phase.as_ref().map(|p| p.offset_seconds);
-            analysis.beatgrid_confidence = phase.map(|p| p.confidence);
-            analysis.beatgrid_source = analysis.beatgrid_offset_seconds.map(|_| "tag".into());
+            if analysis.neural_rhythm.is_none() {
+                let phase = audio_analysis::estimate_phase(
+                    &source.samples,
+                    source.sample_rate,
+                    analysis.bpm,
+                );
+                analysis.beatgrid_offset_seconds = phase.as_ref().map(|p| p.offset_seconds);
+                analysis.beatgrid_confidence = phase.map(|p| p.confidence);
+                analysis.beatgrid_source = analysis.beatgrid_offset_seconds.map(|_| "tag".into());
+            }
+        }
+        if analysis.neural_rhythm.is_none() {
+            analysis.neural_rhythm = current.neural_rhythm.clone();
+            if analysis.neural_rhythm.is_some() {
+                analysis.beatgrid_offset_seconds = current.beatgrid_offset_seconds;
+                analysis.beatgrid_source = current.beatgrid_source.clone();
+            }
         }
         let replaced = || self.shared.load_generation[deck].load(Ordering::Acquire) != generation;
         // Keep the DJ's vocabulary choice and auto-cue record across reanalysis.
@@ -1083,7 +1359,23 @@ impl EngineHandle {
             // Keep the DSP result; the stage stays unset so a later pass retries.
             Err(_) => {}
         }
-        self.replace_loaded_metadata(deck, generation, analysis)
+        let transport = self.transport_snapshot();
+        let d = &transport.decks[deck];
+        if d.beatgrid_manual {
+            analysis.beatgrid_source = Some("manual".into());
+            analysis.beatgrid_offset_seconds = Some(d.beatgrid_offset_seconds);
+            let previous_anchor = current
+                .neural_rhythm
+                .as_ref()
+                .and_then(|g| d.beatgrid_anchor_index.and_then(|i| g.beats_seconds.get(i)))
+                .copied()
+                .unwrap_or(d.beatgrid_offset_seconds);
+            analysis.manual_grid_anchor_index = analysis
+                .neural_rhythm
+                .as_ref()
+                .map(|g| crate::grid::nearest_index(&g.beats_seconds, previous_anchor));
+        }
+        self.replace_loaded_metadata_with_grid(deck, generation, analysis, true)
     }
     /// Fast transport/meters only: no metadata mutex or waveform-vector clones.
     pub fn transport_snapshot(&self) -> EngineSnapshot {
@@ -1772,6 +2064,27 @@ mod realtime_audit {
             })
             .ok()
             .unwrap();
+        for shift in [0.0, 0.01] {
+            let grid = Arc::new(audio_analysis::NeuralRhythm {
+                beats_seconds: vec![0.2 + shift, 0.7 + shift, 1.3 + shift, 1.9 + shift],
+                downbeats_seconds: vec![0.2 + shift],
+                bpm: 120.0,
+                beat_confidence: 0.8,
+                downbeat_confidence: 0.7,
+                model: "allocation-fixture".into(),
+                analysis_seconds: 0.0,
+                bar_evidence: Vec::new(),
+                beats_per_bar: None,
+            });
+            producer
+                .push(RenderCommand::UpdateGrid {
+                    deck: 0,
+                    revision: 0,
+                    grid,
+                })
+                .ok()
+                .unwrap();
+        }
         for command in [
             EngineCommand::Play { deck: 0 },
             EngineCommand::SetEq {
@@ -2097,6 +2410,7 @@ mod reanalysis_tests {
                 bpm: 128.0,
             },
             EngineCommand::SetBeatgrid {
+                anchor_index: None,
                 deck: 0,
                 offset_seconds: 0.12,
             },
@@ -2133,6 +2447,24 @@ mod reanalysis_tests {
             .command(EngineCommand::SetBeatgrid {
                 deck: 0,
                 offset_seconds: 0.07,
+                anchor_index: None,
+            })
+            .unwrap();
+        engine
+            .update_loaded_analysis(0, "demo:0", |a| {
+                a.neural_rhythm = Some(audio_analysis::NeuralRhythm {
+                    beats_seconds: (0..64).map(|i| i as f64 * 0.5).collect(),
+                    downbeats_seconds: (0..16).map(|i| i as f64 * 2.0).collect(),
+                    bpm: 120.0,
+                    beat_confidence: 0.8,
+                    downbeat_confidence: 0.8,
+                    model: "full-model-fixture".into(),
+                    analysis_seconds: 0.0,
+                    bar_evidence: Vec::new(),
+                    beats_per_bar: Some(4),
+                });
+                a.bpm_source = Some("beat_this".into());
+                a.beatgrid_source = Some("beat_this".into());
             })
             .unwrap();
         let revision = engine.metadata_revision();
@@ -2140,7 +2472,7 @@ mod reanalysis_tests {
         let stage = updated.beat_model.as_ref().expect("stage recorded");
         let grid = stage.usable_grid().expect("demo loop has a clear pulse");
         assert!((grid.bpm - 120.0).abs() < 0.5, "{grid:?}");
-        assert_eq!(updated.bpm_source.as_deref(), Some("model"));
+        assert_eq!(updated.bpm_source.as_deref(), Some("beat_this"));
         assert!(engine.metadata_revision() > revision);
         assert!(engine.metadata_snapshot().tracks[0]
             .as_ref()
@@ -2346,5 +2678,57 @@ mod instant_double_handle_tests {
                 true
             )
             .is_err());
+    }
+}
+
+#[cfg(test)]
+mod auto_cue_merge_tests {
+    use super::*;
+    #[test]
+    fn generated_cues_preserve_live_edits_and_reject_replaced_sources() {
+        let (mut producer, consumer) = RingBuffer::new(8);
+        let (retired, _reclamation) = RingBuffer::new(16);
+        let mut state = RenderState {
+            mixer: Mixer::new(),
+            commands: consumer,
+            retired,
+            recording: None,
+            routing: AudioRouting::default(),
+            channels: 2,
+        };
+        state.mixer.load(0, decode::demo_track(0));
+        state.mixer.load_revisions[0] = 7;
+        let before = [None; 8];
+        let mut after = before;
+        after[0] = Some(2.0);
+        after[1] = Some(4.0);
+        state.mixer.decks[0].hot_cues[0] = Some(1.5);
+        state.mixer.decks[0].memory_cues[0] = Some(3.0);
+        producer
+            .push(RenderCommand::AutoCues {
+                deck: 0,
+                revision: 7,
+                hot: (before, after),
+                memory: ([None; 10], [Some(5.0); 10]),
+            })
+            .ok()
+            .unwrap();
+        state.drain();
+        assert_eq!(state.mixer.decks[0].hot_cues[0], Some(1.5));
+        assert_eq!(state.mixer.decks[0].hot_cues[1], Some(4.0));
+        assert_eq!(state.mixer.decks[0].memory_cues[0], Some(3.0));
+        state.mixer.load_revisions[0] = 8;
+        producer
+            .push(RenderCommand::AutoCues {
+                deck: 0,
+                revision: 7,
+                hot: (state.mixer.decks[0].hot_cues, [Some(9.0); 8]),
+                memory: (state.mixer.decks[0].memory_cues, [Some(9.0); 10]),
+            })
+            .ok()
+            .unwrap();
+        state.drain();
+        assert_eq!(state.mixer.decks[0].hot_cues[0], Some(1.5));
+        assert_eq!(state.mixer.decks[0].memory_cues[0], Some(3.0));
     }
 }

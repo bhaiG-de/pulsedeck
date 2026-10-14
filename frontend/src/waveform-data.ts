@@ -1,3 +1,4 @@
+import { gridBeatPosition, type BeatGrid } from "./beat-grid.ts";
 import type { SectionLabel, SectionStage, WaveformBands } from "./types";
 
 /* OP-1 screen palette: blue lows, green mids, white highs. The mixer's EQ
@@ -237,7 +238,7 @@ export function displaySections(
   duration: number,
 ): DisplaySection[] {
   if (!stage?.sections?.length || !(stage.bpm > 0)) return [];
-  const bar = 240 / stage.bpm;
+  const bar = (stage.beats_per_bar ?? 4) * 60 / stage.bpm;
   const merged: DisplaySection[] = [];
   for (const s of stage.sections) {
     const last = merged[merged.length - 1];
@@ -252,11 +253,16 @@ export function displaySections(
       });
     }
   }
+  const times = stage.bar_times ?? [];
+  const sectionEnd = (s: DisplaySection) => {
+    const start = times.findIndex(t => Math.abs(t - s.start) < 0.001);
+    return start >= 0 ? times[start + s.bars] ?? s.start + s.bars * bar : s.start + s.bars * bar;
+  };
   return merged.map((s, i) => ({
     ...s,
     end: Math.min(
       Number.isFinite(duration) && duration > 0 ? duration : Infinity,
-      merged[i + 1]?.start ?? s.start + s.bars * bar,
+      merged[i + 1]?.start ?? sectionEnd(s),
     ),
   }));
 }
@@ -266,10 +272,13 @@ export function nextSection(
   sections: DisplaySection[],
   position: number,
   bpm: number,
+  grid?: BeatGrid,
 ): { label: SectionLabel | null; bars: number } | null {
   if (!Number.isFinite(position) || !(bpm > 0)) return null;
   const next = sections.find((s) => s.start > position + 1e-3);
   if (!next) return null;
-  const bars = Math.ceil((next.start - position) / (240 / bpm) - 1e-6);
+  const from = grid ? gridBeatPosition(grid, position) : null;
+  const to = grid ? gridBeatPosition(grid, next.start) : null;
+  const bars = Math.ceil((from !== null && to !== null ? (to - from) / grid!.meter : (next.start - position) / (240 / bpm)) - 1e-6);
   return { label: next.label, bars: Math.max(1, bars) };
 }

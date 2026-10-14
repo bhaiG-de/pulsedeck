@@ -23,7 +23,7 @@ pulsedeckctl commands describe controller.action --json
 pulsedeckctl ui state --json
 ```
 
-The catalog exposes 82 product methods, all 52 native engine variants (49 original actions plus explicit-time hot cues and native ramp controls), the complete controller action schema and live UI targets/actions. Argument examples and schemas are returned with the methods. Unsupported controls and future capabilities are explicitly listed.
+The catalog exposes product methods, native engine variants, controller actions and live UI targets, with current schemas and examples. It includes full-model analysis, grid correction and native queued launch; use discovery for the installed build's complete inventory. Unsupported controls and future capabilities are listed explicitly.
 
 Every catalog method can be called directly:
 
@@ -43,6 +43,7 @@ pulsedeckctl library tracks --search ambient --sort bpm --json
 pulsedeckctl deck A load --track local:42
 pulsedeckctl deck B load --path /music/next-song.wav
 pulsedeckctl deck A play
+pulsedeckctl deck B analyze
 pulsedeckctl deck A pause
 pulsedeckctl deck A seek --at 32s --snap beat
 pulsedeckctl deck A cue set --at 8s
@@ -73,7 +74,7 @@ pulsedeckctl recording start --path /music/mix.wav
 pulsedeckctl recording stop
 ```
 
-Play/pause setters are deterministic. Toggle, press/release and pad gestures preserve the existing hardware semantics. Triggering a hot cue starts playback; ordinary seek preserves the play state. A cue press while paused previews the cue until release, while a cue press during playback stops and returns to the cue. Pair raw cue/jog/pad press commands with releases. `automation stop` stops ramps and releases held cue/jog state. A load rejects a playing deck by default; `--replace-playing` makes replacement explicit. Input/output paths resolve relative to the CLI's working directory.
+Play/pause setters are deterministic: synced Play can queue the next master beat, so an acknowledgment alone does not prove playback has started. Toggle and press/release gestures preserve hardware semantics. A hot cue trigger starts playback; ordinary seek preserves play state. A cue press while paused previews until release; during playback it stops and returns to cue. Pair raw cue/jog/pad presses with releases. `automation stop` cancels ramps and pending launches and releases cue/jog holds. A load rejects a playing deck by default; `--replace-playing` explicitly requests replacement. Paths resolve relative to the CLI's working directory.
 
 ## Durable cue metadata and playlists
 
@@ -98,7 +99,7 @@ Recording and XML export protect existing files. Pass `--overwrite` for intentio
 ## UI presentation commands
 
 ```sh
-pulsedeckctl ui theme set anatomy-light
+pulsedeckctl ui theme set ivory
 pulsedeckctl ui app source spotify
 pulsedeckctl ui app browser true
 pulsedeckctl ui drawer height 44
@@ -159,7 +160,7 @@ pulsedeckctl automation stop
 pulsedeckctl mixer crossfader ramp --to 1 --over 16beats --clock A --quantize 4
 ```
 
-Batches validate syntax before starting and stop at the first runtime failure. Results show executed steps and partial application; audible actions are not rolled back. `--no-wait` on long load/import/UI/wait operations returns a job ID. Cancellation stops future steps and interrupts engine waits; cancelling a provider preparation also has the explicit `deck.load.cancel` operation. Native ramps advance in the audio renderer with fixed storage, so shell startup/tool latency does not set the ramp duration. Manual movement of a ramped control takes over that control. Beat-clock ramps cancel on pause, seek or source replacement. Beats use the declared BPM/grid; phrase/section/downbeat inference is a future capability.
+Batches validate syntax before starting and stop at the first runtime failure. Results show executed steps and partial application; audible actions are not rolled back. `--no-wait` on long operations returns a job ID. Cancellation stops future steps and interrupts engine waits; provider preparation also has `deck.load.cancel`. Native ramps advance in the audio renderer with fixed storage, so shell latency does not set their duration. Manual movement takes over the ramped target. Beat-clock ramps cancel on pause, seek or source replacement. Their effective grid may use variable neural beat timestamps. Downbeats are model predictions or manual corrections; musical phrase/section selection remains an evidence-based DJ decision.
 
 ## Verification and remaining scope
 
@@ -176,8 +177,27 @@ The desktop harness starts a temporary profile with separate library, preference
 
 `tools/control-coverage.json` maps every one of the 54 pre-existing desktop handlers to its CLI equivalent. `python3 tools/check-control-coverage.py` checks the registry, dispatcher, all engine variants and all 13 MIDI action kinds. Rust tests cover protocol, real socket/CLI round trips, guards, durable metadata, atomic playlist edits and native ramp behavior. Frontend tests cover bridge validation/dispatch and existing rendering/navigation. `tools/cli_smoke.py` exercises an isolated running app, optionally using muted real CoreAudio and WAV recording, and verifies persistence after restart.
 
-Physical controller/routing verification and live Spotify authorization require the corresponding hardware/account. Parsed controls with no software implementation (mic gain, Android mono, Smart Fader Next and shifted loop-in/out) remain explicitly unsupported. Spotify playlist writes, embedded-widget transport, musical-section detection, scheduled native transport and an MCP server remain future work. The CLI supplies the control, metadata, job and diagnostic foundation for that work.
+Physical controller/routing verification and live Spotify authorization require the corresponding hardware/account. Parsed controls with no software implementation (mic gain, Android mono, Smart Fader Next and shifted loop-in/out) remain explicitly unsupported. Spotify playlist writes, embedded-widget transport, musical-section detection, general wall-clock transport scheduling and an MCP server remain future work. The CLI supplies the control, metadata, job and diagnostic foundation for that work.
 
-For musical operation through shell agents, see the [seven DJ skills](../.agents/skills/README.md). `track.inspect` provides bounded timestamped overview/range views of existing analysis, with full metadata and cue revisions, without seeking or reanalyzing.
+For musical operation through shell agents, see the [seven DJ skills](../.agents/skills/README.md). `track.inspect` provides bounded waveform and beat-event range views, compact neural metadata and cue revisions, without seeking or reanalyzing.
 
 Song tags are free-form strings stored in the local library. Edit them inline in the Tags column (Enter to add, × to remove), or run `pulsedeckctl library track tags local:42 --tags '["Afro house","chill vibe"]' --json`. Supplying `[]` clears tags. Library search includes tags, and `track.inspect` returns them as `metadata.tags`. Tags survive reimport/reanalysis and do not alter audio files.
+
+
+## Beatgrid correction and queued launch
+
+PulseDeck analyzes decoded PCM in memory with full FP32 Beat This! `final0` and native BSD madmom-style DBN/HMM postprocessing. Default decoding compares whole-track hypotheses of three, four, five or seven beats per bar over 55–300 BPM; it enforces temporal/bar continuity while retaining locally varying decoded timestamps. Arbitrary meter changes and musical phrases are outside that decoder policy. Mean BPM remains a summary. Scores are uncalibrated; rekordbox parity is unproven. A nonnull `rhythm_error` requires manual validation/correction before automated beatmixing, even when an older estimate remains available.
+
+`track.inspect` returns bounded `beat_events.events`, with `seconds`, `beat_index`, effective anchor-relative `beat_position` and `downbeat`. Its view includes counts/truncation, model frame resolution 0.02 seconds, `source`, `manual` and `uniform`; events are range-filtered and capped at `points` (maximum 512). With `uniform:false`, indices identify decoded neural events; with `uniform:true`, they identify the effective constant-tempo lattice, including any lead-in indices. Narrow a truncated range before counting progression. `metadata.neural_rhythm` retains original model/BPM/counts/scores/time with `scores_calibrated:false`, so its counts can differ from edited effective events. Loaded-deck flags are authoritative; an unloaded cache with `bpm_source:manual` is inferred to use a uniform override.
+
+Use `pulsedeckctl deck B grid set --offset 0.125s --expected-load-revision N` to set a known bar origin, or **Set bar 1 here** in the grid editor. Both invoke `set_beatgrid`; neither moves transport or cues. Correct base BPM with `deck B bpm set BPM` when necessary; change playback tempo with `deck B tempo set --percent PERCENT` for matching another song. The editor offers 1 ms draft nudges and half/double BPM. Manual grid edits persist through reload/reanalysis. `beatgrid_manual` distinguishes an explicit override; `beatgrid_downbeat` can also reflect model-predicted downbeats, so it does not mean a manual edit occurred. A bar origin remains separate from a musical phrase.
+
+Explicit manual BPM correction selects a constant-tempo grid for the entire source, including half/double edits; it is not merely a display change or a stretch of existing neural markers. Offset-only realignment preserves neural intervals when that mode is active and leaves a uniform override uniform. Manual bar-origin numbering retains detected meter, falling back to four if unknown. Inspect `beatgrid_uniform` and `beat_events.uniform` to distinguish modes. The UI applies BPM only when its draft changed by more than 0.01 BPM. Playback-rate/tempo matching preserves the mode.
+
+For an authorized analysis refresh, `pulsedeckctl deck B analyze --expected-load-revision N --json` runs full analysis on the loaded source; wait for completion, then reinspect identity, error/provenance and events. An inspection-only request remains read-only. Source guards protect identity, not every concurrent knob or seek.
+
+After choosing B's arrival event and entry-to-arrival beat count, count backward from A's handover and select its actual future grid-event timestamp. Use `pulsedeckctl deck B launch --clock A --clock-revision A_REV --at A_SECONDSs --expected-load-revision B_REV`, substituting observed revisions/times. The renderer snaps B's paused entry to its nearest effective beat and queues a sample-clock start on A's chosen timestamp. A must be playing; both grids must be valid, effective tempos must match within 0.01 BPM, neither deck may have a loop/jog hold, incoming preparation must be ready, and audio must run. Mean-BPM timestamp arithmetic can miss a variable grid; use inspected event times. Omitting `--at` selects the next boundary; `--quantize 4`/`32` counts beats, with bar/phrase interpretation requiring separate evidence.
+
+Inspect `launch_pending`/`launch_at_seconds`, wait with `pulsedeckctl call engine.wait --args '{"deck":"B","launches":true}' --expected-load-revision B_REV --timeout 30s --json`, then verify B playing and both source revisions. Compute phase from simultaneous native `beat_position` values, wrapping the difference to `[-0.5,0.5)` beats; do not use a uniform BPM/offset formula. Keep B isolated until phase is checked and monitor drift during overlap. A cancelled launch also clears pending state, so wait completion alone does not prove success. Source/timeline/tempo/grid changes and manual takeover cancel stale launches. `deck B launch cancel` or `automation stop` cancels pending launch. Synced Play queues the next master beat; unsynced Play is immediate. Native timing cannot choose a phrase or prevent vocal/bass clashes. See [DJ control reference](../.agents/skills/references/cli.md#correct-a-grid-and-queue-a-musical-launch).
+
+Section analysis and next-track suggestions extend the existing Beat This! clock. Use `analysis.settings.get`, `analysis.settings.set`, `library.analysis.update`, `library.analysis.cancel`, `deck.sections.vocabulary`, `library.suggest_next` and `library.history.clear` through `pulsedeckctl call`. The `beat_model_spotify` compatibility setting enables Spotify section analysis; core beat detection remains part of source preparation.

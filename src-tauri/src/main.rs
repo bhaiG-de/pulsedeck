@@ -128,6 +128,7 @@ pub(crate) fn beat_stage_current(analysis: &TrackAnalysis) -> bool {
         .beat_model
         .as_ref()
         .is_some_and(|stage| stage.version >= audio_analysis::BEAT_MODEL_VERSION)
+        && analysis.neural_rhythm.is_some()
 }
 
 #[tauri::command]
@@ -359,6 +360,9 @@ fn analysis_record(analysis: TrackAnalysis) -> TrackRecord {
             beat_model: analysis.beat_model,
             sections: analysis.sections,
             auto_cues: analysis.auto_cues,
+            neural_rhythm: analysis.neural_rhythm,
+            rhythm_error: analysis.rhythm_error,
+            manual_grid_anchor_index: analysis.manual_grid_anchor_index,
         },
     }
 }
@@ -390,6 +394,9 @@ fn record_analysis(record: TrackRecord) -> TrackAnalysis {
         camelot: record.camelot,
         waveform_bands: record.analysis.waveform_bands,
         waveform: record.waveform,
+        neural_rhythm: record.analysis.neural_rhythm,
+        rhythm_error: record.analysis.rhythm_error,
+        manual_grid_anchor_index: record.analysis.manual_grid_anchor_index,
         beat_model: record.analysis.beat_model,
         sections: record.analysis.sections,
         auto_cues: record.analysis.auto_cues,
@@ -412,6 +419,9 @@ fn keep_spotify_manual(
             analysis.beatgrid_offset_seconds = stored.beatgrid_offset_seconds;
             analysis.beatgrid_source = stored.beatgrid_source;
             analysis.beatgrid_confidence = None;
+            analysis.manual_grid_anchor_index = analysis
+                .manual_grid_anchor_index
+                .or(stored.manual_grid_anchor_index);
         }
     }
     analysis
@@ -430,6 +440,7 @@ fn apply_grid(
         state.engine.command(EngineCommand::SetBeatgrid {
             deck,
             offset_seconds,
+            anchor_index: None,
         })?;
     }
     Ok(())
@@ -443,7 +454,8 @@ fn persist_analysis(
     state: &AppState,
     analysis: &TrackAnalysis,
 ) -> Result<(Option<f64>, Option<f64>, bool), String> {
-    let knows_beat_one = |source: Option<&str>| matches!(source, Some("model" | "manual"));
+    let knows_beat_one =
+        |source: Option<&str>| matches!(source, Some("beat_this" | "model" | "manual"));
     if analysis.path.starts_with("spotify:") {
         let stored = state
             .library
@@ -525,17 +537,20 @@ pub(crate) fn place_auto_cues(
         state.auto_hot_cues.load(Ordering::Acquire),
         state.auto_memory_cues.load(Ordering::Acquire),
     );
-    if plan.hot != hot {
-        state.engine.command(EngineCommand::RestoreHotCues {
-            deck,
-            cues: plan.hot,
-        })?;
+    let metadata = state.engine.metadata_snapshot();
+    if metadata.tracks[deck]
+        .as_ref()
+        .is_none_or(|t| t.id != analysis.id)
+    {
+        return Err("Track changed during cue analysis".into());
     }
-    if plan.memory != memory {
-        state.engine.command(EngineCommand::RestoreMemoryCues {
+    if plan.hot != hot || plan.memory != memory {
+        state.engine.merge_auto_cues(
             deck,
-            cues: plan.memory,
-        })?;
+            metadata.load_revisions[deck],
+            (hot, plan.hot),
+            (memory, plan.memory),
+        )?;
     }
     let record = plan.record;
     let updated = state
@@ -568,19 +583,13 @@ pub(crate) fn spawn_beat_model(app: &tauri::AppHandle, deck: usize, request: u64
             }
         };
         let result = (|| -> Result<(), String> {
-            let grid = persist_analysis(&app, &state, &analysis)?;
+            persist_analysis(&app, &state, &analysis)?;
             if !current() {
                 return Ok(());
             }
             let transport = state.engine.transport_snapshot();
-            if transport.decks[deck].playing && transport.decks.iter().any(|d| d.sync_enabled) {
-                state.message(format!(
-                    "Beat grid for {} is ready and applies the next time it loads",
-                    analysis.title
-                ));
-            } else {
-                apply_grid(&state, deck, grid.0, grid.1)?;
-            }
+            let d = &transport.decks[deck];
+            let grid = (d.bpm, Some(d.beatgrid_offset_seconds), d.beatgrid_downbeat);
             let analysis = sections_for_grid(&state, deck, analysis.clone(), grid)?;
             let spotify = analysis.path.starts_with("spotify:");
             place_auto_cues(&app, &state, deck, analysis, None, spotify).map(|_| ())
@@ -662,12 +671,12 @@ fn import_one(state: &AppState, path: &str) -> Result<TrackRecord, String> {
         return Err("Select a music file".into());
     }
     let path_string = path.to_string_lossy().into_owned();
-    if let Some(existing) = state
+    let existing = state
         .library
         .lock()
         .map_err(|_| poisoned())?
-        .track_by_path(&path_string)?
-    {
+        .track_by_path(&path_string)?;
+    if let Some(existing) = existing.as_ref() {
         if existing.analysis.analysis_version >= audio_analysis::ANALYSIS_VERSION
             && existing.analysis.waveform_bands.is_some()
             && existing
@@ -676,11 +685,15 @@ fn import_one(state: &AppState, path: &str) -> Result<TrackRecord, String> {
                 .as_ref()
                 .is_some_and(|stage| stage.version >= audio_analysis::BEAT_MODEL_VERSION)
         {
-            return Ok(existing);
+            return Ok(existing.clone());
         }
     }
     let cancel = || state.import_cancel.load(Ordering::Acquire);
-    let (mut analysis, warning) = deck_engine::analyze_file_with_beat_model(&path, &cancel)?;
+    let (mut analysis, warning) = deck_engine::analyze_file_cached_with_sections(
+        &path,
+        existing.map(record_analysis),
+        &cancel,
+    )?;
     if let Some(warning) = warning {
         if let Ok(mut p) = state.analysis.lock() {
             p.errors.push(format!("{path_string}: {warning}"));
@@ -865,16 +878,24 @@ fn load_into_deck(
     if state.loading[deck].load(Ordering::Acquire) != request {
         return Err("Track load was replaced by a newer request".into());
     }
-    if record.bpm.is_finite() && (30.0..=300.0).contains(&record.bpm) {
+    if matches!(
+        record.analysis.bpm_source.as_deref(),
+        Some("manual" | "import")
+    ) && record.bpm.is_finite()
+        && (30.0..=300.0).contains(&record.bpm)
+    {
         state.engine.command(EngineCommand::SetBpm {
             deck,
             bpm: record.bpm,
         })?;
     }
-    state.engine.command(EngineCommand::SetBeatgrid {
-        deck,
-        offset_seconds: record.beatgrid_offset_seconds,
-    })?;
+    if record.analysis.beatgrid_source.as_deref() == Some("manual") {
+        state.engine.command(EngineCommand::SetBeatgrid {
+            anchor_index: record.analysis.manual_grid_anchor_index,
+            deck,
+            offset_seconds: record.beatgrid_offset_seconds,
+        })?;
+    }
     let cues: [Option<f64>; 8] = record.hot_cues.try_into().unwrap_or([None; 8]);
     state
         .engine
@@ -932,15 +953,11 @@ async fn reanalyze_loaded_track(
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<AppState>();
         let request = state.loading[deck].load(Ordering::Acquire);
-        let previous_analysis_bpm = state.engine.snapshot().decks[deck]
-            .track
-            .as_ref()
-            .and_then(|track| track.bpm);
         let analysis = state.engine.reanalyze_loaded(deck)?;
         if state.loading[deck].load(Ordering::Acquire) != request {
             return Err("A new track replaced this analysis request".into());
         }
-        let (chosen_bpm, chosen_grid) = if analysis.path.starts_with("spotify:") {
+        let chosen_bpm = if analysis.path.starts_with("spotify:") {
             let stored = state
                 .library
                 .lock()
@@ -950,10 +967,7 @@ async fn reanalyze_loaded_track(
                 .as_ref()
                 .filter(|a| a.bpm_source.as_deref() == Some("manual"))
                 .and_then(|a| a.bpm);
-            let current_bpm = state.engine.snapshot().decks[deck].bpm;
-            let manual_bpm = stored_override.or(current_bpm.filter(|bpm| {
-                previous_analysis_bpm.is_none_or(|previous| (previous - bpm).abs() > 0.005)
-            }));
+            let manual_bpm = stored_override;
             let mut cached = analysis.clone();
             if let Some(bpm) = manual_bpm {
                 cached.bpm = Some(bpm);
@@ -965,28 +979,35 @@ async fn reanalyze_loaded_track(
                 cached.beatgrid_offset_seconds = grid.beatgrid_offset_seconds;
                 cached.beatgrid_source = grid.beatgrid_source;
                 cached.beatgrid_confidence = None;
+                cached.manual_grid_anchor_index = analysis
+                    .manual_grid_anchor_index
+                    .or(grid.manual_grid_anchor_index);
             }
             spotify_analysis::store(&app, &cached)?;
-            (manual_bpm.or(analysis.bpm), cached.beatgrid_offset_seconds)
+            manual_bpm
         } else {
             let record = state
                 .library
                 .lock()
                 .map_err(|_| poisoned())?
                 .upsert(&analysis_record(analysis.clone()))?;
-            (Some(record.bpm), Some(record.beatgrid_offset_seconds))
+            (record.analysis.bpm_source.as_deref() == Some("manual")
+                && record.bpm.is_finite()
+                && (30.0..=300.0).contains(&record.bpm))
+            .then_some(record.bpm)
         };
-        // Reanalysis is user-initiated, so its BPM and grid apply immediately.
-        apply_grid(&state, deck, chosen_bpm, chosen_grid)?;
-        let knows_beat_one = matches!(
-            analysis.beatgrid_source.as_deref(),
-            Some("model" | "manual")
-        );
+        // Only explicit overrides issue tempo/grid commands. Model event timing
+        // reaches the render clock through the engine's revision-guarded UpdateGrid.
+        if let Some(bpm) = chosen_bpm {
+            apply_grid(&state, deck, Some(bpm), None)?;
+        }
+        let transport = state.engine.transport_snapshot();
+        let d = &transport.decks[deck];
         let analysis = sections_for_grid(
             &state,
             deck,
             analysis,
-            (chosen_bpm, chosen_grid, knows_beat_one),
+            (d.bpm, Some(d.beatgrid_offset_seconds), d.beatgrid_downbeat),
         )?;
         let spotify = analysis.path.starts_with("spotify:");
         place_auto_cues(&app, &state, deck, analysis, None, spotify)
@@ -1078,6 +1099,7 @@ fn engine_command_inner(
     let manual_grid = if let EngineCommand::SetBeatgrid {
         deck,
         offset_seconds,
+        ..
     } = &command
     {
         state
@@ -1108,6 +1130,19 @@ fn engine_command_inner(
         .map_err(|_| poisoned())?
         .observe(&command, smart_modes);
     if let Some((mut track, offset)) = manual_grid {
+        let fence = state.engine.fence()?;
+        state
+            .engine
+            .wait_for_fence(fence, std::time::Duration::from_secs(2))?;
+        let deck = command.deck().ok_or("Grid edit requires a deck")?;
+        if state.engine.snapshot().decks[deck]
+            .track
+            .as_ref()
+            .is_none_or(|t| t.path != track.path)
+        {
+            return Err("Loaded source revision conflict during grid persistence".into());
+        }
+        let anchor = state.engine.transport_snapshot().decks[deck].beatgrid_anchor_index;
         if track.path.starts_with("spotify:") {
             let previous = state
                 .library
@@ -1120,13 +1155,13 @@ fn engine_command_inner(
             track.beatgrid_offset_seconds = Some(offset);
             track.beatgrid_source = Some("manual".into());
             track.beatgrid_confidence = None;
+            track.manual_grid_anchor_index = anchor;
             spotify_analysis::store(&app, &track)?;
         } else {
-            state.library.lock().map_err(|_| poisoned())?.metadata(
+            state.library.lock().map_err(|_| poisoned())?.manual_grid(
                 &track.path,
-                None,
-                None,
-                Some(offset),
+                offset,
+                anchor,
             )?;
         }
     }
@@ -1618,6 +1653,15 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let isolated = std::env::var_os("PULSEDECK_ISOLATED").is_some_and(|v| v == "1");
+            if std::env::var_os("PULSEDECK_BEAT_MODEL_DIR").is_none() {
+                std::env::set_var(
+                    "PULSEDECK_BEAT_MODEL_DIR",
+                    app.path().resource_dir()?.join("beat-models"),
+                );
+            }
+            std::thread::spawn(|| {
+                let _ = audio_analysis::initialize_neural_rhythm();
+            });
             let data_dir = match std::env::var_os("PULSEDECK_DATA_DIR") {
                 Some(path) => std::path::PathBuf::from(path),
                 None if isolated => {

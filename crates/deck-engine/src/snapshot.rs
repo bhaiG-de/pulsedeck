@@ -42,6 +42,13 @@ struct DeckAtoms {
     reverb: AtomicU32,
     bpm: AtomicU64,
     grid: AtomicU64,
+    grid_valid: AtomicBool,
+    grid_downbeat: AtomicBool,
+    grid_manual: AtomicBool,
+    grid_uniform: AtomicBool,
+    grid_anchor: AtomicU64,
+    beat_position: AtomicU64,
+    launch_at: AtomicU64,
     sync: AtomicBool,
     master: AtomicBool,
     pitch: AtomicU64,
@@ -74,6 +81,13 @@ impl DeckAtoms {
             reverb: float(0.0),
             bpm: double(f64::NAN),
             grid: double(0.0),
+            grid_valid: AtomicBool::new(false),
+            grid_downbeat: AtomicBool::new(false),
+            grid_manual: AtomicBool::new(false),
+            grid_uniform: AtomicBool::new(false),
+            grid_anchor: AtomicU64::new(u64::MAX),
+            beat_position: double(f64::NAN),
+            launch_at: double(f64::NAN),
             sync: AtomicBool::new(false),
             master: AtomicBool::new(false),
             pitch: double(0.0),
@@ -116,6 +130,15 @@ impl DeckAtoms {
             reverb: getf(&self.reverb),
             bpm: optional(getd(&self.bpm)),
             beatgrid_offset_seconds: getd(&self.grid),
+            beatgrid_valid: self.grid_valid.load(Ordering::Relaxed),
+            beatgrid_downbeat: self.grid_downbeat.load(Ordering::Relaxed),
+            beatgrid_manual: self.grid_manual.load(Ordering::Relaxed),
+            beatgrid_uniform: self.grid_uniform.load(Ordering::Relaxed),
+            beatgrid_anchor_index: (self.grid_anchor.load(Ordering::Relaxed) != u64::MAX)
+                .then(|| self.grid_anchor.load(Ordering::Relaxed) as usize),
+            beat_position: optional(getd(&self.beat_position)),
+            launch_pending: getd(&self.launch_at).is_finite(),
+            launch_at_seconds: optional(getd(&self.launch_at)),
             sync_enabled: self.sync.load(Ordering::Relaxed),
             is_master: self.master.load(Ordering::Relaxed),
             pitch_semitones: getd(&self.pitch),
@@ -243,8 +266,26 @@ impl SnapshotAtoms {
             a.cue_enabled.store(d.cue_enabled, Ordering::Relaxed);
             putf(&a.echo, d.echo.target);
             putf(&a.reverb, d.reverb.target);
-            putd(&a.bpm, d.bpm.unwrap_or(f64::NAN));
+            putd(&a.bpm, d.grid_bpm().unwrap_or(f64::NAN));
             putd(&a.grid, d.grid_offset);
+            a.grid_valid.store(d.grid_valid, Ordering::Relaxed);
+            a.grid_downbeat.store(d.grid_downbeat, Ordering::Relaxed);
+            a.grid_manual.store(d.grid_manual, Ordering::Relaxed);
+            a.grid_uniform.store(d.grid_uniform, Ordering::Relaxed);
+            a.grid_anchor
+                .store(d.grid_anchor_index as u64, Ordering::Relaxed);
+            putd(
+                &a.beat_position,
+                if d.grid_valid {
+                    d.grid_position(d.seconds())
+                } else {
+                    f64::NAN
+                },
+            );
+            putd(
+                &a.launch_at,
+                m.launches[i].map_or(f64::NAN, |p| p.at_seconds),
+            );
             a.sync.store(d.sync_enabled, Ordering::Relaxed);
             a.master.store(m.master_deck == i, Ordering::Relaxed);
             putd(&a.pitch, d.pitch);
