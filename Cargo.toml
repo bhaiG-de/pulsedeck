@@ -10,3 +10,25 @@ cpal = { path = "vendor/cpal" }
 lto = "thin"
 codegen-units = 1
 panic = "abort"
+
+# Keep offline neural inference practical in desktop development builds.
+[profile.dev.package.beat-this]
+opt-level = 3
+[profile.dev.package.rten]
+opt-level = 3
+[profile.dev.package.rten-tensor]
+opt-level = 3
+[profile.dev.package.rten-gemm]
+opt-level = 3
+[profile.dev.package.rten-vecmath]
+opt-level = 3
+[profile.dev.package.rten-simd]
+opt-level = 3
+[profile.dev.package.rubato]
+opt-level = 3
+[profile.dev.package.realfft]
+opt-level = 3
+[profile.dev.package.rustfft]
+opt-level = 3
+[profile.dev.package.audio-analysis]
+opt-level = 3

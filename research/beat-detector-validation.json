@@ -1,0 +1,1362 @@
+{
+  "schema_version": 2,
+  "performed_date": "2026-10-14",
+  "default_pipeline": "Beat This! full final0 + BSD madmom-style DBN 3/4,55\u2013300BPM",
+  "analysis_version": 5,
+  "model_manifest": {
+    "model": "Beat This! final0 FP32",
+    "code_repository": "https://github.com/CPJKU/beat_this",
+    "code_and_weights_license": "MIT",
+    "port_repository": "https://github.com/danigb/beat-this-rs",
+    "port_revision": "1ae768e78f1ad83b0ed3886241dc29ffde853c40",
+    "runtime_crate": "beat-this = 1.1.0, RTen = 0.24.0",
+    "frame_rate_hz": 50,
+    "assets": [
+      {
+        "filename": "beat_this.onnx",
+        "url": "https://github.com/danigb/beat-this-rs/releases/download/model-large/beat_this.onnx",
+        "bytes": 83162650,
+        "sha256": "5f810debe53459b559127fb55bbad40035bb47cc567b20e501670f968c770f02",
+        "checkpoint": "CPJKU final0, exported FP32 via port scripts/ckpt2onnx.py",
+        "github_release_id": 331004771,
+        "github_asset_id": 432275383
+      },
+      {
+        "filename": "mel_spectrogram.onnx",
+        "url": "https://raw.githubusercontent.com/danigb/beat-this-rs/1ae768e78f1ad83b0ed3886241dc29ffde853c40/models/mel_spectrogram.onnx",
+        "bytes": 270742,
+        "sha256": "fdd59e65c515331308e4c8841edf99972deca646bdf6197744c2a5b7755e3de9"
+      }
+    ],
+    "upstream_license_url": "https://github.com/CPJKU/beat_this#license",
+    "postprocessing": {
+      "default": "madmom-style DBN, competing whole-track 3/4 meter hypotheses",
+      "decoder_repository": "https://github.com/creightonlinza/madmom-beats-port",
+      "decoder_revision": "b5052828507dfee6f5329a9f1a9852732ac38990",
+      "decoder_source_path": "rust/madmom_beats_port_core/src/dbn.rs",
+      "original_source_sha256": "9841543a5a4b3c9f6e0544a90d10e4c4030bb7f1791d42ab1e714c01976007f2",
+      "license": "BSD-2-Clause (decoder source only; no madmom model weights)",
+      "fps": 50,
+      "beats_per_bar": [
+        3,
+        4
+      ],
+      "min_bpm": 55,
+      "max_bpm": 300,
+      "num_tempi": 60,
+      "transition_lambda": 100,
+      "observation_lambda": 16,
+      "threshold": 0.05,
+      "correct": true,
+      "extra_peak_refinement": false,
+      "traceback_block_frames": 256,
+      "benchmark_only_override": "PULSEDECK_BEAT_POSTPROCESS=minimal",
+      "upstream_max_bpm": 215,
+      "dj_tempo_range_reason": "55\u2013300 BPM retains fast music; exact-activation comparison recovers227.488BPMswing while all three sampled EDM event arrays remain identical"
+    }
+  },
+  "machine": {
+    "architecture": "arm64",
+    "cpu": "Apple M5 Pro",
+    "rustc": "1.99.0",
+    "decoder": "ffmpeg 9.0.2",
+    "build": "optimized release",
+    "private_model_threads": 2
+  },
+  "limitations": [
+    "These are implementation/parity checks, not independently annotated downbeat accuracy or rekordbox parity.",
+    "Three GiantSteps BPM labels provide no beat/downbeat timestamp ground truth.",
+    "The default DBN selects a whole-track 3 or 4 meter hypothesis, not arbitrary changing meter.",
+    "Fixed 55\u2013300BPM is a PulseDeck policy expansion from upstream55\u2013215; faster/slower/other meter material needs manual review.",
+    "Python oracle uses exact Rust model logits, isolated Python 3.11, madmom 0.16.1, numpy 1.26.4 and compatibility shims only; no madmom model inference.",
+    "The original port narrows activations/state probabilities to f32; timestamp differences versus Python are f32 rounding only on these four cases.",
+    "No audio or madmom model weights are redistributed in this repository; only BSD decoder source/notices."
+  ],
+  "dbn_default": {
+    "cases": [
+      {
+        "case_id": "giantsteps_1030011",
+        "audio": {
+          "decoded_sample_rate": 44100,
+          "decoder": "ffmpeg stereo f32le to memory; no source PCM export",
+          "duration_seconds": 120.0,
+          "filename": "pulsedeck-1030011.LOFI.mp3",
+          "sha256": "cf2bf938c3aaa19dea5a399336539575ba7c14043b638aa10fcde57697f709ff"
+        },
+        "source": {
+          "repository": "https://github.com/GiantSteps/giantsteps-tempo-dataset",
+          "commit": "d51ab2422e76abacfaa86616a57054bc222ec9fd",
+          "audio_url": "https://www.cp.jku.at/datasets/giantsteps/backup/1030011.LOFI.mp3",
+          "tempo_annotation_path": "annotations_v2/tempo/1030011.LOFI.bpm",
+          "expected_dataset_md5": "b74960065c4493b89b56c3e49671f90d",
+          "dataset_md5_verified": true
+        },
+        "published_tempo_bpm": 127.0,
+        "legacy_bpm": 126.0,
+        "minimal_historical_bpm": 125.98426962804695,
+        "minimal_historical_beat_count": 252,
+        "minimal_historical_downbeat_count": 106,
+        "dbn_bpm": 125.98426962804695,
+        "dbn_tempo_error": {
+          "absolute_bpm": 1.0157303719530546,
+          "relative_percent": 0.7997876944512241,
+          "within_4_percent_allowing_half_double": true,
+          "within_4_percent_exact_tempo": true
+        },
+        "dbn_beat_count": 252,
+        "dbn_downbeat_count": 63,
+        "first_12_beats_seconds": [
+          0.20000000298023224,
+          0.6600000262260437,
+          1.1200000047683716,
+          1.6200000047683716,
+          2.0799999237060547,
+          2.559999942779541,
+          3.0399999618530273,
+          3.5199999809265137,
+          4.0,
+          4.460000038146973,
+          4.940000057220459,
+          5.420000076293945
+        ],
+        "first_12_downbeats_seconds": [
+          0.20000000298023224,
+          2.0799999237060547,
+          4.0,
+          5.900000095367432,
+          7.800000190734863,
+          9.720000267028809,
+          11.600000381469727,
+          13.520000457763672,
+          15.420000076293945,
+          17.31999969482422,
+          19.219999313354492,
+          21.1200008392334
+        ],
+        "observed_beat_gaps_between_downbeats": {
+          "4": 62
+        },
+        "whole_pipeline_seconds": 4.6175405000000005,
+        "dbn_only_seconds": 0.230706375,
+        "real_time_factor": 0.03847950416666667,
+        "uncalibrated_beat_activation_mean": 0.9999662637710571,
+        "uncalibrated_downbeat_activation_mean": 0.957962155342102,
+        "model_identifier": "Beat This! final0 FP32 + DBN 3/4 55-300 BPM / beat-this 1.1.0 / RTen 0.24.0",
+        "decoder_python_parity": {
+          "beats": {
+            "predicted_count": 252,
+            "reference_count": 252,
+            "same_count": true,
+            "matched_mean_error_ms": 0.0012056434901940446,
+            "matched_p95_error_ms": 0.0033569335897709607,
+            "matched_max_error_ms": 0.003662109378410605,
+            "scores": [
+              {
+                "tolerance_ms": 70,
+                "matched": 252,
+                "precision": 1.0,
+                "recall": 1.0,
+                "f_measure": 1.0
+              },
+              {
+                "tolerance_ms": 20,
+                "matched": 252,
+                "precision": 1.0,
+                "recall": 1.0,
+                "f_measure": 1.0
+              },
+              {
+                "tolerance_ms": 10,
+                "matched": 252,
+                "precision": 1.0,
+                "recall": 1.0,
+                "f_measure": 1.0
+              }
+            ],
+            "same_model_activations": true
+          },
+          "downbeats": {
+            "predicted_count": 63,
+            "reference_count": 63,
+            "same_count": true,
+            "matched_mean_error_ms": 0.0011508143129830319,
+            "matched_p95_error_ms": 0.003662109378410605,
+            "matched_max_error_ms": 0.003662109378410605,
+            "scores": [
+              {
+                "tolerance_ms": 70,
+                "matched": 63,
+                "precision": 1.0,
+                "recall": 1.0,
+                "f_measure": 1.0
+              },
+              {
+                "tolerance_ms": 20,
+                "matched": 63,
+                "precision": 1.0,
+                "recall": 1.0,
+                "f_measure": 1.0
+              },
+              {
+                "tolerance_ms": 10,
+                "matched": 63,
+                "precision": 1.0,
+                "recall": 1.0,
+                "f_measure": 1.0
+              }
+            ],
+            "same_model_activations": true
+          }
+        },
+        "decoder_reference_provenance": {
+          "postprocessing": "Python madmom DBN on exact PulseDeck Beat This! activations",
+          "madmom_version": "0.16.1",
+          "fps": 50,
+          "beats_per_bar": [
+            3,
+            4
+          ],
+          "min_bpm": 55,
+          "max_bpm": 300.0,
+          "transition_lambda": 100,
+          "num_tempi": 60,
+          "observation_lambda": 16,
+          "threshold": 0.05,
+          "correct": true,
+          "extra_peak_refinement": false,
+          "activation_file": "/tmp/pulsedeck-gs-1030011-activations.json",
+          "runtime_seconds": 0.14097629100069753
+        },
+        "activation_sha256": "cbef07986cf01b91d9275147ee40f91f556bdfa208e3198cfbed2314da68ce43",
+        "dbn_215_baseline": {
+          "bpm": 125.98426962804695,
+          "beats": 252,
+          "downbeats": 63,
+          "event_arrays_identical_to_300": true
+        }
+      },
+      {
+        "case_id": "giantsteps_1068430",
+        "audio": {
+          "decoded_sample_rate": 44100,
+          "decoder": "ffmpeg stereo f32le to memory; no source PCM export",
+          "duration_seconds": 120.0,
+          "filename": "pulsedeck-1068430.LOFI.mp3",
+          "sha256": "afca4282260c00e1f365c9779636b670e80f9eaf29f180fe272c609996b116c4"
+        },
+        "source": {
+          "repository": "https://github.com/GiantSteps/giantsteps-tempo-dataset",
+          "commit": "d51ab2422e76abacfaa86616a57054bc222ec9fd",
+          "audio_url": "https://www.cp.jku.at/datasets/giantsteps/backup/1068430.LOFI.mp3",
+          "tempo_annotation_path": "annotations_v2/tempo/1068430.LOFI.bpm",
+          "expected_dataset_md5": "a5a86165d232b8d6be20654f20397579",
+          "dataset_md5_verified": true
+        },
+        "published_tempo_bpm": 174.0,
+        "legacy_bpm": 87.49,
+        "minimal_historical_bpm": 175.18247352042027,
+        "minimal_historical_beat_count": 361,
+        "minimal_historical_downbeat_count": 91,
+        "dbn_bpm": 174.8634560197892,
+        "dbn_tempo_error": {
+          "absolute_bpm": 0.8634560197891972,
+          "relative_percent": 0.49623909183287196,
+          "within_4_percent_allowing_half_double": true,
+          "within_4_percent_exact_tempo": true
+        },
+        "dbn_beat_count": 350,
+        "dbn_downbeat_count": 88,
+        "first_12_beats_seconds": [
+          0.0,
+          0.36000001430511475,
+          0.7200000286102295,
+          1.059999942779541,
+          1.399999976158142,
+          1.7400000095367432,
+          2.0799999237060547,
+          2.4200000762939453,
+          2.759999990463257,
+          3.119999885559082,
+          3.4600000381469727,
+          3.799999952316284
+        ],
+        "first_12_downbeats_seconds": [
+          0.0,
+          1.399999976158142,
+          2.759999990463257,
+          4.139999866485596,
+          5.519999980926514,
+          6.880000114440918,
+          8.260000228881836,
+          9.619999885559082,
+          11.0,
+          12.359999656677246,
+          13.739999771118164,
+          15.100000381469727
+        ],
+        "observed_beat_gaps_between_downbeats": {
+          "4": 87
+        },
+        "whole_pipeline_seconds": 4.627748542,
+        "dbn_only_seconds": 0.237273791,
+        "real_time_factor": 0.038564571183333334,
+        "uncalibrated_beat_activation_mean": 0.9898080825805664,
+        "uncalibrated_downbeat_activation_mean": 0.994162917137146,
+        "model_identifier": "Beat This! final0 FP32 + DBN 3/4 55-300 BPM / beat-this 1.1.0 / RTen 0.24.0",
+        "decoder_python_parity": {
+          "beats": {
+            "predicted_count": 350,
+            "reference_count": 350,
+            "same_count": true,
+            "matched_mean_error_ms": 0.0012351444778434053,
+            "matched_p95_error_ms": 0.0033569335897709607,
+            "matched_max_error_ms": 0.003662109378410605,
+            "scores": [
+              {
+                "tolerance_ms": 70,
+                "matched": 350,
+                "precision": 1.0,
+                "recall": 1.0,
+                "f_measure": 1.0
+              },
+              {
+                "tolerance_ms": 20,
+                "matched": 350,
+                "precision": 1.0,
+                "recall": 1.0,
+                "f_measure": 1.0
+              },
+              {
+                "tolerance_ms": 10,
+                "matched": 350,
+                "precision": 1.0,
+                "recall": 1.0,
+                "f_measure": 1.0
+              }
+            ],
+            "same_model_activations": true
+          },
+          "downbeats": {
+            "predicted_count": 88,
+            "reference_count": 88,
+            "same_count": true,
+            "matched_mean_error_ms": 0.0011773001053786121,
+            "matched_p95_error_ms": 0.0033569335897709607,
+            "matched_max_error_ms": 0.003662109378410605,
+            "scores": [
+              {
+                "tolerance_ms": 70,
+                "matched": 88,
+                "precision": 1.0,
+                "recall": 1.0,
+                "f_measure": 1.0
+              },
+              {
+                "tolerance_ms": 20,
+                "matched": 88,
+                "precision": 1.0,
+                "recall": 1.0,
+                "f_measure": 1.0
+              },
+              {
+                "tolerance_ms": 10,
+                "matched": 88,
+                "precision": 1.0,
+                "recall": 1.0,
+                "f_measure": 1.0
+              }
+            ],
+            "same_model_activations": true
+          }
+        },
+        "decoder_reference_provenance": {
+          "postprocessing": "Python madmom DBN on exact PulseDeck Beat This! activations",
+          "madmom_version": "0.16.1",
+          "fps": 50,
+          "beats_per_bar": [
+            3,
+            4
+          ],
+          "min_bpm": 55,
+          "max_bpm": 300.0,
+          "transition_lambda": 100,
+          "num_tempi": 60,
+          "observation_lambda": 16,
+          "threshold": 0.05,
+          "correct": true,
+          "extra_peak_refinement": false,
+          "activation_file": "/tmp/pulsedeck-gs-1068430-activations.json",
+          "runtime_seconds": 0.1370079580010497
+        },
+        "activation_sha256": "fcc91128f6bc5f06eaebf84ff2101d64e8f17a22e944eef863af48a0716823f8",
+        "dbn_215_baseline": {
+          "bpm": 174.8634560197892,
+          "beats": 350,
+          "downbeats": 88,
+          "event_arrays_identical_to_300": true
+        }
+      },
+      {
+        "case_id": "giantsteps_5377710",
+        "audio": {
+          "decoded_sample_rate": 44100,
+          "decoder": "ffmpeg stereo f32le to memory; no source PCM export",
+          "duration_seconds": 120.0,
+          "filename": "pulsedeck-5377710.LOFI.mp3",
+          "sha256": "8f33f664cc867d148aac19cae3efd501b9b9f2d1e322e866a5615f4e8aa041ea"
+        },
+        "source": {
+          "repository": "https://github.com/GiantSteps/giantsteps-tempo-dataset",
+          "commit": "d51ab2422e76abacfaa86616a57054bc222ec9fd",
+          "audio_url": "https://www.cp.jku.at/datasets/giantsteps/backup/5377710.LOFI.mp3",
+          "tempo_annotation_path": "annotations_v2/tempo/5377710.LOFI.bpm",
+          "expected_dataset_md5": "2ebf89c20b4d52c6a60bd033badcccf8",
+          "dataset_md5_verified": true
+        },
+        "published_tempo_bpm": 129.0,
+        "legacy_bpm": 64.0,
+        "minimal_historical_bpm": 128.0,
+        "minimal_historical_beat_count": 253,
+        "minimal_historical_downbeat_count": 66,
+        "dbn_bpm": 128.0,
+        "dbn_tempo_error": {
+          "absolute_bpm": 1.0,
+          "relative_percent": 0.7751937984496124,
+          "within_4_percent_allowing_half_double": true,
+          "within_4_percent_exact_tempo": true
+        },
+        "dbn_beat_count": 256,
+        "dbn_downbeat_count": 64,
+        "first_12_beats_seconds": [
+          0.18000000715255737,
+          0.6200000047683716,
+          1.100000023841858,
+          1.5800000429153442,
+          2.0399999618530273,
+          2.5,
+          2.9800000190734863,
+          3.440000057220459,
+          3.9000000953674316,
+          4.380000114440918,
+          4.840000152587891,
+          5.320000171661377
+        ],
+        "first_12_downbeats_seconds": [
+          1.5800000429153442,
+          3.440000057220459,
+          5.320000171661377,
+          7.199999809265137,
+          9.0600004196167,
+          10.9399995803833,
+          12.819999694824219,
+          14.680000305175781,
+          16.559999465942383,
+          18.440000534057617,
+          20.299999237060547,
+          22.200000762939453
+        ],
+        "observed_beat_gaps_between_downbeats": {
+          "4": 63
+        },
+        "whole_pipeline_seconds": 4.629605167,
+        "dbn_only_seconds": 0.230877625,
+        "real_time_factor": 0.03858004305833333,
+        "uncalibrated_beat_activation_mean": 0.9833394289016724,
+        "uncalibrated_downbeat_activation_mean": 0.9952763319015503,
+        "model_identifier": "Beat This! final0 FP32 + DBN 3/4 55-300 BPM / beat-this 1.1.0 / RTen 0.24.0",
+        "decoder_python_parity": {
+          "beats": {
+            "predicted_count": 256,
+            "reference_count": 256,
+            "same_count": true,
+            "matched_mean_error_ms": 0.0011690054077244817,
+            "matched_p95_error_ms": 0.0033569335897709607,
+            "matched_max_error_ms": 0.003662109378410605,
+            "scores": [
+              {
+                "tolerance_ms": 70,
+                "matched": 256,
+                "precision": 1.0,
+                "recall": 1.0,
+                "f_measure": 1.0
+              },
+              {
+                "tolerance_ms": 20,
+                "matched": 256,
+                "precision": 1.0,
+                "recall": 1.0,
+                "f_measure": 1.0
+              },
+              {
+                "tolerance_ms": 10,
+                "matched": 256,
+                "precision": 1.0,
+                "recall": 1.0,
+                "f_measure": 1.0
+              }
+            ],
+            "same_model_activations": true
+          },
+          "downbeats": {
+            "predicted_count": 64,
+            "reference_count": 64,
+            "same_count": true,
+            "matched_mean_error_ms": 0.001182630657299566,
+            "matched_p95_error_ms": 0.003051757815342171,
+            "matched_max_error_ms": 0.003051757815342171,
+            "scores": [
+              {
+                "tolerance_ms": 70,
+                "matched": 64,
+                "precision": 1.0,
+                "recall": 1.0,
+                "f_measure": 1.0
+              },
+              {
+                "tolerance_ms": 20,
+                "matched": 64,
+                "precision": 1.0,
+                "recall": 1.0,
+                "f_measure": 1.0
+              },
+              {
+                "tolerance_ms": 10,
+                "matched": 64,
+                "precision": 1.0,
+                "recall": 1.0,
+                "f_measure": 1.0
+              }
+            ],
+            "same_model_activations": true
+          }
+        },
+        "decoder_reference_provenance": {
+          "postprocessing": "Python madmom DBN on exact PulseDeck Beat This! activations",
+          "madmom_version": "0.16.1",
+          "fps": 50,
+          "beats_per_bar": [
+            3,
+            4
+          ],
+          "min_bpm": 55,
+          "max_bpm": 300.0,
+          "transition_lambda": 100,
+          "num_tempi": 60,
+          "observation_lambda": 16,
+          "threshold": 0.05,
+          "correct": true,
+          "extra_peak_refinement": false,
+          "activation_file": "/tmp/pulsedeck-gs-5377710-activations.json",
+          "runtime_seconds": 0.13994474999708473
+        },
+        "activation_sha256": "211d486abb738df79e091af6fa138b0c43415b33030edd9640d375b131f1194e",
+        "dbn_215_baseline": {
+          "bpm": 128.0,
+          "beats": 256,
+          "downbeats": 64,
+          "event_arrays_identical_to_300": true
+        }
+      },
+      {
+        "case_id": "port_python_final0",
+        "audio": {
+          "decoded_sample_rate": 44100,
+          "decoder": "ffmpeg stereo f32le to memory; no source PCM export",
+          "duration_seconds": 155.71591836734694,
+          "filename": "It Don't Mean A Thing - Kings of Swing.mp3",
+          "sha256": "af695e220645a1fe2314282dace96f2353c84de2364c27066e4944e3e6d66ffa"
+        },
+        "source": {
+          "repository": "https://github.com/danigb/beat-this-rs",
+          "commit": "1ae768e78f1ad83b0ed3886241dc29ffde853c40",
+          "audio_path": "test_files/It Don't Mean A Thing - Kings of Swing.mp3",
+          "golden_path": "tests/fixtures/golden_full.json"
+        },
+        "published_tempo_bpm": null,
+        "legacy_bpm": 113.67,
+        "minimal_historical_bpm": 227.48829149367185,
+        "minimal_historical_beat_count": 575,
+        "minimal_historical_downbeat_count": 144,
+        "dbn_bpm": 227.48829149367185,
+        "dbn_tempo_error": null,
+        "dbn_beat_count": 577,
+        "dbn_downbeat_count": 145,
+        "first_12_beats_seconds": [
+          0.3400000035762787,
+          0.6000000238418579,
+          0.8600000143051147,
+          1.1200000047683716,
+          1.3799999952316284,
+          1.6399999856948853,
+          1.9199999570846558,
+          2.200000047683716,
+          2.4800000190734863,
+          2.759999990463257,
+          3.0199999809265137,
+          3.2799999713897705
+        ],
+        "first_12_downbeats_seconds": [
+          0.3400000035762787,
+          1.3799999952316284,
+          2.4800000190734863,
+          3.5399999618530273,
+          4.659999847412109,
+          5.760000228881836,
+          6.820000171661377,
+          7.900000095367432,
+          9.0,
+          10.039999961853027,
+          11.100000381469727,
+          12.15999984741211
+        ],
+        "observed_beat_gaps_between_downbeats": {
+          "4": 144
+        },
+        "whole_pipeline_seconds": 5.552552875,
+        "dbn_only_seconds": 0.317925917,
+        "real_time_factor": 0.035658222571060855,
+        "uncalibrated_beat_activation_mean": 0.9949230551719666,
+        "uncalibrated_downbeat_activation_mean": 0.993942379951477,
+        "model_identifier": "Beat This! final0 FP32 + DBN 3/4 55-300 BPM / beat-this 1.1.0 / RTen 0.24.0",
+        "decoder_python_parity": {
+          "beats": {
+            "predicted_count": 577,
+            "reference_count": 577,
+            "same_count": true,
+            "matched_mean_error_ms": 0.0017231816423636563,
+            "matched_p95_error_ms": 0.005493164053405053,
+            "matched_max_error_ms": 0.00732421875682121,
+            "scores": [
+              {
+                "tolerance_ms": 70,
+                "matched": 577,
+                "precision": 1.0,
+                "recall": 1.0,
+                "f_measure": 1.0
+              },
+              {
+                "tolerance_ms": 20,
+                "matched": 577,
+                "precision": 1.0,
+                "recall": 1.0,
+                "f_measure": 1.0
+              },
+              {
+                "tolerance_ms": 10,
+                "matched": 577,
+                "precision": 1.0,
+                "recall": 1.0,
+                "f_measure": 1.0
+              }
+            ],
+            "same_model_activations": true
+          },
+          "downbeats": {
+            "predicted_count": 145,
+            "reference_count": 145,
+            "same_count": true,
+            "matched_mean_error_ms": 0.0015923648030338265,
+            "matched_p95_error_ms": 0.005493164053405053,
+            "matched_max_error_ms": 0.00732421875682121,
+            "scores": [
+              {
+                "tolerance_ms": 70,
+                "matched": 145,
+                "precision": 1.0,
+                "recall": 1.0,
+                "f_measure": 1.0
+              },
+              {
+                "tolerance_ms": 20,
+                "matched": 145,
+                "precision": 1.0,
+                "recall": 1.0,
+                "f_measure": 1.0
+              },
+              {
+                "tolerance_ms": 10,
+                "matched": 145,
+                "precision": 1.0,
+                "recall": 1.0,
+                "f_measure": 1.0
+              }
+            ],
+            "same_model_activations": true
+          }
+        },
+        "decoder_reference_provenance": {
+          "postprocessing": "Python madmom DBN on exact PulseDeck Beat This! activations",
+          "madmom_version": "0.16.1",
+          "fps": 50,
+          "beats_per_bar": [
+            3,
+            4
+          ],
+          "min_bpm": 55,
+          "max_bpm": 300.0,
+          "transition_lambda": 100,
+          "num_tempi": 60,
+          "observation_lambda": 16,
+          "threshold": 0.05,
+          "correct": true,
+          "extra_peak_refinement": false,
+          "activation_file": "/tmp/pulsedeck-real-activations.json",
+          "runtime_seconds": 0.19248508400050923
+        },
+        "activation_sha256": "7470e37e7ec5c2efdca5ec1dfb27b2ca708d10240e4347cfdb7dd5fcf3caf130",
+        "dbn_215_baseline": {
+          "bpm": 75.94934783481278,
+          "beats": 192,
+          "downbeats": 48,
+          "event_arrays_identical_to_300": false
+        }
+      }
+    ]
+  },
+  "minimal_historical": {
+    "performed_date": "2026-10-14",
+    "machine": {
+      "architecture": "arm64",
+      "cpu": "Apple M5 Pro",
+      "rustc": "1.99.0",
+      "decoder": "ffmpeg 9.0.2",
+      "build": "optimized release",
+      "private_model_threads": 2
+    },
+    "model_manifest": {
+      "assets": [
+        {
+          "bytes": 83162650,
+          "checkpoint": "CPJKU final0, exported FP32 via port scripts/ckpt2onnx.py",
+          "filename": "beat_this.onnx",
+          "github_asset_id": 432275383,
+          "github_release_id": 331004771,
+          "sha256": "5f810debe53459b559127fb55bbad40035bb47cc567b20e501670f968c770f02",
+          "url": "https://github.com/danigb/beat-this-rs/releases/download/model-large/beat_this.onnx"
+        },
+        {
+          "bytes": 270742,
+          "filename": "mel_spectrogram.onnx",
+          "sha256": "fdd59e65c515331308e4c8841edf99972deca646bdf6197744c2a5b7755e3de9",
+          "url": "https://raw.githubusercontent.com/danigb/beat-this-rs/1ae768e78f1ad83b0ed3886241dc29ffde853c40/models/mel_spectrogram.onnx"
+        }
+      ],
+      "code_and_weights_license": "MIT",
+      "code_repository": "https://github.com/CPJKU/beat_this",
+      "frame_rate_hz": 50,
+      "model": "Beat This! final0 FP32",
+      "port_repository": "https://github.com/danigb/beat-this-rs",
+      "port_revision": "1ae768e78f1ad83b0ed3886241dc29ffde853c40",
+      "runtime_crate": "beat-this = 1.1.0, RTen = 0.24.0",
+      "upstream_license_url": "https://github.com/CPJKU/beat_this#license"
+    },
+    "limitations": [
+      "One Python same-model parity sample is not independent beat accuracy ground truth.",
+      "Three GiantSteps tempo labels do not annotate beat/downbeat positions.",
+      "No rekordbox output or listening test was used; no parity to rekordbox is established.",
+      "No copyrighted audio is redistributed; clips remain outside the repository.",
+      "Strict timing metrics and 10-microsecond f32-rounding-aware diagnostic scores are separately labeled.",
+      "Model scores are activations, not calibrated correctness probabilities.",
+      "These three clips are an exploratory deterministic sample, not a statistically representative or held-out benchmark.",
+      "Published final0 was trained on all listed datasets except GTZAN; GiantSteps should not be treated as held-out until its exact training overlap is established."
+    ],
+    "selection": "Official README example 5377710 plus first two lexically sorted nonzero v2 tempo annotations 1030011 and 1068430; chosen before inference.",
+    "cases": [
+      {
+        "case_id": "port_python_final0",
+        "audio": {
+          "decoded_sample_rate": 44100,
+          "decoder": "ffmpeg stereo f32le to memory; no source PCM export",
+          "duration_seconds": 155.71591836734694,
+          "filename": "It Don't Mean A Thing - Kings of Swing.mp3",
+          "sha256": "af695e220645a1fe2314282dace96f2353c84de2364c27066e4944e3e6d66ffa"
+        },
+        "published_tempo_bpm": null,
+        "legacy": {
+          "analysis_seconds": 0.030149541,
+          "phase": null,
+          "tempo": {
+            "ambiguous": true,
+            "bpm": 113.67,
+            "candidates": [
+              {
+                "bpm": 113.67,
+                "score": 0.33051276206970215
+              },
+              {
+                "bpm": 226.54,
+                "score": 0.29078981280326843
+              },
+              {
+                "bpm": 75.83,
+                "score": 0.2441050410270691
+              },
+              {
+                "bpm": 56.92,
+                "score": 0.17946289479732513
+              }
+            ],
+            "confidence": 0.28370800614356995
+          }
+        },
+        "legacy_tempo_error": null,
+        "neural_single_interval_bpm_before": 230.76733472226297,
+        "neural_multi_beat_bpm_after": 227.48829149367185,
+        "neural_tempo_error_after": null,
+        "beat_count": 575,
+        "downbeat_count": 144,
+        "all_event_timestamps_unchanged": true,
+        "first_12_beats_seconds": [
+          0.30000001192092896,
+          0.5799999833106995,
+          0.8600000143051147,
+          1.1200000047683716,
+          1.3799999952316284,
+          1.659999966621399,
+          1.9199999570846558,
+          2.200000047683716,
+          2.4600000381469727,
+          2.740000009536743,
+          3.0199999809265137,
+          3.2799999713897705
+        ],
+        "first_12_downbeats_seconds": [
+          0.30000001192092896,
+          1.3799999952316284,
+          2.4600000381469727,
+          3.559999942779541,
+          4.659999847412109,
+          5.760000228881836,
+          6.820000171661377,
+          7.920000076293945,
+          8.979999542236328,
+          10.039999961853027,
+          11.100000381469727,
+          12.15999984741211
+        ],
+        "observed_beat_gaps_between_downbeats": {
+          "4": 143
+        },
+        "neural_analysis_seconds_before": 5.179621792,
+        "neural_analysis_seconds_after": 5.263023125,
+        "neural_real_time_factor": 0.03379887669919581,
+        "uncalibrated_beat_activation_mean": 0.9976015686988831,
+        "uncalibrated_downbeat_activation_mean": 0.9988141655921936,
+        "python_reference": {
+          "beats": [
+            {
+              "exact_count_equal": true,
+              "f_measure": 1.0,
+              "float_conversion_allowance_ms": 0.0,
+              "matched": 575,
+              "matched_error_max_ms": 20.005493164063637,
+              "matched_error_mean_ms": 3.6187686339657787,
+              "matched_error_p95_ms": 20.001220703122158,
+              "matching": "ordered one-to-one",
+              "precision": 1.0,
+              "predicted_count": 575,
+              "recall": 1.0,
+              "reference_count": 575,
+              "tolerance_ms": 70.0
+            },
+            {
+              "exact_count_equal": true,
+              "f_measure": 0.9113043478260869,
+              "float_conversion_allowance_ms": 0.0,
+              "matched": 524,
+              "matched_error_max_ms": 19.99999999999602,
+              "matched_error_mean_ms": 2.024249502719449,
+              "matched_error_p95_ms": 19.999084472658524,
+              "matching": "ordered one-to-one",
+              "precision": 0.9113043478260869,
+              "predicted_count": 575,
+              "recall": 0.9113043478260869,
+              "reference_count": 575,
+              "tolerance_ms": 20.0
+            },
+            {
+              "exact_count_equal": true,
+              "f_measure": 0.8191304347826086,
+              "float_conversion_allowance_ms": 0.0,
+              "matched": 471,
+              "matched_error_max_ms": 0.00732421875682121,
+              "matched_error_mean_ms": 0.0016658523771768128,
+              "matched_error_p95_ms": 0.005493164053405053,
+              "matching": "ordered one-to-one",
+              "precision": 0.8191304347826087,
+              "predicted_count": 575,
+              "recall": 0.8191304347826087,
+              "reference_count": 575,
+              "tolerance_ms": 10.0
+            }
+          ],
+          "beats_f32_rounding_aware": [
+            {
+              "exact_count_equal": true,
+              "f_measure": 1.0,
+              "float_conversion_allowance_ms": 0.01,
+              "matched": 575,
+              "matched_error_max_ms": 20.005493164063637,
+              "matched_error_mean_ms": 3.6187686339657787,
+              "matched_error_p95_ms": 20.001220703122158,
+              "matching": "ordered one-to-one",
+              "precision": 1.0,
+              "predicted_count": 575,
+              "recall": 1.0,
+              "reference_count": 575,
+              "tolerance_ms": 70.0
+            },
+            {
+              "exact_count_equal": true,
+              "f_measure": 1.0,
+              "float_conversion_allowance_ms": 0.01,
+              "matched": 575,
+              "matched_error_max_ms": 20.005493164063637,
+              "matched_error_mean_ms": 3.6187686339657787,
+              "matched_error_p95_ms": 20.001220703122158,
+              "matching": "ordered one-to-one",
+              "precision": 1.0,
+              "predicted_count": 575,
+              "recall": 1.0,
+              "reference_count": 575,
+              "tolerance_ms": 20.0
+            },
+            {
+              "exact_count_equal": true,
+              "f_measure": 0.8191304347826086,
+              "float_conversion_allowance_ms": 0.01,
+              "matched": 471,
+              "matched_error_max_ms": 0.00732421875682121,
+              "matched_error_mean_ms": 0.0016658523771768128,
+              "matched_error_p95_ms": 0.005493164053405053,
+              "matching": "ordered one-to-one",
+              "precision": 0.8191304347826087,
+              "predicted_count": 575,
+              "recall": 0.8191304347826087,
+              "reference_count": 575,
+              "tolerance_ms": 10.0
+            }
+          ],
+          "comparison_kind": "same-model Python-reference parity; not human beat ground truth",
+          "downbeats": [
+            {
+              "exact_count_equal": true,
+              "f_measure": 1.0,
+              "float_conversion_allowance_ms": 0.0,
+              "matched": 144,
+              "matched_error_max_ms": 20.00366210937443,
+              "matched_error_mean_ms": 3.612346765066031,
+              "matched_error_p95_ms": 20.001220703122158,
+              "matching": "ordered one-to-one",
+              "precision": 1.0,
+              "predicted_count": 144,
+              "recall": 1.0,
+              "reference_count": 144,
+              "tolerance_ms": 70.0
+            },
+            {
+              "exact_count_equal": true,
+              "f_measure": 0.9166666666666666,
+              "float_conversion_allowance_ms": 0.0,
+              "matched": 132,
+              "matched_error_max_ms": 19.99999999999602,
+              "matched_error_mean_ms": 2.1224054965086667,
+              "matched_error_p95_ms": 19.999542236327272,
+              "matching": "ordered one-to-one",
+              "precision": 0.9166666666666666,
+              "predicted_count": 144,
+              "recall": 0.9166666666666666,
+              "reference_count": 144,
+              "tolerance_ms": 20.0
+            },
+            {
+              "exact_count_equal": true,
+              "f_measure": 0.8194444444444444,
+              "float_conversion_allowance_ms": 0.0,
+              "matched": 118,
+              "matched_error_max_ms": 0.00732421875682121,
+              "matched_error_mean_ms": 0.001507916690934957,
+              "matched_error_p95_ms": 0.005493164053405053,
+              "matching": "ordered one-to-one",
+              "precision": 0.8194444444444444,
+              "predicted_count": 144,
+              "recall": 0.8194444444444444,
+              "reference_count": 144,
+              "tolerance_ms": 10.0
+            }
+          ],
+          "downbeats_f32_rounding_aware": [
+            {
+              "exact_count_equal": true,
+              "f_measure": 1.0,
+              "float_conversion_allowance_ms": 0.01,
+              "matched": 144,
+              "matched_error_max_ms": 20.00366210937443,
+              "matched_error_mean_ms": 3.612346765066031,
+              "matched_error_p95_ms": 20.001220703122158,
+              "matching": "ordered one-to-one",
+              "precision": 1.0,
+              "predicted_count": 144,
+              "recall": 1.0,
+              "reference_count": 144,
+              "tolerance_ms": 70.0
+            },
+            {
+              "exact_count_equal": true,
+              "f_measure": 1.0,
+              "float_conversion_allowance_ms": 0.01,
+              "matched": 144,
+              "matched_error_max_ms": 20.00366210937443,
+              "matched_error_mean_ms": 3.612346765066031,
+              "matched_error_p95_ms": 20.001220703122158,
+              "matching": "ordered one-to-one",
+              "precision": 1.0,
+              "predicted_count": 144,
+              "recall": 1.0,
+              "reference_count": 144,
+              "tolerance_ms": 20.0
+            },
+            {
+              "exact_count_equal": true,
+              "f_measure": 0.8194444444444444,
+              "float_conversion_allowance_ms": 0.01,
+              "matched": 118,
+              "matched_error_max_ms": 0.00732421875682121,
+              "matched_error_mean_ms": 0.001507916690934957,
+              "matched_error_p95_ms": 0.005493164053405053,
+              "matching": "ordered one-to-one",
+              "precision": 0.8194444444444444,
+              "predicted_count": 144,
+              "recall": 0.8194444444444444,
+              "reference_count": 144,
+              "tolerance_ms": 10.0
+            }
+          ],
+          "path": "/tmp/pulsedeck-beat-this-rs/tests/fixtures/golden_full.json",
+          "provenance": {
+            "audio": "It Don't Mean A Thing - Kings of Swing.mp3",
+            "beat_this_commit": "b95c8ab0c58c2d9fcfd40508ae8dffbc05ac4f5c",
+            "beat_this_version": "1.1.0",
+            "checkpoint": "models/final0.ckpt",
+            "command": "uv run scripts/gen_golden.py models/final0.ckpt tests/fixtures/golden_full.json",
+            "fps": 50,
+            "postprocessing": "minimal"
+          },
+          "sha256": "2757b6c80d1c27b5d8ff2e752c9ce3910813672baa0356517ad4cd52668d3a5b"
+        },
+        "source": {
+          "repository": "https://github.com/danigb/beat-this-rs",
+          "commit": "1ae768e78f1ad83b0ed3886241dc29ffde853c40",
+          "audio_path": "test_files/It Don't Mean A Thing - Kings of Swing.mp3",
+          "golden_path": "tests/fixtures/golden_full.json"
+        }
+      },
+      {
+        "case_id": "giantsteps_1030011",
+        "audio": {
+          "decoded_sample_rate": 44100,
+          "decoder": "ffmpeg stereo f32le to memory; no source PCM export",
+          "duration_seconds": 120.0,
+          "filename": "pulsedeck-1030011.LOFI.mp3",
+          "sha256": "cf2bf938c3aaa19dea5a399336539575ba7c14043b638aa10fcde57697f709ff"
+        },
+        "published_tempo_bpm": 127.0,
+        "legacy": {
+          "analysis_seconds": 0.03043875,
+          "phase": null,
+          "tempo": {
+            "ambiguous": true,
+            "bpm": 126.0,
+            "candidates": [
+              {
+                "bpm": 126.0,
+                "score": 0.5291144251823425
+              },
+              {
+                "bpm": 84.0,
+                "score": 0.5202698111534119
+              },
+              {
+                "bpm": 63.01,
+                "score": 0.47831323742866516
+              },
+              {
+                "bpm": 100.8,
+                "score": 0.43833664059638977
+              }
+            ],
+            "confidence": 0.5208278298377991
+          }
+        },
+        "legacy_tempo_error": {
+          "absolute_bpm": 1.0,
+          "relative_percent": 0.7874015748031497,
+          "within_4_percent_allowing_half_double": true,
+          "within_4_percent_exact_tempo": true
+        },
+        "neural_single_interval_bpm_before": 125.00011920940324,
+        "neural_multi_beat_bpm_after": 125.98426962804695,
+        "neural_tempo_error_after": {
+          "absolute_bpm": 1.0157303719530546,
+          "relative_percent": 0.7997876944512241,
+          "within_4_percent_allowing_half_double": true,
+          "within_4_percent_exact_tempo": true
+        },
+        "beat_count": 252,
+        "downbeat_count": 106,
+        "all_event_timestamps_unchanged": true,
+        "first_12_beats_seconds": [
+          0.20000000298023224,
+          0.6600000262260437,
+          1.1399999856948853,
+          1.6200000047683716,
+          2.0799999237060547,
+          2.559999942779541,
+          3.0399999618530273,
+          3.5199999809265137,
+          4.0,
+          4.460000038146973,
+          4.940000057220459,
+          5.420000076293945
+        ],
+        "first_12_downbeats_seconds": [
+          0.20000000298023224,
+          2.0799999237060547,
+          4.0,
+          5.900000095367432,
+          7.800000190734863,
+          8.760000228881836,
+          9.720000267028809,
+          11.600000381469727,
+          13.520000457763672,
+          15.420000076293945,
+          17.31999969482422,
+          19.219999313354492
+        ],
+        "observed_beat_gaps_between_downbeats": {
+          "2": 85,
+          "4": 20
+        },
+        "neural_analysis_seconds_before": 4.321742625,
+        "neural_analysis_seconds_after": 4.321916375,
+        "neural_real_time_factor": 0.036015969791666665,
+        "uncalibrated_beat_activation_mean": 0.9999662637710571,
+        "uncalibrated_downbeat_activation_mean": 0.9341470003128052,
+        "python_reference": null,
+        "source": {
+          "repository": "https://github.com/GiantSteps/giantsteps-tempo-dataset",
+          "commit": "d51ab2422e76abacfaa86616a57054bc222ec9fd",
+          "audio_url": "https://www.cp.jku.at/datasets/giantsteps/backup/1030011.LOFI.mp3",
+          "tempo_annotation_path": "annotations_v2/tempo/1030011.LOFI.bpm",
+          "expected_dataset_md5": "b74960065c4493b89b56c3e49671f90d",
+          "dataset_md5_verified": true
+        }
+      },
+      {
+        "case_id": "giantsteps_1068430",
+        "audio": {
+          "decoded_sample_rate": 44100,
+          "decoder": "ffmpeg stereo f32le to memory; no source PCM export",
+          "duration_seconds": 120.0,
+          "filename": "pulsedeck-1068430.LOFI.mp3",
+          "sha256": "afca4282260c00e1f365c9779636b670e80f9eaf29f180fe272c609996b116c4"
+        },
+        "published_tempo_bpm": 174.0,
+        "legacy": {
+          "analysis_seconds": 0.030704792,
+          "phase": null,
+          "tempo": {
+            "ambiguous": false,
+            "bpm": 87.49,
+            "candidates": [
+              {
+                "bpm": 87.49,
+                "score": 0.7047643065452576
+              },
+              {
+                "bpm": 116.66,
+                "score": 0.5404940247535706
+              },
+              {
+                "bpm": 174.92,
+                "score": 0.5221665501594543
+              },
+              {
+                "bpm": 43.75,
+                "score": 0.4768921434879303
+              }
+            ],
+            "confidence": 0.9245492815971375
+          }
+        },
+        "legacy_tempo_error": {
+          "absolute_bpm": 86.51,
+          "relative_percent": 49.7183908045977,
+          "within_4_percent_allowing_half_double": true,
+          "within_4_percent_exact_tempo": false
+        },
+        "neural_single_interval_bpm_before": 176.47050903746256,
+        "neural_multi_beat_bpm_after": 175.18247352042027,
+        "neural_tempo_error_after": {
+          "absolute_bpm": 1.1824735204202739,
+          "relative_percent": 0.6795824830001574,
+          "within_4_percent_allowing_half_double": true,
+          "within_4_percent_exact_tempo": true
+        },
+        "beat_count": 361,
+        "downbeat_count": 91,
+        "all_event_timestamps_unchanged": true,
+        "first_12_beats_seconds": [
+          0.0,
+          0.36000001430511475,
+          0.7200000286102295,
+          1.059999942779541,
+          1.399999976158142,
+          1.7400000095367432,
+          2.0799999237060547,
+          2.4200000762939453,
+          2.759999990463257,
+          3.119999885559082,
+          3.4600000381469727,
+          3.799999952316284
+        ],
+        "first_12_downbeats_seconds": [
+          0.0,
+          1.399999976158142,
+          2.759999990463257,
+          4.139999866485596,
+          5.519999980926514,
+          6.880000114440918,
+          8.260000228881836,
+          9.619999885559082,
+          11.0,
+          12.359999656677246,
+          13.739999771118164,
+          15.100000381469727
+        ],
+        "observed_beat_gaps_between_downbeats": {
+          "1": 3,
+          "4": 80,
+          "5": 6,
+          "6": 1
+        },
+        "neural_analysis_seconds_before": 4.323014958,
+        "neural_analysis_seconds_after": 4.327503958,
+        "neural_real_time_factor": 0.03606253298333333,
+        "uncalibrated_beat_activation_mean": 0.9796245098114014,
+        "uncalibrated_downbeat_activation_mean": 0.9874405264854431,
+        "python_reference": null,
+        "source": {
+          "repository": "https://github.com/GiantSteps/giantsteps-tempo-dataset",
+          "commit": "d51ab2422e76abacfaa86616a57054bc222ec9fd",
+          "audio_url": "https://www.cp.jku.at/datasets/giantsteps/backup/1068430.LOFI.mp3",
+          "tempo_annotation_path": "annotations_v2/tempo/1068430.LOFI.bpm",
+          "expected_dataset_md5": "a5a86165d232b8d6be20654f20397579",
+          "dataset_md5_verified": true
+        }
+      },
+      {
+        "case_id": "giantsteps_5377710",
+        "audio": {
+          "decoded_sample_rate": 44100,
+          "decoder": "ffmpeg stereo f32le to memory; no source PCM export",
+          "duration_seconds": 120.0,
+          "filename": "pulsedeck-5377710.LOFI.mp3",
+          "sha256": "8f33f664cc867d148aac19cae3efd501b9b9f2d1e322e866a5615f4e8aa041ea"
+        },
+        "published_tempo_bpm": 129.0,
+        "legacy": {
+          "analysis_seconds": 0.030575417,
+          "phase": null,
+          "tempo": {
+            "ambiguous": true,
+            "bpm": 64.0,
+            "candidates": [
+              {
+                "bpm": 64.0,
+                "score": 0.271681010723114
+              },
+              {
+                "bpm": 85.31,
+                "score": 0.2549225687980652
+              },
+              {
+                "bpm": 127.99,
+                "score": 0.2213975042104721
+              },
+              {
+                "bpm": 170.63,
+                "score": 0.20981468260288239
+              }
+            ],
+            "confidence": 0.20261748135089874
+          }
+        },
+        "legacy_tempo_error": {
+          "absolute_bpm": 65.0,
+          "relative_percent": 50.3875968992248,
+          "within_4_percent_allowing_half_double": true,
+          "within_4_percent_exact_tempo": false
+        },
+        "neural_single_interval_bpm_before": 130.43396054301044,
+        "neural_multi_beat_bpm_after": 128.0,
+        "neural_tempo_error_after": {
+          "absolute_bpm": 1.0,
+          "relative_percent": 0.7751937984496124,
+          "within_4_percent_allowing_half_double": true,
+          "within_4_percent_exact_tempo": true
+        },
+        "beat_count": 253,
+        "downbeat_count": 66,
+        "all_event_timestamps_unchanged": true,
+        "first_12_beats_seconds": [
+          0.18000000715255737,
+          0.6399999856948853,
+          1.100000023841858,
+          1.5800000429153442,
+          2.0399999618530273,
+          2.5,
+          2.9800000190734863,
+          3.440000057220459,
+          3.9000000953674316,
+          4.380000114440918,
+          4.840000152587891,
+          5.320000171661377
+        ],
+        "first_12_downbeats_seconds": [
+          1.5800000429153442,
+          3.440000057220459,
+          5.320000171661377,
+          7.199999809265137,
+          9.0600004196167,
+          10.9399995803833,
+          12.819999694824219,
+          14.680000305175781,
+          16.559999465942383,
+          18.440000534057617,
+          20.31999969482422,
+          22.200000762939453
+        ],
+        "observed_beat_gaps_between_downbeats": {
+          "1": 3,
+          "3": 2,
+          "4": 60
+        },
+        "neural_analysis_seconds_before": 4.323467792,
+        "neural_analysis_seconds_after": 4.322513625,
+        "neural_real_time_factor": 0.036020946875,
+        "uncalibrated_beat_activation_mean": 0.9917215704917908,
+        "uncalibrated_downbeat_activation_mean": 0.9827467203140259,
+        "python_reference": null,
+        "source": {
+          "repository": "https://github.com/GiantSteps/giantsteps-tempo-dataset",
+          "commit": "d51ab2422e76abacfaa86616a57054bc222ec9fd",
+          "audio_url": "https://www.cp.jku.at/datasets/giantsteps/backup/5377710.LOFI.mp3",
+          "tempo_annotation_path": "annotations_v2/tempo/5377710.LOFI.bpm",
+          "expected_dataset_md5": "2ebf89c20b4d52c6a60bd033badcccf8",
+          "dataset_md5_verified": true
+        }
+      }
+    ]
+  }
+}

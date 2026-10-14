@@ -1,4 +1,15 @@
-# Offline musical analysis, version 3
+# Offline musical analysis, version 11
+
+`analyze_neural_rhythm` additionally runs the pinned full Beat This! `final0` model
+through a pure Rust RTen runtime. It returns complete beat/downbeat timelines,
+median BPM, separate uncalibrated model activation scores, provenance and elapsed
+analysis time. Missing assets, silence and invalid/fewer-than-four event results
+return an explicit error. Default BSD DBN postprocessing selects competing
+whole-track 3/4/5/7 meter hypotheses at 55–300 BPM; it preserves nonuniform selected
+event times but does constrain meter/tempo. Concave beat-logit maxima are refined by at most half a frame (10 ms); all downbeats share the same refined beat events. This improves measured timing without claiming sample precision. No madmom model weights are used.
+Independent acoustic bar recurrence can override a conflicting meter on sufficiently supported material. Explicit half-pulse reconstructions and guarded phase replacements remain visible in `bar_evidence` and require review. These heuristics have measured failures; see [labeled validation](../../research/labeled-rhythm-validation.md).
+Benchmark-only minimal mode leaves raw peak timing unconstrained. See
+[model setup and limits](../../src-tauri/resources/beat-models/README.md).
 
 This crate implements independent public DSP for decoded stereo PCM. It does not
 load rekordbox models, call proprietary analysis libraries, read provider tokens,

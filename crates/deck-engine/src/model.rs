@@ -29,6 +29,12 @@ pub struct TrackAnalysis {
     #[serde(default)]
     pub beatgrid_source: Option<String>,
     #[serde(default)]
+    pub neural_rhythm: Option<audio_analysis::NeuralRhythm>,
+    #[serde(default)]
+    pub rhythm_error: Option<String>,
+    #[serde(default)]
+    pub manual_grid_anchor_index: Option<usize>,
+    #[serde(default)]
     pub key_candidates: Vec<audio_analysis::KeyCandidate>,
     /// Statistical major/minor estimate; ambiguous content retains alternatives.
     pub key: Option<String>,
@@ -180,6 +186,24 @@ pub struct DeckSnapshot {
     pub reverb: f32,
     pub bpm: Option<f64>,
     pub beatgrid_offset_seconds: f64,
+    /// A zero offset alone does not establish that a grid was detected.
+    #[serde(default)]
+    pub beatgrid_valid: bool,
+    /// Only a manually established origin identifies musical bar one.
+    #[serde(default)]
+    pub beatgrid_downbeat: bool,
+    #[serde(default)]
+    pub beatgrid_manual: bool,
+    #[serde(default)]
+    pub beatgrid_uniform: bool,
+    #[serde(default)]
+    pub beatgrid_anchor_index: Option<usize>,
+    #[serde(default)]
+    pub beat_position: Option<f64>,
+    #[serde(default)]
+    pub launch_pending: bool,
+    #[serde(default)]
+    pub launch_at_seconds: Option<f64>,
     pub pitch_semitones: f64,
     pub keylock: bool,
     pub preparation_pending: bool,
@@ -220,6 +244,19 @@ pub enum EngineCommand {
     },
     CancelRamps,
     Play {
+        deck: usize,
+    },
+    /// Start a cued deck on the clock deck's next grid boundary or explicit
+    /// future source timestamp. Both sources remain guarded until launch.
+    PlayQuantized {
+        deck: usize,
+        clock: usize,
+        clock_revision: u64,
+        #[serde(default)]
+        at_seconds: Option<f64>,
+        quantize: f64,
+    },
+    CancelLaunch {
         deck: usize,
     },
     Pause {
@@ -420,6 +457,8 @@ pub enum EngineCommand {
     SetBeatgrid {
         deck: usize,
         offset_seconds: f64,
+        #[serde(default)]
+        anchor_index: Option<usize>,
     },
 }
 impl EngineCommand {
@@ -428,6 +467,8 @@ impl EngineCommand {
         match self {
             Ramp { target, clock, .. } => target.deck().or(*clock),
             Play { deck }
+            | PlayQuantized { deck, .. }
+            | CancelLaunch { deck }
             | Pause { deck }
             | TogglePlay { deck }
             | Cue { deck }
@@ -480,6 +521,21 @@ impl EngineCommand {
             return Err("Deck must be 0 or 1".into());
         }
         match self {
+            PlayQuantized {
+                deck,
+                clock,
+                at_seconds,
+                quantize,
+                ..
+            } if *clock > 1
+                || deck == clock
+                || !quantize.is_finite()
+                || quantize.fract() != 0.0
+                || !(1.0..=256.0).contains(quantize)
+                || at_seconds.is_some_and(|s| !s.is_finite() || s < 0.0) =>
+            {
+                return Err("Quantized play requires distinct decks, a finite future timestamp and 1..256 grid beats".into());
+            }
             Ramp {
                 target,
                 value,

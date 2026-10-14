@@ -4,6 +4,7 @@
 mod automation_tests;
 mod decode;
 mod dsp;
+mod grid;
 mod model;
 mod recording;
 mod snapshot;
@@ -38,11 +39,17 @@ pub struct SourceLoadTicket {
     owner: usize,
 }
 enum Retired {
+    Grid(Arc<audio_analysis::NeuralRhythm>),
     Track(Arc<TrackData>),
     Recorder(recording::Recorder),
 }
 enum RenderCommand {
     Fence(u64),
+    UpdateGrid {
+        deck: usize,
+        revision: u64,
+        grid: Arc<audio_analysis::NeuralRhythm>,
+    },
     Unload {
         revision: u64,
         deck: usize,
@@ -94,15 +101,31 @@ impl RenderState {
         // At most 64 commands per callback, with space reserved before popping an
         // asset-changing command. A full retirement ring defers work; never free PCM here.
         for _ in 0..64 {
-            if self.retired.slots() < 3 {
+            if self.retired.slots() < 4 {
                 break;
             }
             let Ok(command) = self.commands.pop() else {
                 break;
             };
             match command {
+                RenderCommand::UpdateGrid {
+                    deck,
+                    revision,
+                    grid,
+                } => {
+                    if self.mixer.load_revisions[deck] == revision {
+                        if let Some(old) = self.mixer.update_grid(deck, grid) {
+                            let _ = self.retired.push(Retired::Grid(old));
+                        }
+                    } else {
+                        let _ = self.retired.push(Retired::Grid(grid));
+                    }
+                }
                 RenderCommand::Fence(sequence) => self.mixer.applied_fence = sequence,
                 RenderCommand::Unload { deck, revision } => {
+                    if let Some(old) = self.mixer.decks[deck].grid.take() {
+                        let _ = self.retired.push(Retired::Grid(old));
+                    }
                     self.mixer.load_revisions[deck] = revision;
                     for track in self.mixer.unload(deck).into_iter().flatten() {
                         let _ = self.retired.push(Retired::Track(track));
@@ -123,6 +146,9 @@ impl RenderState {
                     track,
                     revision,
                 } => {
+                    if let Some(old) = self.mixer.decks[deck].grid.take() {
+                        let _ = self.retired.push(Retired::Grid(old));
+                    }
                     self.mixer.load_revisions[deck] = revision;
                     if !track.analysis.recording_allowed {
                         if let Some(old) = self.recording.take() {
@@ -143,6 +169,9 @@ impl RenderState {
                     track,
                     generation,
                 } => {
+                    if let Some(old) = self.mixer.decks[deck].grid.take() {
+                        let _ = self.retired.push(Retired::Grid(old));
+                    }
                     if !track.analysis.recording_allowed {
                         if let Some(old) = self.recording.take() {
                             old.stats.active.store(false, Ordering::Release);
@@ -368,6 +397,7 @@ impl EngineHandle {
                 while let Ok(retired) = retire_consumer.pop() {
                     match retired {
                         Retired::Track(track) => drop(track),
+                        Retired::Grid(grid) => drop(grid),
                         Retired::Recorder(recorder) => drop(recorder),
                     }
                 }
@@ -581,10 +611,139 @@ impl EngineHandle {
     }
     pub fn command_for_revision(
         &self,
-        command: EngineCommand,
+        mut command: EngineCommand,
         expected: Option<u64>,
     ) -> Result<(), String> {
         command.validate()?;
+        let transport = if matches!(
+            command,
+            EngineCommand::Play { .. }
+                | EngineCommand::TogglePlay { .. }
+                | EngineCommand::PlayQuantized { .. }
+        ) {
+            self.snapshot()
+        } else {
+            self.transport_snapshot()
+        };
+        if let EngineCommand::Play { deck } | EngineCommand::TogglePlay { deck } = command {
+            let d = &transport.decks[deck];
+            if d.launch_pending {
+                if matches!(command, EngineCommand::TogglePlay { .. }) {
+                    command = EngineCommand::CancelLaunch { deck };
+                } else {
+                    return Ok(());
+                }
+            } else if !d.playing && d.sync_enabled {
+                let clock = transport
+                    .decks
+                    .iter()
+                    .position(|d| d.is_master)
+                    .unwrap_or(1 - deck);
+                if clock != deck && transport.decks[clock].playing {
+                    command = EngineCommand::PlayQuantized {
+                        deck,
+                        clock,
+                        clock_revision: transport.load_revisions[clock],
+                        at_seconds: None,
+                        quantize: 1.0,
+                    };
+                }
+            }
+        }
+        if let EngineCommand::Sync { deck }
+        | EngineCommand::SetSync {
+            deck,
+            enabled: true,
+        } = command
+        {
+            let master = transport
+                .decks
+                .iter()
+                .position(|d| d.is_master)
+                .unwrap_or(0);
+            let clock = if master == deck { 1 - deck } else { master };
+            if !transport.decks[deck].beatgrid_valid || !transport.decks[clock].beatgrid_valid {
+                return Err(
+                    "Beat sync requires detected or manually aligned grids on both decks".into(),
+                );
+            }
+        }
+        if let EngineCommand::PlayQuantized {
+            deck,
+            clock,
+            clock_revision,
+            at_seconds,
+            quantize,
+        } = command
+        {
+            let a = &transport.decks[clock];
+            let b = &transport.decks[deck];
+            if self.load_revision(clock) != clock_revision {
+                return Err("Loaded source revision conflict on launch clock".into());
+            }
+            if !transport.running || !a.playing || b.playing {
+                return Err("Quantized launch requires running audio, a playing clock and a paused incoming deck".into());
+            }
+            if !a.beatgrid_valid || !b.beatgrid_valid {
+                return Err(
+                    "Quantized launch requires detected or manually aligned grids on both decks"
+                        .into(),
+                );
+            }
+            if a.jog_touch
+                || b.jog_touch
+                || a.loop_start_seconds.is_some()
+                || b.loop_start_seconds.is_some()
+            {
+                return Err("Release jog holds and loops before scheduling a launch".into());
+            }
+            if b.preparation_pending {
+                return Err(
+                    "Wait for incoming tempo/pitch preparation before scheduling a launch".into(),
+                );
+            }
+            let (Some(a_bpm), Some(b_bpm)) = (a.bpm, b.bpm) else {
+                return Err("Quantized launch requires BPM on both decks".into());
+            };
+            if !(b.sync_enabled && a.is_master)
+                && (a_bpm * a.playback_rate - b_bpm * b.playback_rate).abs() > 0.01
+            {
+                return Err("Match effective BPM within 0.01 before scheduling a launch".into());
+            }
+            let beat = a
+                .grid_position(a.position_seconds)
+                .ok_or("Clock grid is unavailable")?;
+            let at = at_seconds.unwrap_or(
+                a.grid_time(((beat / quantize).floor() + 1.0) * quantize)
+                    .ok_or("Clock grid is unavailable")?,
+            );
+            if at <= a.position_seconds
+                || (a.snapped_grid_time(at).ok_or("Clock grid is unavailable")? - at).abs() > 0.001
+            {
+                return Err("Launch timestamp must be a future beat on the clock grid".into());
+            }
+            let entry = b
+                .snapped_grid_time(b.position_seconds)
+                .ok_or("Incoming grid is unavailable")?;
+            let tracks = self
+                .shared
+                .tracks
+                .lock()
+                .map_err(|_| "Track cache poisoned")?;
+            if tracks[clock]
+                .as_ref()
+                .is_none_or(|t| at >= t.duration_seconds)
+                || tracks[deck]
+                    .as_ref()
+                    .is_none_or(|t| entry < 0.0 || entry >= t.duration_seconds)
+            {
+                return Err(
+                    "Launch clock and snapped incoming entry must lie inside their tracks".into(),
+                );
+            }
+            // Explicit phrase timestamps stay fixed; next-boundary requests
+            // resolve inside the renderer so queue latency cannot miss a beat.
+        }
         let command_deck = command.deck();
         let preparation_deck = match &command {
             EngineCommand::SetTempo { deck, .. }
@@ -976,11 +1135,23 @@ impl EngineHandle {
             analysis.bpm_source = current.bpm_source;
             analysis.bpm_confidence = current.bpm_confidence;
             analysis.bpm_ambiguous = false;
-            let phase =
-                audio_analysis::estimate_phase(&source.samples, source.sample_rate, analysis.bpm);
-            analysis.beatgrid_offset_seconds = phase.as_ref().map(|p| p.offset_seconds);
-            analysis.beatgrid_confidence = phase.map(|p| p.confidence);
-            analysis.beatgrid_source = analysis.beatgrid_offset_seconds.map(|_| "tag".into());
+            if analysis.neural_rhythm.is_none() {
+                let phase = audio_analysis::estimate_phase(
+                    &source.samples,
+                    source.sample_rate,
+                    analysis.bpm,
+                );
+                analysis.beatgrid_offset_seconds = phase.as_ref().map(|p| p.offset_seconds);
+                analysis.beatgrid_confidence = phase.map(|p| p.confidence);
+                analysis.beatgrid_source = analysis.beatgrid_offset_seconds.map(|_| "tag".into());
+            }
+        }
+        if analysis.neural_rhythm.is_none() {
+            analysis.neural_rhythm = current.neural_rhythm.clone();
+            if analysis.neural_rhythm.is_some() {
+                analysis.beatgrid_offset_seconds = current.beatgrid_offset_seconds;
+                analysis.beatgrid_source = current.beatgrid_source.clone();
+            }
         }
         let mut tracks = self
             .shared
@@ -993,6 +1164,29 @@ impl EngineHandle {
                 .is_none_or(|track| track.id != analysis.id)
         {
             return Err("Track changed during analysis".into());
+        }
+        let transport = self.transport_snapshot();
+        let d = &transport.decks[deck];
+        if d.beatgrid_manual {
+            analysis.beatgrid_source = Some("manual".into());
+            analysis.beatgrid_offset_seconds = Some(d.beatgrid_offset_seconds);
+            let previous_anchor = current
+                .neural_rhythm
+                .as_ref()
+                .and_then(|g| d.beatgrid_anchor_index.and_then(|i| g.beats_seconds.get(i)))
+                .copied()
+                .unwrap_or(d.beatgrid_offset_seconds);
+            analysis.manual_grid_anchor_index = analysis
+                .neural_rhythm
+                .as_ref()
+                .map(|g| crate::grid::nearest_index(&g.beats_seconds, previous_anchor));
+        }
+        if let Some(grid) = analysis.neural_rhythm.clone() {
+            self.enqueue(RenderCommand::UpdateGrid {
+                deck,
+                revision: transport.load_revisions[deck],
+                grid: Arc::new(grid),
+            })?;
         }
         tracks[deck] = Some(analysis.clone());
         self.shared
@@ -1687,6 +1881,27 @@ mod realtime_audit {
             })
             .ok()
             .unwrap();
+        for shift in [0.0, 0.01] {
+            let grid = Arc::new(audio_analysis::NeuralRhythm {
+                beats_seconds: vec![0.2 + shift, 0.7 + shift, 1.3 + shift, 1.9 + shift],
+                downbeats_seconds: vec![0.2 + shift],
+                bpm: 120.0,
+                beat_confidence: 0.8,
+                downbeat_confidence: 0.7,
+                model: "allocation-fixture".into(),
+                analysis_seconds: 0.0,
+                bar_evidence: Vec::new(),
+                beats_per_bar: None,
+            });
+            producer
+                .push(RenderCommand::UpdateGrid {
+                    deck: 0,
+                    revision: 0,
+                    grid,
+                })
+                .ok()
+                .unwrap();
+        }
         for command in [
             EngineCommand::Play { deck: 0 },
             EngineCommand::SetEq {
@@ -2012,6 +2227,7 @@ mod reanalysis_tests {
                 bpm: 128.0,
             },
             EngineCommand::SetBeatgrid {
+                anchor_index: None,
                 deck: 0,
                 offset_seconds: 0.12,
             },

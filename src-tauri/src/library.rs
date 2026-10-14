@@ -42,6 +42,9 @@ pub struct AnalysisMetadata {
     pub waveform_bands: Option<WaveformBands>,
     pub beatgrid_confidence: Option<f32>,
     pub beatgrid_source: Option<String>,
+    pub neural_rhythm: Option<audio_analysis::NeuralRhythm>,
+    pub rhythm_error: Option<String>,
+    pub manual_grid_anchor_index: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -170,7 +173,7 @@ impl Library {
         let json: Option<String> = self
             .db
             .query_row(
-                "SELECT metadata FROM spotify_analysis WHERE uri=?1 AND (version=?2 OR (?2=3 AND version=2))",
+                "SELECT metadata FROM spotify_analysis WHERE uri=?1 AND version BETWEEN 2 AND ?2",
                 params![uri, audio_analysis::ANALYSIS_VERSION],
                 |row| row.get(0),
             )
@@ -180,8 +183,7 @@ impl Library {
             .and_then(|json| serde_json::from_str::<deck_engine::TrackAnalysis>(&json).ok())
             .filter(|a| {
                 a.path == uri
-                    && (a.analysis_version == audio_analysis::ANALYSIS_VERSION
-                        || (audio_analysis::ANALYSIS_VERSION == 3 && a.analysis_version == 2))
+                    && (2..=audio_analysis::ANALYSIS_VERSION).contains(&a.analysis_version)
                     && !a.recording_allowed
                     && a.waveform.len() == 4096
                     && a.waveform_bands.as_ref().is_some_and(|b| {
@@ -250,6 +252,9 @@ impl Library {
                 grid_offset = previous.beatgrid_offset_seconds;
                 metadata.beatgrid_source = Some("manual".into());
                 metadata.beatgrid_confidence = None;
+                if track.analysis.beatgrid_source.as_deref() != Some("manual") {
+                    metadata.manual_grid_anchor_index = previous.analysis.manual_grid_anchor_index;
+                }
             }
 
             if previous
@@ -380,6 +385,30 @@ impl Library {
                 .map_err(|e| e.to_string())?;
         }
         Ok(())
+    }
+
+    pub fn manual_grid(
+        &self,
+        path: &str,
+        offset: f64,
+        anchor: Option<usize>,
+    ) -> Result<(), String> {
+        let transaction = self.db.unchecked_transaction().map_err(|e| e.to_string())?;
+        self.metadata(path, None, None, Some(offset))?;
+        if let Some(record) = self.track_by_path(path)? {
+            let mut analysis = record.analysis;
+            analysis.manual_grid_anchor_index = anchor;
+            self.db
+                .execute(
+                    "UPDATE tracks SET analysis_json=?1 WHERE path=?2",
+                    params![
+                        serde_json::to_string(&analysis).map_err(|e| e.to_string())?,
+                        path
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+        }
+        transaction.commit().map_err(|e| e.to_string())
     }
 
     pub fn playlists(&self) -> Result<Vec<Playlist>, String> {
@@ -744,6 +773,17 @@ pub fn export_xml(tracks: &[TrackRecord], playlists: &[Playlist]) -> Result<Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reanalysis_can_persist_a_remapped_manual_anchor_without_losing_the_origin() {
+        let lib = Library::from_connection(Connection::open_in_memory().unwrap()).unwrap();
+        let saved = lib.upsert(&track()).unwrap();
+        lib.manual_grid(&saved.path, 1.4, Some(2)).unwrap();
+        let mut updated = lib.track_by_path(&saved.path).unwrap().unwrap();
+        updated.analysis.manual_grid_anchor_index = Some(3);
+        let updated = lib.upsert(&updated).unwrap();
+        assert_eq!(updated.beatgrid_offset_seconds, 1.4);
+        assert_eq!(updated.analysis.manual_grid_anchor_index, Some(3));
+    }
     #[test]
     fn song_tags_survive_reimport_and_restart_without_changing_track_metadata() {
         let path = std::env::temp_dir().join(format!("pd-tags-{}.sqlite", std::process::id()));

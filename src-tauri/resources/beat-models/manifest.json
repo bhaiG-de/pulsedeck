@@ -1,0 +1,52 @@
+{
+  "model": "Beat This! final0 FP32",
+  "code_repository": "https://github.com/CPJKU/beat_this",
+  "code_and_weights_license": "MIT",
+  "port_repository": "https://github.com/danigb/beat-this-rs",
+  "port_revision": "1ae768e78f1ad83b0ed3886241dc29ffde853c40",
+  "runtime_crate": "beat-this = 1.1.0, RTen = 0.24.0",
+  "frame_rate_hz": 50,
+  "assets": [
+    {
+      "filename": "beat_this.onnx",
+      "url": "https://github.com/danigb/beat-this-rs/releases/download/model-large/beat_this.onnx",
+      "bytes": 83162650,
+      "sha256": "5f810debe53459b559127fb55bbad40035bb47cc567b20e501670f968c770f02",
+      "checkpoint": "CPJKU final0, exported FP32 via port scripts/ckpt2onnx.py",
+      "github_release_id": 331004771,
+      "github_asset_id": 432275383
+    },
+    {
+      "filename": "mel_spectrogram.onnx",
+      "url": "https://raw.githubusercontent.com/danigb/beat-this-rs/1ae768e78f1ad83b0ed3886241dc29ffde853c40/models/mel_spectrogram.onnx",
+      "bytes": 270742,
+      "sha256": "fdd59e65c515331308e4c8841edf99972deca646bdf6197744c2a5b7755e3de9"
+    }
+  ],
+  "upstream_license_url": "https://github.com/CPJKU/beat_this#license",
+  "postprocessing": {
+    "default": "madmom-style DBN, competing whole-track 3/4 meter hypotheses",
+    "decoder_repository": "https://github.com/creightonlinza/madmom-beats-port",
+    "decoder_revision": "b5052828507dfee6f5329a9f1a9852732ac38990",
+    "decoder_source_path": "rust/madmom_beats_port_core/src/dbn.rs",
+    "original_source_sha256": "9841543a5a4b3c9f6e0544a90d10e4c4030bb7f1791d42ab1e714c01976007f2",
+    "license": "BSD-2-Clause (decoder source only; no madmom model weights)",
+    "fps": 50,
+    "beats_per_bar": [
+      3,
+      4
+    ],
+    "min_bpm": 55,
+    "max_bpm": 300,
+    "num_tempi": 60,
+    "transition_lambda": 100,
+    "observation_lambda": 16,
+    "threshold": 0.05,
+    "correct": true,
+    "extra_peak_refinement": false,
+    "traceback_block_frames": 256,
+    "benchmark_only_override": "PULSEDECK_BEAT_POSTPROCESS=minimal",
+    "upstream_max_bpm": 215,
+    "dj_tempo_range_reason": "55\u2013300 BPM retains fast music; exact-activation comparison recovers 227.488 BPM swing while all three sampled EDM event arrays remain identical"
+  }
+}

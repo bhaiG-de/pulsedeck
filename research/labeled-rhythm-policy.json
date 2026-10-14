@@ -1,0 +1,47 @@
+{
+  "date": "2026-10-14T09:04:36.185623+00:00",
+  "selected_policy": "DBN meters [3,4,5,7],55\u2013300 BPM; bounded beat-logit quadratic timing \u00b110ms; preserve nonuniform events",
+  "development_tracks": 219,
+  "evaluation_tracks": 780,
+  "selection_reason": "On 219 development clips, strict beat/downbeat F1 improved at20ms;70ms scores/tempo exact improved slightly. No evaluation scores inspected. Minimal postprocessing had lower beat/tempo continuity.",
+  "source_sha256": {
+    "crates/audio-analysis/src/dbn/mod.rs": "74ecf26358a84a3754d51f69ba54a797a257f51ba631c1af1be0fb23cd8275a9",
+    "crates/audio-analysis/src/dbn/decoder.rs": "5dd936e8ab64c3c44cc991bd47d1f6b5e999ffe8da450165bd8f94d524aa0ab6",
+    "crates/audio-analysis/src/neural.rs": "64e24ef5cc818c97119f52dfd91ceacb2d15715bab37cf6cae93a248abc1fd7e",
+    "crates/audio-analysis/examples/labeled_worker.rs": "a44b8834ab258512ee7514e9e795c215a532a028430014898c658e730dbed382"
+  },
+  "evaluation_observation": "Policy source frozen before scoring evaluation; keep negative results and do not retune this score.",
+  "historical_policy_note": "Initial version-6 policy was frozen before the first evaluation. Subsequent versions used Spotify stress cases and reused this evaluation partition; current scores are regression evaluation, not a fresh held-out policy test.",
+  "current_policy": {
+    "analysis_version": 11,
+    "frozen_at": "2026-10-14T10:48:42.699869+00:00",
+    "description": "Version10 plus moderate-bar half-pulse guard requiring >=60% dominant intervals and both flanks within +/-15%; split only individual 1.6-2.4x intervals, preserve normal boundary intervals; retain warnings and recurrence evidence",
+    "evaluation_scope": "Reused GTZAN regression partition; final0 excludes GTZAN per authors; no Rekordbox baseline",
+    "source_sha256": {
+      "crates/audio-analysis/src/dbn/mod.rs": "90e11d735829a8c980b4fac596e4c48ce1378e44ee627b46d314942179593821",
+      "crates/audio-analysis/src/dbn/bars.rs": "efa5fd112ae3ba5aefa102198d05adb92d8492ac62714f903c0977ee8784601b",
+      "crates/audio-analysis/src/dbn/decoder.rs": "5dd936e8ab64c3c44cc991bd47d1f6b5e999ffe8da450165bd8f94d524aa0ab6",
+      "crates/audio-analysis/src/neural.rs": "c52001de5c7fdcb8feddb502deabadf0a38b7e7e4985c1b70a3a0828097b0efa",
+      "crates/audio-analysis/examples/labeled_worker.rs": "b9125b17c641a406b8a96d027d0e5668785756ceee52608b9ea5847f5cfaabca"
+    }
+  },
+  "previous_policy": {
+    "analysis_version": 10,
+    "frozen_at": "2026-10-14T10:29:04.930346+00:00",
+    "description": "DBN [3,4,5,7], 55\u2013300 BPM; \u00b110 ms quadratic logit refinement; independent beat DBN plus beat-synchronous acoustic bar recurrence; guarded pulse midpoint reconstruction and dual-band half-phase replacement; explicit evidence/review flags",
+    "evaluation_scope": "GTZAN excluded from final0 model training according to upstream; clip partition reused for policy regression, known duplicates/annotation faults",
+    "source_sha256": {
+      "crates/audio-analysis/src/dbn/mod.rs": "90e11d735829a8c980b4fac596e4c48ce1378e44ee627b46d314942179593821",
+      "crates/audio-analysis/src/dbn/bars.rs": "980f7ec72675306decd365ed90de46d8d6ab31a83f0761cac2638168ba11dc6e",
+      "crates/audio-analysis/src/dbn/decoder.rs": "5dd936e8ab64c3c44cc991bd47d1f6b5e999ffe8da450165bd8f94d524aa0ab6",
+      "crates/audio-analysis/src/neural.rs": "c52001de5c7fdcb8feddb502deabadf0a38b7e7e4985c1b70a3a0828097b0efa",
+      "crates/audio-analysis/examples/labeled_worker.rs": "b9125b17c641a406b8a96d027d0e5668785756ceee52608b9ea5847f5cfaabca"
+    }
+  },
+  "runtime_source_sha256": {
+    "crates/audio-analysis/src/lib.rs": "1169430d644ccf464112e028341da5fc3279013c6a6ad367a7d3f699fbd56e5e",
+    "crates/deck-engine/src/dsp.rs": "eeaf666f8327ca252e1ec3ded90959b3d97b70e14f31c89524bec472ee79982b",
+    "crates/deck-engine/src/decode.rs": "7e081f7f54649157cd4ebc43e91f54b69e31a58c25e8e164b95b159f7c4a2bf6",
+    "src-tauri/src/track_inspection.rs": "647ca9f344d21114d6ddfe4eb5b42a99b18596ad007beb842bd3d281335ae273"
+  }
+}

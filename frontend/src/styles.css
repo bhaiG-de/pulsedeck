@@ -3363,3 +3363,6 @@ button svg {
 .track-tags input { width: 100%; min-width: 0; padding: 4px 6px; font-size: 10px; border: 1px solid var(--line); border-radius: 4px; color: inherit; background: transparent; }
 .track-tags input::placeholder { color: var(--muted); }
 .track-tag-error { font-size: 10px; color: #df6767; overflow-wrap: anywhere; }
+
+.grid-editor > small { flex-basis: 100%; color: var(--text-muted, #8595ae); font-size: 9px; }
+.transport .play { font-size: 9px; }

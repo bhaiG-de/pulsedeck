@@ -1,0 +1,581 @@
+{
+  "analysis_version": 11,
+  "method": "10 local files loaded through rebuilt packaged app; actual Symphonia decoding and analysis versus GTZAN v1.1 timestamps; preselected first clip per genre, mixed split, integration check only; both outputs muted and transport paused",
+  "mir_eval_version": "0.8.2",
+  "tracks": [
+    {
+      "id": "gtzan_blues_00000",
+      "genre": "blues",
+      "beats": {
+        "0": {
+          "f1_70": 0.9841269841269841,
+          "f1_20": 0.7619047619047619,
+          "f1_10": 0.4126984126984127,
+          "cmlc": 0.9841269841269841,
+          "cmlt": 0.9841269841269841,
+          "amlc": 0.9841269841269841,
+          "amlt": 0.9841269841269841
+        },
+        "5": {
+          "f1_70": 0.9811320754716981,
+          "f1_20": 0.7169811320754716,
+          "f1_10": 0.32075471698113206,
+          "cmlc": 0.9811320754716981,
+          "cmlt": 0.9811320754716981,
+          "amlc": 0.9811320754716981,
+          "amlt": 0.9811320754716981
+        }
+      },
+      "downbeats": {
+        "0": {
+          "f1_70": 0.9375,
+          "f1_20": 0.6875,
+          "f1_10": 0.5625,
+          "cmlc": 1.0,
+          "cmlt": 1.0,
+          "amlc": 1.0,
+          "amlt": 1.0
+        },
+        "5": {
+          "f1_70": 0.9285714285714286,
+          "f1_20": 0.6428571428571429,
+          "f1_10": 0.5,
+          "cmlc": 1.0,
+          "cmlt": 1.0,
+          "amlc": 1.0,
+          "amlt": 1.0
+        }
+      },
+      "reference_bpm": 125.38366094168354,
+      "predicted_bpm": 125.32430586321385,
+      "tempo_acc1": true,
+      "tempo_acc2": true,
+      "reference_meter_mode": 4,
+      "predicted_meter_mode": 4,
+      "reference_meter_changes": false,
+      "analysis_version": 11,
+      "model": "Beat This! final0 FP32 + DBN 3/4/5/7 55-300 BPM + acoustic bar/pulse/phase evidence + bounded logit timing / beat-this 1.1.0 / RTen 0.24.0",
+      "analysis_seconds": 2.061353167
+    },
+    {
+      "id": "gtzan_classical_00000",
+      "genre": "classical",
+      "beats": {
+        "0": {
+          "f1_70": 0.9574468085106385,
+          "f1_20": 0.5531914893617021,
+          "f1_10": 0.3191489361702128,
+          "cmlc": 1.0,
+          "cmlt": 1.0,
+          "amlc": 1.0,
+          "amlt": 1.0
+        },
+        "5": {
+          "f1_70": 0.9487179487179487,
+          "f1_20": 0.5641025641025641,
+          "f1_10": 0.358974358974359,
+          "cmlc": 1.0,
+          "cmlt": 1.0,
+          "amlc": 1.0,
+          "amlt": 1.0
+        }
+      },
+      "downbeats": {
+        "0": {
+          "f1_70": 1.0,
+          "f1_20": 0.4166666666666667,
+          "f1_10": 0.25,
+          "cmlc": 1.0,
+          "cmlt": 1.0,
+          "amlc": 1.0,
+          "amlt": 1.0
+        },
+        "5": {
+          "f1_70": 1.0,
+          "f1_20": 0.5,
+          "f1_10": 0.3,
+          "cmlc": 1.0,
+          "cmlt": 1.0,
+          "amlc": 1.0,
+          "amlt": 1.0
+        }
+      },
+      "reference_bpm": 94.33035275621499,
+      "predicted_bpm": 94.18620267367872,
+      "tempo_acc1": true,
+      "tempo_acc2": true,
+      "reference_meter_mode": 4,
+      "predicted_meter_mode": 4,
+      "reference_meter_changes": false,
+      "analysis_version": 11,
+      "model": "Beat This! final0 FP32 + DBN 3/4/5/7 55-300 BPM + acoustic bar/pulse/phase evidence + bounded logit timing / beat-this 1.1.0 / RTen 0.24.0",
+      "analysis_seconds": 2.155157
+    },
+    {
+      "id": "gtzan_country_00000",
+      "genre": "country",
+      "beats": {
+        "0": {
+          "f1_70": 0.8,
+          "f1_20": 0.7764705882352941,
+          "f1_10": 0.6588235294117646,
+          "cmlc": 0.7906976744186046,
+          "cmlt": 0.7906976744186046,
+          "amlc": 0.7906976744186046,
+          "amlt": 0.7906976744186046
+        },
+        "5": {
+          "f1_70": 0.9577464788732395,
+          "f1_20": 0.9295774647887323,
+          "f1_10": 0.7887323943661971,
+          "cmlc": 0.9444444444444444,
+          "cmlt": 0.9444444444444444,
+          "amlc": 0.9444444444444444,
+          "amlt": 0.9444444444444444
+        }
+      },
+      "downbeats": {
+        "0": {
+          "f1_70": 0.8181818181818182,
+          "f1_20": 0.7272727272727273,
+          "f1_10": 0.6363636363636364,
+          "cmlc": 1.0,
+          "cmlt": 1.0,
+          "amlc": 1.0,
+          "amlt": 1.0
+        },
+        "5": {
+          "f1_70": 1.0,
+          "f1_20": 0.8888888888888888,
+          "f1_10": 0.7777777777777778,
+          "cmlc": 1.0,
+          "cmlt": 1.0,
+          "amlc": 1.0,
+          "amlt": 1.0
+        }
+      },
+      "reference_bpm": 83.33333333333334,
+      "predicted_bpm": 84.43931849861683,
+      "tempo_acc1": true,
+      "tempo_acc2": true,
+      "reference_meter_mode": 4,
+      "predicted_meter_mode": 4,
+      "reference_meter_changes": false,
+      "analysis_version": 11,
+      "model": "Beat This! final0 FP32 + DBN 3/4/5/7 55-300 BPM + acoustic bar/pulse/phase evidence + bounded logit timing / beat-this 1.1.0 / RTen 0.24.0",
+      "analysis_seconds": 2.058151791
+    },
+    {
+      "id": "gtzan_disco_00000",
+      "genre": "disco",
+      "beats": {
+        "0": {
+          "f1_70": 1.0,
+          "f1_20": 0.8103448275862069,
+          "f1_10": 0.3793103448275862,
+          "cmlc": 1.0,
+          "cmlt": 1.0,
+          "amlc": 1.0,
+          "amlt": 1.0
+        },
+        "5": {
+          "f1_70": 1.0,
+          "f1_20": 0.875,
+          "f1_10": 0.4166666666666667,
+          "cmlc": 1.0,
+          "cmlt": 1.0,
+          "amlc": 1.0,
+          "amlt": 1.0
+        }
+      },
+      "downbeats": {
+        "0": {
+          "f1_70": 1.0,
+          "f1_20": 0.6666666666666666,
+          "f1_10": 0.20000000000000004,
+          "cmlc": 1.0,
+          "cmlt": 1.0,
+          "amlc": 1.0,
+          "amlt": 1.0
+        },
+        "5": {
+          "f1_70": 1.0,
+          "f1_20": 0.8333333333333334,
+          "f1_10": 0.25,
+          "cmlc": 1.0,
+          "cmlt": 1.0,
+          "amlc": 1.0,
+          "amlt": 1.0
+        }
+      },
+      "reference_bpm": 115.18387425760396,
+      "predicted_bpm": 115.25821505716878,
+      "tempo_acc1": true,
+      "tempo_acc2": true,
+      "reference_meter_mode": 4,
+      "predicted_meter_mode": 4,
+      "reference_meter_changes": false,
+      "analysis_version": 11,
+      "model": "Beat This! final0 FP32 + DBN 3/4/5/7 55-300 BPM + acoustic bar/pulse/phase evidence + bounded logit timing / beat-this 1.1.0 / RTen 0.24.0",
+      "analysis_seconds": 2.016523334
+    },
+    {
+      "id": "gtzan_hiphop_00000",
+      "genre": "hiphop",
+      "beats": {
+        "0": {
+          "f1_70": 1.0,
+          "f1_20": 0.6666666666666666,
+          "f1_10": 0.16666666666666666,
+          "cmlc": 1.0,
+          "cmlt": 1.0,
+          "amlc": 1.0,
+          "amlt": 1.0
+        },
+        "5": {
+          "f1_70": 1.0,
+          "f1_20": 0.78,
+          "f1_10": 0.20000000000000004,
+          "cmlc": 1.0,
+          "cmlt": 1.0,
+          "amlc": 1.0,
+          "amlt": 1.0
+        }
+      },
+      "downbeats": {
+        "0": {
+          "f1_70": 1.0,
+          "f1_20": 0.6666666666666666,
+          "f1_10": 0.13333333333333333,
+          "cmlc": 1.0,
+          "cmlt": 1.0,
+          "amlc": 1.0,
+          "amlt": 1.0
+        },
+        "5": {
+          "f1_70": 1.0,
+          "f1_20": 0.75,
+          "f1_10": 0.16666666666666666,
+          "cmlc": 1.0,
+          "cmlt": 1.0,
+          "amlc": 1.0,
+          "amlt": 1.0
+        }
+      },
+      "reference_bpm": 119.23244116003228,
+      "predicted_bpm": 119.21128326243796,
+      "tempo_acc1": true,
+      "tempo_acc2": true,
+      "reference_meter_mode": 4,
+      "predicted_meter_mode": 4,
+      "reference_meter_changes": false,
+      "analysis_version": 11,
+      "model": "Beat This! final0 FP32 + DBN 3/4/5/7 55-300 BPM + acoustic bar/pulse/phase evidence + bounded logit timing / beat-this 1.1.0 / RTen 0.24.0",
+      "analysis_seconds": 2.067579958
+    },
+    {
+      "id": "gtzan_jazz_00000",
+      "genre": "jazz",
+      "beats": {
+        "0": {
+          "f1_70": 0.48387096774193544,
+          "f1_20": 0.12903225806451613,
+          "f1_10": 0.08064516129032258,
+          "cmlc": 0.31746031746031744,
+          "cmlt": 0.49206349206349204,
+          "amlc": 0.31746031746031744,
+          "amlt": 0.49206349206349204
+        },
+        "5": {
+          "f1_70": 0.576923076923077,
+          "f1_20": 0.15384615384615385,
+          "f1_10": 0.09615384615384615,
+          "cmlc": 0.39622641509433965,
+          "cmlt": 0.6037735849056604,
+          "amlc": 0.39622641509433965,
+          "amlt": 0.6037735849056604
+        }
+      },
+      "downbeats": {
+        "0": {
+          "f1_70": 0.08695652173913045,
+          "f1_20": 0.0,
+          "f1_10": 0.0,
+          "cmlc": 0.0,
+          "cmlt": 0.0,
+          "amlc": 0.375,
+          "amlt": 0.375
+        },
+        "5": {
+          "f1_70": 0.1,
+          "f1_20": 0.0,
+          "f1_10": 0.0,
+          "cmlc": 0.0,
+          "cmlt": 0.0,
+          "amlc": 0.42857142857142855,
+          "amlt": 0.42857142857142855
+        }
+      },
+      "reference_bpm": 123.59984550019314,
+      "predicted_bpm": 120.97230863152303,
+      "tempo_acc1": true,
+      "tempo_acc2": true,
+      "reference_meter_mode": 4,
+      "predicted_meter_mode": 7,
+      "reference_meter_changes": false,
+      "analysis_version": 11,
+      "model": "Beat This! final0 FP32 + DBN 3/4/5/7 55-300 BPM + acoustic bar/pulse/phase evidence + bounded logit timing / beat-this 1.1.0 / RTen 0.24.0",
+      "analysis_seconds": 2.109941416
+    },
+    {
+      "id": "gtzan_metal_00000",
+      "genre": "metal",
+      "beats": {
+        "0": {
+          "f1_70": 1.0,
+          "f1_20": 0.7659574468085105,
+          "f1_10": 0.2765957446808511,
+          "cmlc": 1.0,
+          "cmlt": 1.0,
+          "amlc": 1.0,
+          "amlt": 1.0
+        },
+        "5": {
+          "f1_70": 1.0,
+          "f1_20": 0.717948717948718,
+          "f1_10": 0.2564102564102564,
+          "cmlc": 1.0,
+          "cmlt": 1.0,
+          "amlc": 1.0,
+          "amlt": 1.0
+        }
+      },
+      "downbeats": {
+        "0": {
+          "f1_70": 1.0,
+          "f1_20": 0.6666666666666666,
+          "f1_10": 0.08333333333333333,
+          "cmlc": 1.0,
+          "cmlt": 1.0,
+          "amlc": 1.0,
+          "amlt": 1.0
+        },
+        "5": {
+          "f1_70": 1.0,
+          "f1_20": 0.6,
+          "f1_10": 0.10000000000000002,
+          "cmlc": 1.0,
+          "cmlt": 1.0,
+          "amlc": 1.0,
+          "amlt": 1.0
+        }
+      },
+      "reference_bpm": 93.98864303896612,
+      "predicted_bpm": 93.93950106002767,
+      "tempo_acc1": true,
+      "tempo_acc2": true,
+      "reference_meter_mode": 4,
+      "predicted_meter_mode": 4,
+      "reference_meter_changes": false,
+      "analysis_version": 11,
+      "model": "Beat This! final0 FP32 + DBN 3/4/5/7 55-300 BPM + acoustic bar/pulse/phase evidence + bounded logit timing / beat-this 1.1.0 / RTen 0.24.0",
+      "analysis_seconds": 2.059428
+    },
+    {
+      "id": "gtzan_pop_00000",
+      "genre": "pop",
+      "beats": {
+        "0": {
+          "f1_70": 1.0,
+          "f1_20": 0.9696969696969697,
+          "f1_10": 0.5757575757575758,
+          "cmlc": 1.0,
+          "cmlt": 1.0,
+          "amlc": 1.0,
+          "amlt": 1.0
+        },
+        "5": {
+          "f1_70": 1.0,
+          "f1_20": 0.9642857142857143,
+          "f1_10": 0.6071428571428571,
+          "cmlc": 1.0,
+          "cmlt": 1.0,
+          "amlc": 1.0,
+          "amlt": 1.0
+        }
+      },
+      "downbeats": {
+        "0": {
+          "f1_70": 1.0,
+          "f1_20": 1.0,
+          "f1_10": 0.625,
+          "cmlc": 1.0,
+          "cmlt": 1.0,
+          "amlc": 1.0,
+          "amlt": 1.0
+        },
+        "5": {
+          "f1_70": 1.0,
+          "f1_20": 1.0,
+          "f1_10": 0.7142857142857143,
+          "cmlc": 1.0,
+          "cmlt": 1.0,
+          "amlc": 1.0,
+          "amlt": 1.0
+        }
+      },
+      "reference_bpm": 66.49580937867978,
+      "predicted_bpm": 66.5033406918537,
+      "tempo_acc1": true,
+      "tempo_acc2": true,
+      "reference_meter_mode": 4,
+      "predicted_meter_mode": 4,
+      "reference_meter_changes": false,
+      "analysis_version": 11,
+      "model": "Beat This! final0 FP32 + DBN 3/4/5/7 55-300 BPM + acoustic bar/pulse/phase evidence + bounded logit timing / beat-this 1.1.0 / RTen 0.24.0",
+      "analysis_seconds": 1.99647625
+    },
+    {
+      "id": "gtzan_reggae_00000",
+      "genre": "reggae",
+      "beats": {
+        "0": {
+          "f1_70": 1.0,
+          "f1_20": 0.9016393442622952,
+          "f1_10": 0.4426229508196721,
+          "cmlc": 1.0,
+          "cmlt": 1.0,
+          "amlc": 1.0,
+          "amlt": 1.0
+        },
+        "5": {
+          "f1_70": 1.0,
+          "f1_20": 0.8823529411764706,
+          "f1_10": 0.4117647058823529,
+          "cmlc": 1.0,
+          "cmlt": 1.0,
+          "amlc": 1.0,
+          "amlt": 1.0
+        }
+      },
+      "downbeats": {
+        "0": {
+          "f1_70": 1.0,
+          "f1_20": 0.9333333333333333,
+          "f1_10": 0.4666666666666667,
+          "cmlc": 1.0,
+          "cmlt": 1.0,
+          "amlc": 1.0,
+          "amlt": 1.0
+        },
+        "5": {
+          "f1_70": 1.0,
+          "f1_20": 0.9166666666666666,
+          "f1_10": 0.4166666666666667,
+          "cmlc": 1.0,
+          "cmlt": 1.0,
+          "amlc": 1.0,
+          "amlt": 1.0
+        }
+      },
+      "reference_bpm": 122.26963000700503,
+      "predicted_bpm": 122.29424311957953,
+      "tempo_acc1": true,
+      "tempo_acc2": true,
+      "reference_meter_mode": 4,
+      "predicted_meter_mode": 4,
+      "reference_meter_changes": false,
+      "analysis_version": 11,
+      "model": "Beat This! final0 FP32 + DBN 3/4/5/7 55-300 BPM + acoustic bar/pulse/phase evidence + bounded logit timing / beat-this 1.1.0 / RTen 0.24.0",
+      "analysis_seconds": 2.056254416
+    },
+    {
+      "id": "gtzan_rock_00000",
+      "genre": "rock",
+      "beats": {
+        "0": {
+          "f1_70": 0.8524590163934426,
+          "f1_20": 0.4426229508196721,
+          "f1_10": 0.21311475409836064,
+          "cmlc": 0.8524590163934426,
+          "cmlt": 0.8524590163934426,
+          "amlc": 0.8524590163934426,
+          "amlt": 0.8524590163934426
+        },
+        "5": {
+          "f1_70": 0.8235294117647058,
+          "f1_20": 0.47058823529411764,
+          "f1_10": 0.21568627450980393,
+          "cmlc": 0.8235294117647058,
+          "cmlt": 0.8235294117647058,
+          "amlc": 0.8235294117647058,
+          "amlt": 0.8235294117647058
+        }
+      },
+      "downbeats": {
+        "0": {
+          "f1_70": 0.8666666666666667,
+          "f1_20": 0.26666666666666666,
+          "f1_10": 0.13333333333333333,
+          "cmlc": 1.0,
+          "cmlt": 1.0,
+          "amlc": 1.0,
+          "amlt": 1.0
+        },
+        "5": {
+          "f1_70": 0.8461538461538461,
+          "f1_20": 0.3076923076923077,
+          "f1_10": 0.15384615384615385,
+          "cmlc": 1.0,
+          "cmlt": 1.0,
+          "amlc": 1.0,
+          "amlt": 1.0
+        }
+      },
+      "reference_bpm": 121.6036481094433,
+      "predicted_bpm": 121.35455750948964,
+      "tempo_acc1": true,
+      "tempo_acc2": true,
+      "reference_meter_mode": 4,
+      "predicted_meter_mode": 4,
+      "reference_meter_changes": false,
+      "analysis_version": 11,
+      "model": "Beat This! final0 FP32 + DBN 3/4/5/7 55-300 BPM + acoustic bar/pulse/phase evidence + bounded logit timing / beat-this 1.1.0 / RTen 0.24.0",
+      "analysis_seconds": 2.0364025
+    }
+  ],
+  "macro_mean_per_track": {
+    "beats": {
+      "0": {
+        "f1_70": 0.9077903776773001,
+        "f1_20": 0.6777527303406595,
+        "f1_10": 0.3525384076421425,
+        "cmlt": 0.9119347167002523,
+        "amlt": 0.9119347167002523
+      },
+      "5": {
+        "f1_70": 0.9288048991750669,
+        "f1_20": 0.7054682923517942,
+        "f1_10": 0.36722860770874716,
+        "cmlt": 0.9352879516586509,
+        "amlt": 0.9352879516586509
+      }
+    },
+    "downbeats": {
+      "0": {
+        "f1_70": 0.8709305006587615,
+        "f1_20": 0.6031439393939394,
+        "f1_10": 0.30905303030303033,
+        "cmlt": 0.9,
+        "amlt": 0.9375
+      },
+      "5": {
+        "f1_70": 0.8874725274725275,
+        "f1_20": 0.6439438339438339,
+        "f1_10": 0.33792429792429796,
+        "cmlt": 0.9,
+        "amlt": 0.9428571428571428
+      }
+    }
+  }
+}

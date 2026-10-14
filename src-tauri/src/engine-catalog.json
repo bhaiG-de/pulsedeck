@@ -7,6 +7,24 @@
     }
   },
   {
+    "type": "play_quantized",
+    "example": {
+      "type": "play_quantized",
+      "deck": 1,
+      "clock": 0,
+      "clock_revision": 1,
+      "quantize": 1,
+      "at_seconds": null
+    }
+  },
+  {
+    "type": "cancel_launch",
+    "example": {
+      "type": "cancel_launch",
+      "deck": 1
+    }
+  },
+  {
     "type": "pause",
     "example": {
       "type": "pause",
@@ -401,7 +419,8 @@
     "example": {
       "type": "set_beatgrid",
       "deck": 0,
-      "offset_seconds": 0.0
+      "offset_seconds": 0.0,
+      "anchor_index": null
     }
   },
   {

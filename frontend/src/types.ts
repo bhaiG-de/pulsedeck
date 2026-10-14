@@ -13,6 +13,17 @@ export interface KeyCandidate {
   camelot: string;
   score: number;
 }
+export interface NeuralRhythm {
+  beats_per_bar?: number | null;
+  bar_evidence?: { half_phase_corrected?: boolean; beats_per_bar: number; recurrence: number; strong_windows: number; windows: number; pulse_repairs?: { start_seconds: number; end_seconds: number; inserted_beats: number; original_bpm: number; corrected_bpm: number }[] }[];
+  beats_seconds: number[];
+  downbeats_seconds: number[];
+  bpm: number;
+  beat_confidence: number;
+  downbeat_confidence: number;
+  model: string;
+  analysis_seconds: number;
+}
 export interface TrackRecord {
   id: string | number;
   path: string;
@@ -32,6 +43,9 @@ export interface TrackRecord {
   beatgrid_offset_seconds?: number | null;
   beatgrid_confidence?: number | null;
   beatgrid_source?: string | null;
+  neural_rhythm?: NeuralRhythm | null;
+  rhythm_error?: string | null;
+  manual_grid_anchor_index?: number | null;
   analysis_version?: number;
   bpm_confidence?: number;
   bpm_candidates?: BpmCandidate[];
@@ -64,6 +78,14 @@ export interface DeckSnapshot {
   sync_enabled?: boolean;
   is_master?: boolean;
   beatgrid_offset_seconds?: number;
+  beatgrid_valid?: boolean;
+  beatgrid_downbeat?: boolean;
+  beatgrid_manual?: boolean;
+  beatgrid_uniform?: boolean;
+  beatgrid_anchor_index?: number | null;
+  beat_position?: number | null;
+  launch_pending?: boolean;
+  launch_at_seconds?: number | null;
   track?: TrackRecord | null;
   playback_rate?: number;
   echo?: number;

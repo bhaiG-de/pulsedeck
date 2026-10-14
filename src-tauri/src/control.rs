@@ -378,9 +378,15 @@ fn apply(app: &tauri::AppHandle, request: &Request, mut command: EngineCommand) 
         if let EngineCommand::Seek { seconds, .. } = &mut command {
             if request.args.get("snap").and_then(Value::as_str) == Some("beat") {
                 let d = &snap.decks[d];
-                let period = 60.0 / d.bpm.unwrap_or(120.0);
-                *seconds = (((*seconds - d.beatgrid_offset_seconds) / period).round() * period
-                    + d.beatgrid_offset_seconds)
+                if !d.beatgrid_valid {
+                    return Err(ControlError::new(
+                        "grid_unknown",
+                        "Align or analyze this deck's beatgrid before snapping",
+                    ));
+                }
+                *seconds = d
+                    .snapped_grid_time(*seconds)
+                    .ok_or_else(|| ControlError::new("grid_unknown", "No usable beat events"))?
                     .clamp(0.0, d.track.as_ref().map_or(0.0, |t| t.duration_seconds));
             }
         }
@@ -781,6 +787,7 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
                 .map_err(failure)?;
             let start = Instant::now();
             let ramps = optional::<bool>(a, "ramps")?.unwrap_or(false);
+            let launches = optional::<bool>(a, "launches")?.unwrap_or(false);
             while d.is_some_and(|d| state.engine.transport_snapshot().decks[d].preparation_pending)
                 || ramps
                     && state
@@ -789,6 +796,13 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
                         .active_ramps
                         .iter()
                         .any(|r| *r)
+                || launches
+                    && state
+                        .engine
+                        .transport_snapshot()
+                        .decks
+                        .iter()
+                        .any(|d| d.launch_pending)
             {
                 if d.is_some_and(|d| Some(state.engine.load_revision(d)) != revision) {
                     return Err(ControlError::new(
@@ -881,6 +895,7 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
                 for t in page.as_array_mut().unwrap() {
                     t.as_object_mut().unwrap().remove("waveform");
                     t.as_object_mut().unwrap().remove("waveform_bands");
+                    compact_neural_summary(t);
                 }
             }
             json!({"tracks":page,"total":total,"offset":offset,"next_offset":(offset.saturating_add(limit)<total).then_some(offset.saturating_add(limit))})
@@ -909,6 +924,7 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
             let mut track = serialized(track)?;
             track.as_object_mut().unwrap().remove("waveform");
             track.as_object_mut().unwrap().remove("waveform_bands");
+            compact_neural_summary(&mut track);
             return Ok(("persisted", track));
         }
         "track.inspect" => {
@@ -921,7 +937,7 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
             let source = resolve_source(app, a, request.expected_load_revision)?;
             let metadata = state.engine.metadata_snapshot();
             let d = a.get("deck").map(|_| deck(a)).transpose()?;
-            let track = if let Some(d) = d {
+            let mut track = if let Some(d) = d {
                 if request
                     .expected_load_revision
                     .is_some_and(|r| r != metadata.load_revisions[d])
@@ -955,6 +971,30 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
                     )?
                 }
             };
+            if let Some(d) = d {
+                let transport = state.engine.transport_snapshot();
+                if transport.load_revisions[d] != metadata.load_revisions[d] {
+                    return Err(ControlError::new(
+                        "source_changed",
+                        "Deck source changed while reading its effective grid",
+                    ));
+                }
+                let effective = &transport.decks[d];
+                track["bpm"] = json!(effective.bpm);
+                track["beatgrid_offset_seconds"] = json!(effective
+                    .beatgrid_valid
+                    .then_some(effective.beatgrid_offset_seconds));
+                track["beatgrid_valid"] = json!(effective.beatgrid_valid);
+                track["beatgrid_downbeat"] = json!(effective.beatgrid_downbeat);
+                track["beatgrid_manual"] = json!(effective.beatgrid_manual);
+                track["beatgrid_uniform"] = json!(effective.beatgrid_uniform);
+                track["beatgrid_anchor_index"] = json!(effective.beatgrid_anchor_index);
+                track["beat_position"] = json!(effective.beat_position);
+                if effective.beatgrid_manual {
+                    track["beatgrid_source"] = json!("manual");
+                    track["beatgrid_confidence"] = Value::Null;
+                }
+            }
             let mut result = crate::track_inspection::view(
                 track,
                 optional(a, "start_seconds")?.unwrap_or(0.0),
@@ -1434,6 +1474,10 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
                 for d in 0..2 {
                     state
                         .engine
+                        .command(EngineCommand::CancelLaunch { deck: d })
+                        .map_err(failure)?;
+                    state
+                        .engine
                         .command(EngineCommand::CuePress {
                             deck: d,
                             pressed: false,
@@ -1457,7 +1501,7 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
             Value::Null
         }
         "commands.list" | "capabilities" => {
-            json!({"protocol_version":control_protocol::VERSION,"commands":catalog(),"engine_commands":engine_catalog(),"ui":&*app.state::<Control>().ui.lock().map_err(failure)?,"unsupported":["mic_input","android_mono","smart_fader_next","spotify_playlist_writes","structural_section_detection","scheduled_transport"]})
+            json!({"protocol_version":control_protocol::VERSION,"commands":catalog(),"engine_commands":engine_catalog(),"ui":&*app.state::<Control>().ui.lock().map_err(failure)?,"unsupported":["mic_input","android_mono","smart_fader_next","spotify_playlist_writes","structural_section_detection"]})
         }
         "commands.describe" => {
             let name: String = arg(a, "name")?;
@@ -1575,6 +1619,22 @@ fn source_duration(app: &tauri::AppHandle, source: &str) -> Result<f64> {
             "Import or analyze source before adding cues",
         )
     })
+}
+fn compact_neural_summary(track: &mut Value) {
+    if let Some(rhythm) = track
+        .get_mut("neural_rhythm")
+        .and_then(Value::as_object_mut)
+    {
+        for (events, count) in [
+            ("beats_seconds", "beat_count"),
+            ("downbeats_seconds", "downbeat_count"),
+        ] {
+            if let Some(times) = rhythm.remove(events) {
+                rhythm.insert(count.into(), json!(times.as_array().map_or(0, Vec::len)));
+            }
+        }
+        rhythm.insert("scores_calibrated".into(), json!(false));
+    }
 }
 fn metadata_summary(engine: &deck_engine::EngineHandle) -> Value {
     let metadata = engine.metadata_snapshot();
@@ -1749,6 +1809,9 @@ fn validate_step(request: &Request) -> Result<()> {
 fn parse_engine(mut value: Value) -> Result<EngineCommand> {
     if value.get("deck").is_some() {
         value["deck"] = json!(deck(&value)?);
+    }
+    if value.get("clock").is_some() && value["type"] == "play_quantized" {
+        value["clock"] = json!(deck(&json!({"deck":value["clock"]}))?);
     }
     let examples: Vec<Value> = serde_json::from_str(include_str!("engine-catalog.json")).unwrap();
     let name = value.get("type").and_then(Value::as_str).ok_or_else(|| {

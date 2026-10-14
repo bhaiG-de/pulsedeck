@@ -5,10 +5,15 @@ import {
   getWaveformWindow,
   timeToWaveformFraction,
   waveformSeekSeconds,
-  waveformBarBeat,
   HOT_CUE_COLORS,
 } from "./waveform-data";
 import { WaveformMotion } from "./waveform-motion";
+import {
+  gridBarBeat,
+  uniformBeatGrid,
+  visibleGridBeats,
+  type BeatGrid,
+} from "./beat-grid";
 import { WaveformRaster } from "./waveform-renderer";
 
 export type WaveformProps = {
@@ -29,7 +34,10 @@ export type WaveformProps = {
   loopActive?: boolean;
   overview?: boolean;
   hotcues?: (number | null)[];
+  beatGrid?: BeatGrid;
   beatgridOffset?: number;
+  beatgridValid?: boolean;
+  beatgridDownbeat?: boolean;
   playing?: boolean;
   playbackRate?: number;
   jogTouch?: boolean;
@@ -184,7 +192,10 @@ export default function Waveform(input: WaveformProps) {
         spanBeats,
         overview = false,
         hotcues = empty,
+        beatGrid,
         beatgridOffset = 0,
+        beatgridValid = false,
+        beatgridDownbeat = false,
         cuePoint,
         cueSeconds,
         memoryCues = empty,
@@ -206,6 +217,9 @@ export default function Waveform(input: WaveformProps) {
           spanBeats,
         }),
         { span, start } = view;
+      const grid =
+        beatGrid ??
+        uniformBeatGrid(bpm, beatgridOffset, beatgridValid, beatgridDownbeat);
       const xFor = (t: number) => timeToWaveformFraction(t, view) * w;
       ctx.strokeStyle = "#222a35";
       ctx.lineWidth = 1;
@@ -289,22 +303,15 @@ export default function Waveform(input: WaveformProps) {
         }
         // Beat markers sit over the envelopes, so loud passages cannot hide the
         // timing guide. Before/after the real file there is no fabricated grid.
-        if (
-          !overview &&
-          Number.isFinite(bpm) &&
-          bpm > 0 &&
-          Number.isFinite(beatgridOffset)
-        ) {
-          const beat = 60 / bpm;
-          for (
-            let t =
-              Math.ceil((Math.max(0, start) - beatgridOffset) / beat) * beat +
-              beatgridOffset;
-            t <= Math.min(duration, start + span);
-            t += beat
-          ) {
-            const major = Math.round((t - beatgridOffset) / beat) % 4 === 0,
-              x = xFor(t);
+        if (!overview && grid.valid) {
+          for (const marker of visibleGridBeats(
+            grid,
+            start,
+            start + span,
+            duration,
+          )) {
+            const major = marker.downbeat,
+              x = xFor(marker.time);
             ctx.lineWidth = 1;
             ctx.strokeStyle = major
               ? "rgba(232,112,111,.7)"
@@ -412,7 +419,7 @@ export default function Waveform(input: WaveformProps) {
           ctx.lineTo(x + 5, 0);
           ctx.lineTo(x, 7);
           ctx.fill();
-          const label = waveformBarBeat(position, bpm, beatgridOffset);
+          const label = gridBarBeat(grid, position);
           if (label) {
             ctx.font = "600 11px sans-serif";
             const text = `${label} BARS`,

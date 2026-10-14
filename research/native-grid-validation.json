@@ -1,0 +1,45 @@
+{
+  "passed": true,
+  "muted": true,
+  "phase_error_beats_after_launch": -0.0019395605944474426,
+  "model": [
+    {
+      "analysis_seconds": 3.79853975,
+      "beat_confidence": 0.9988164305686952,
+      "beat_count": 193,
+      "bpm": 120.0,
+      "downbeat_confidence": 0.8015999794006348,
+      "downbeat_count": 48,
+      "model": "Beat This! final0 FP32 + DBN 3/4 55-300 BPM / beat-this 1.1.0 / RTen 0.24.0",
+      "scores_calibrated": false
+    },
+    {
+      "analysis_seconds": 3.851981834,
+      "beat_confidence": 0.999176561832428,
+      "beat_count": 232,
+      "bpm": 124.0310056888243,
+      "downbeat_confidence": 0.8231458067893982,
+      "downbeat_count": 58,
+      "model": "Beat This! final0 FP32 + DBN 3/4 55-300 BPM / beat-this 1.1.0 / RTen 0.24.0",
+      "scores_calibrated": false
+    }
+  ],
+  "checks": [
+    "bundled full model inference",
+    "actual bounded beats/downbeats",
+    "manual grid transport preservation",
+    "native event launch",
+    "clock seek cancellation",
+    "manual grid reload",
+    "manual grid reanalysis"
+  ],
+  "ui_validation": {
+    "grid_offset_before": 0.125,
+    "grid_offset_after": 0.126,
+    "step_seconds": 0.001,
+    "position_seconds": 0.0,
+    "beatgrid_manual": true,
+    "beatgrid_uniform": false,
+    "model_timing_retained": true
+  }
+}

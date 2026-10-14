@@ -11,6 +11,7 @@ use tauri::Manager;
 pub struct DeckSourceStatus {
     pub preparing: bool,
     pub uri: Option<String>,
+    pub resolved_uri: Option<String>,
     pub error: Option<String>,
 }
 #[derive(Default)]
@@ -54,9 +55,18 @@ impl SourceJobs {
         job.status = DeckSourceStatus {
             preparing: true,
             uri: Some(uri),
+            resolved_uri: None,
             error: None,
         };
         Ok(cancel)
+    }
+    fn resolution(&self, deck: usize, cancel: &Arc<AtomicBool>, uri: Option<String>) {
+        if let Ok(mut jobs) = self.0.lock() {
+            let job = &mut jobs[deck];
+            if job.cancel.as_ref().is_some_and(|c| Arc::ptr_eq(c, cancel)) {
+                job.status.resolved_uri = uri;
+            }
+        }
     }
     fn finish(&self, deck: usize, cancel: &Arc<AtomicBool>, error: Option<String>) {
         if let Ok(mut jobs) = self.0.lock() {
@@ -160,6 +170,9 @@ pub async fn load_spotify_track(
                 },
                 cancel.clone(),
             )?;
+            state
+                .source_jobs
+                .resolution(deck, &cancel, source.metadata.resolved_uri.clone());
             let _commit = state
                 .source_jobs
                 .2
@@ -170,11 +183,18 @@ pub async fn load_spotify_track(
             {
                 return Err("Spotify preparation was replaced by a newer load".into());
             }
-            let cached = state
+            let mut cached = state
                 .library
                 .lock()
                 .map_err(|_| "Analysis cache unavailable")?
                 .spotify_analysis(&uri)?;
+            if source.metadata.resolved_uri.is_some() {
+                // Recompute timing/envelopes for a relinked release; retain explicit
+                // manual metadata via the engine's cache-independent override path.
+                if let Some(cached) = cached.as_mut() {
+                    cached.analysis_version = 0;
+                }
+            }
             let analysis = state.engine.load_decoded_source_cached(
                 ticket,
                 source.sample_rate,
