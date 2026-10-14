@@ -6,6 +6,7 @@ export interface EngineTransport {
 export interface EngineMetadata {
   revision: number;
   tracks: (TrackRecord | null)[];
+  samples?: (TrackRecord | null)[];
 }
 /** Attach immutable source data without reconstructing waveform arrays every frame. */
 export function withTrackMetadata(

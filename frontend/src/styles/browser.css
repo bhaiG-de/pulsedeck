@@ -1163,3 +1163,12 @@
     display: none;
   }
 }
+
+.track-tags { display: flex; flex-direction: column; gap: 5px; }
+.track-tag-list { display: flex; flex-wrap: wrap; gap: 4px; }
+.song-tag { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; border: 1px solid var(--line); border-radius: 10px; padding: 2px 5px 2px 8px; font-size: 10px; }
+.song-tag > span { overflow-wrap: anywhere; min-width: 0; }
+.song-tag button { border: none; background: transparent; color: inherit; padding: 0 3px; min-width: 16px; border-radius: 50%; }
+.track-tags input { width: 100%; min-width: 0; padding: 4px 6px; font-size: 10px; border: 1px solid var(--line); border-radius: 4px; color: inherit; background: transparent; }
+.track-tags input::placeholder { color: var(--muted); }
+.track-tag-error { font-size: 10px; color: #df6767; overflow-wrap: anywhere; }

@@ -48,10 +48,16 @@ pub(crate) struct RecordingJob {
     pub stats: Arc<RecordingStats>,
     pub worker: Option<JoinHandle<()>>,
 }
-pub(crate) fn create(path: &Path, rate: u32) -> Result<(Recorder, RecordingJob), String> {
+pub(crate) fn create_with_policy(
+    path: &Path,
+    rate: u32,
+    overwrite: bool,
+) -> Result<(Recorder, RecordingJob), String> {
     let mut file = OpenOptions::new()
         .write(true)
-        .create_new(true)
+        .create_new(!overwrite)
+        .create(overwrite)
+        .truncate(overwrite)
         .open(path)
         .map_err(|e| format!("Cannot create recording (choose a new .wav filename): {e}"))?;
     header(&mut file, rate, 0).map_err(|e| format!("Cannot initialize WAV: {e}"))?;
@@ -152,7 +158,7 @@ mod tests {
     fn recording_writes_decodable_stereo_float_wav() {
         let path = std::env::temp_dir().join(format!("deck-recording-{}.wav", std::process::id()));
         let _ = std::fs::remove_file(&path);
-        let (mut recorder, mut job) = create(&path, 48000).unwrap();
+        let (mut recorder, mut job) = create_with_policy(&path, 48000, false).unwrap();
         for _ in 0..4800 {
             recorder.producer.push([0.2, -0.3]).unwrap();
         }

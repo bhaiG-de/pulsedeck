@@ -5,6 +5,7 @@ edition = "2021"
 license = "MIT"
 
 [dependencies]
+schemars = "0.8.22"
 serde = { version = "1", features = ["derive"] }
 symphonia = { version = "0.5", features = ["all"] }
 cpal = "0.15.3"

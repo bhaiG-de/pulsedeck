@@ -125,6 +125,8 @@ impl DeckAtoms {
     }
 }
 pub(crate) struct SnapshotAtoms {
+    load_revisions: [AtomicU64; 2],
+    pub applied_fence: AtomicU64,
     sequence: AtomicU64,
     rate: AtomicU32,
     channels: AtomicU32,
@@ -140,11 +142,15 @@ pub(crate) struct SnapshotAtoms {
     cue_gain: AtomicU32,
     cue_mix: AtomicU32,
     sampler: AtomicU32,
+    sample_positions: [AtomicU64; 16],
+    active_ramps: [AtomicBool; 17],
     decks: [DeckAtoms; 2],
 }
 impl SnapshotAtoms {
     pub fn new() -> Self {
         Self {
+            applied_fence: AtomicU64::new(0),
+            load_revisions: std::array::from_fn(|_| AtomicU64::new(0)),
             sequence: AtomicU64::new(0),
             rate: AtomicU32::new(48000),
             channels: AtomicU32::new(0),
@@ -160,6 +166,8 @@ impl SnapshotAtoms {
             cue_gain: float(0.8),
             cue_mix: float(0.0),
             sampler: float(0.7),
+            sample_positions: std::array::from_fn(|_| double(f64::NAN)),
+            active_ramps: std::array::from_fn(|_| AtomicBool::new(false)),
             decks: std::array::from_fn(|_| DeckAtoms::new()),
         }
     }
@@ -169,11 +177,24 @@ impl SnapshotAtoms {
         self.channels.store(channels as u32, Ordering::Relaxed);
         self.buffer.store(frames, Ordering::Relaxed);
         self.frames.store(m.rendered_frames, Ordering::Relaxed);
+        for i in 0..2 {
+            self.load_revisions[i].store(m.load_revisions[i], Ordering::Relaxed);
+        }
         putf(&self.gain, m.master_gain.target);
         putf(&self.crossfader, m.crossfader.target);
         putf(&self.cue_gain, m.cue_gain.target);
         putf(&self.cue_mix, m.cue_mix.target);
         putf(&self.sampler, m.sampler_gain.target);
+        for (i, active) in m.active_ramps().iter().enumerate() {
+            self.active_ramps[i].store(*active, Ordering::Relaxed);
+        }
+        for i in 0..16 {
+            putd(
+                &self.sample_positions[i],
+                m.sample_positions[i]
+                    .map_or(f64::NAN, |p| p / m.samples[i].analysis.sample_rate as f64),
+            );
+        }
         for i in 0..2 {
             putf(&self.master_peak[i], master[i]);
             putf(&self.cue_peak[i], cue[i]);
@@ -236,6 +257,7 @@ impl SnapshotAtoms {
             );
         }
         self.sequence.fetch_add(1, Ordering::Release);
+        self.applied_fence.store(m.applied_fence, Ordering::Release);
     }
     pub fn read(&self, tracks: [Option<TrackAnalysis>; 2]) -> EngineSnapshot {
         loop {
@@ -245,6 +267,9 @@ impl SnapshotAtoms {
                 continue;
             }
             let mut result = EngineSnapshot {
+                load_revisions: std::array::from_fn(|i| {
+                    self.load_revisions[i].load(Ordering::Relaxed)
+                }),
                 sample_rate: self.rate.load(Ordering::Relaxed),
                 output_channels: self.channels.load(Ordering::Relaxed) as u16,
                 buffer_frames: self.buffer.load(Ordering::Relaxed),
@@ -258,6 +283,11 @@ impl SnapshotAtoms {
                 cue_gain: getf(&self.cue_gain),
                 cue_mix: getf(&self.cue_mix),
                 sampler_gain: getf(&self.sampler),
+                sampler_positions_seconds: std::array::from_fn(|i| {
+                    let v = getd(&self.sample_positions[i]);
+                    v.is_finite().then_some(v)
+                }),
+                active_ramps: std::array::from_fn(|i| self.active_ramps[i].load(Ordering::Relaxed)),
                 decks: std::array::from_fn(|i| self.decks[i].read(None)),
             };
             std::sync::atomic::fence(Ordering::Acquire);

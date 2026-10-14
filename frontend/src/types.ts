@@ -55,6 +55,7 @@ export interface TrackRecord {
   path: string;
   title: string;
   artist?: string;
+  tags?: string[];
   album?: string;
   duration?: number;
   duration_seconds?: number;

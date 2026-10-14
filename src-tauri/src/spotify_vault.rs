@@ -18,6 +18,25 @@ trait Backend: Send + Sync {
     fn write(&self, account: &str, value: &str) -> Result<(), String>;
 }
 #[derive(Default)]
+struct MemoryBackend(Mutex<BTreeMap<String, String>>);
+impl Backend for MemoryBackend {
+    fn read(&self, account: &str) -> Result<Option<String>, String> {
+        Ok(self
+            .0
+            .lock()
+            .map_err(|_| "Isolated vault unavailable")?
+            .get(account)
+            .cloned())
+    }
+    fn write(&self, account: &str, value: &str) -> Result<(), String> {
+        self.0
+            .lock()
+            .map_err(|_| "Isolated vault unavailable")?
+            .insert(account.into(), value.into());
+        Ok(())
+    }
+}
+#[derive(Default)]
 struct Keychain {
     #[cfg(target_os = "macos")]
     items: Mutex<BTreeMap<String, security_framework::os::macos::keychain_item::SecKeychainItem>>,
@@ -100,6 +119,13 @@ pub struct Vault {
 }
 impl Vault {
     pub fn new(legacy: Vec<String>) -> Self {
+        if std::env::var_os("PULSEDECK_ISOLATED").is_some_and(|v| v == "1") {
+            return Self {
+                cache: Mutex::new(None),
+                legacy: Vec::new(),
+                backend: Box::<MemoryBackend>::default(),
+            };
+        }
         Self {
             cache: Mutex::new(None),
             legacy,

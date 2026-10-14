@@ -7,6 +7,8 @@ import {
   UNLABELLED_SECTION,
   displaySections,
 } from "./waveform-data";
+import { useControl } from "./control-bridge";
+import { controlBoolean, controlNumber } from "./control-state";
 
 const strength = (value: number | undefined | null) =>
   typeof value === "number" && Number.isFinite(value)
@@ -21,12 +23,14 @@ export default function AnalysisInfo({
   onVocabulary,
   baseBpm,
   onChooseBpm,
+  controlTarget,
 }: {
   track: TrackRecord;
   onReanalyze: () => Promise<void>;
   onVocabulary: (vocabulary: Vocabulary | null) => Promise<void>;
   baseBpm: number;
   onChooseBpm: (bpm: number) => void;
+  controlTarget?: string;
 }) {
   const [details, setDetails] = useState(false);
   const [reanalyzing, setReanalyzing] = useState(false);
@@ -81,6 +85,19 @@ export default function AnalysisInfo({
       setReanalyzing(false);
     }
   }
+  useControl(
+    controlTarget || `analysis-${track.id}`,
+    {
+      details: (v) => setDetails(controlBoolean(v)),
+      candidate: (v) => {
+        onChooseBpm(controlNumber(v, 30, 300));
+        setDetails(false);
+      },
+      reanalyze,
+      "error-dismiss": () => setError(""),
+    },
+    { details, reanalyzing, error, candidates: track.bpm_candidates },
+  );
   return (
     <div className="analysis-strip">
       <details

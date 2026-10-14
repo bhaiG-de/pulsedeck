@@ -1,0 +1,409 @@
+/* Anatomy has its own component construction, not just a different palette.
+   Faces, shallow side walls, engraved geometry, and functional mono labels. */
+.anatomy-dial {
+  display: none;
+}
+:root[data-theme^="anatomy-"] {
+  --anatomy-control-radius: 2px;
+  --anatomy-card-radius: 2px;
+  --anatomy-line: var(--anatomy-weight);
+  --anatomy-relief: 0 2px 0 var(--anatomy-shade-0);
+}
+:root[data-theme^="anatomy-"] .app-shell {
+  background: var(--anatomy-paper);
+}
+:root[data-theme^="anatomy-"]
+  .app-shell
+  :is(.topbar, .browser-dock, .statusbar, .waveform-tools) {
+  background: var(--anatomy-card);
+  box-shadow: none;
+  border-color: var(--anatomy-lo);
+}
+:root[data-theme^="anatomy-"]
+  .app-shell
+  :is(.performance-area > .deck, .performance-area > .mixer) {
+  background: var(--anatomy-card);
+  border: var(--anatomy-line) solid var(--anatomy-mid);
+  border-radius: var(--anatomy-card-radius);
+  box-shadow: 2px 2px 0 var(--anatomy-shade-0);
+}
+:root[data-theme^="anatomy-"] .performance-area .deck:before,
+:root[data-theme^="anatomy-"] .performance-area .deck:after {
+  content: none;
+}
+:root[data-theme^="anatomy-"] .performance-area .deck-heading {
+  border-bottom: var(--anatomy-line) solid var(--anatomy-faint);
+  padding-bottom: 8px;
+}
+:root[data-theme^="anatomy-"] .performance-area .deck-heading .deck-badge {
+  background: transparent;
+  color: var(--anatomy-hi);
+  border: var(--anatomy-line) solid var(--anatomy-hi);
+  border-radius: 0;
+  font:
+    400 14px var(--anatomy-mono),
+    monospace;
+  box-shadow: none;
+}
+:root[data-theme^="anatomy-"] .performance-area .deck-info {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  margin: 0 12px;
+  padding: 8px 0 5px;
+}
+:root[data-theme^="anatomy-"]
+  .performance-area
+  :is(.tempo-readout strong, .time-readout strong, .key-readout strong) {
+  font-family: var(--anatomy-mono), monospace;
+  font-weight: 400;
+  letter-spacing: -1px;
+  color: var(--anatomy-strong);
+  text-shadow: none;
+}
+:root[data-theme^="anatomy-"]
+  .performance-area
+  :is(
+    .preview-caption,
+    .controller-pad-mode,
+    .pads-heading,
+    .deck-footer,
+    .mixer-title,
+    .range-control,
+    .knob-control,
+    .tabs,
+    .sync-row
+  ) {
+  font-family: var(--anatomy-mono), monospace;
+}
+:root[data-theme^="anatomy-"] .performance-area .deck-footer {
+  background: transparent;
+  border-color: var(--anatomy-faint);
+  border-radius: 0;
+}
+:root[data-theme^="anatomy-"] .performance-area .deck-track-preview .overview {
+  border: var(--anatomy-line) solid var(--anatomy-lo);
+  box-shadow: none;
+  border-radius: 0;
+}
+:root[data-theme^="anatomy-"]
+  .app-shell
+  :is(
+    .performance-area,
+    .topbar,
+    .dock-actions,
+    .settings-body,
+    .track-drawer,
+    .analysis-popover,
+    .grid-editor,
+    .dropdown,
+    .sampler-strip
+  )
+  button {
+  background: var(--anatomy-top);
+  border: var(--anatomy-line) solid var(--anatomy-lo);
+  border-radius: var(--anatomy-control-radius);
+  color: var(--anatomy-strong);
+  box-shadow: var(--anatomy-relief);
+  font-family: var(--anatomy-mono), monospace;
+  font-weight: 400;
+  text-shadow: none;
+}
+:root[data-theme^="anatomy-"]
+  .app-shell
+  :is(
+    .performance-area,
+    .topbar,
+    .dock-actions,
+    .settings-body,
+    .track-drawer,
+    .analysis-popover,
+    .grid-editor,
+    .dropdown,
+    .sampler-strip
+  )
+  button:hover:not(:disabled) {
+  background: var(--anatomy-shade-3);
+  border-color: var(--anatomy-mid);
+}
+:root[data-theme^="anatomy-"]
+  .app-shell
+  :is(
+    .performance-area,
+    .topbar,
+    .dock-actions,
+    .settings-body,
+    .track-drawer,
+    .analysis-popover,
+    .grid-editor,
+    .dropdown,
+    .sampler-strip
+  )
+  button:active:not(:disabled) {
+  background: var(--anatomy-shade-2);
+  box-shadow: none;
+  transform: translateY(1px);
+}
+:root[data-theme^="anatomy-"] .performance-area .transport .cue {
+  color: var(--color-accent-text);
+  border-color: var(--color-accent);
+  background: var(--anatomy-top);
+}
+:root[data-theme^="anatomy-"] .performance-area .transport .play.active {
+  color: var(--color-ink);
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+:root[data-theme^="anatomy-"] .performance-area .pads button {
+  border-radius: 0;
+  box-shadow: none;
+  border-color: var(--anatomy-faint);
+  background: var(--anatomy-shade-3);
+}
+:root[data-theme^="anatomy-"] .performance-area .pads button.set[style] {
+  background: color-mix(in srgb, var(--cue-color) 8%, var(--anatomy-top));
+  border-color: var(--anatomy-lo);
+  border-left: 2px solid var(--cue-color);
+  box-shadow: none;
+}
+:root[data-theme^="anatomy-"] .performance-area .pads button > span {
+  font:
+    400 11px var(--anatomy-mono),
+    monospace;
+}
+:root[data-theme^="anatomy-"] .performance-area .jog {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  box-shadow: none;
+}
+:root[data-theme^="anatomy-"] .performance-area .jog-surface {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+:root[data-theme^="anatomy-"] .performance-area .jog-center {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  z-index: 1;
+  pointer-events: none;
+}
+:root[data-theme^="anatomy-"] .performance-area .jog-center strong {
+  font-family: var(--anatomy-mono), monospace;
+  font-size: clamp(13px, 3cqh, 19px);
+  letter-spacing: -1px;
+}
+:root[data-theme^="anatomy-"] .performance-area .jog-surface > i {
+  z-index: 2;
+}
+:root[data-theme^="anatomy-"] .performance-area .jog-surface > i:before {
+  margin-top: 8px;
+  height: 10px;
+  width: 1px;
+  background: var(--anatomy-hi);
+}
+:root[data-theme^="anatomy-"]
+  .performance-area
+  .jog-surface.touching
+  .dial-face {
+  stroke: var(--color-accent);
+}
+:root[data-theme^="anatomy-"]
+  .performance-area
+  :is(.channel .knob, .master-controls .knob) {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+:root[data-theme^="anatomy-"] .performance-area .knob:before,
+:root[data-theme^="anatomy-"] .performance-area .knob > i {
+  display: none;
+}
+:root[data-theme^="anatomy-"] .anatomy-dial {
+  display: block;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  fill: none;
+  stroke-width: var(--anatomy-weight);
+}
+:root[data-theme^="anatomy-"] .anatomy-knob {
+  inset: -3px;
+  width: calc(100% + 6px);
+  height: calc(100% + 6px);
+}
+:root[data-theme^="anatomy-"] .dial-side {
+  fill: var(--anatomy-shade-0);
+  stroke: var(--anatomy-lo);
+}
+:root[data-theme^="anatomy-"] .dial-face {
+  fill: var(--anatomy-top);
+  stroke: var(--anatomy-hi);
+}
+:root[data-theme^="anatomy-"] .dial-groove {
+  stroke: var(--anatomy-faint);
+}
+:root[data-theme^="anatomy-"] .dial-ticks {
+  stroke: var(--anatomy-mid);
+  stroke-width: var(--anatomy-weight);
+}
+:root[data-theme^="anatomy-"] .dial-pointer {
+  transform: rotate(var(--rotation));
+  transform-origin: 50px 50px;
+  stroke: var(--anatomy-hi);
+  stroke-width: 1;
+}
+:root[data-theme^="anatomy-"] .dial-pointer circle {
+  fill: var(--anatomy-dot);
+  stroke: none;
+}
+:root[data-theme^="anatomy-"] .performance-area :is(.master-controls, .fx-row) {
+  border-color: var(--anatomy-faint);
+}
+:root[data-theme^="anatomy-"]
+  .performance-area
+  input[type="range"]::-webkit-slider-runnable-track {
+  height: 2px;
+  border: 0;
+  border-radius: 0;
+  background: var(--anatomy-lo);
+  box-shadow: none;
+}
+:root[data-theme^="anatomy-"]
+  .performance-area
+  input[type="range"]::-webkit-slider-thumb {
+  width: 17px;
+  height: 10px;
+  margin-top: -4px;
+  border: var(--anatomy-line) solid var(--anatomy-hi);
+  border-radius: 0;
+  background: var(--anatomy-top);
+  box-shadow: 0 1px 0 var(--anatomy-shade-0);
+}
+:root[data-theme^="anatomy-"]
+  .performance-area
+  .range-control.vertical
+  input::-webkit-slider-runnable-track {
+  width: 2px;
+  height: 100%;
+}
+:root[data-theme^="anatomy-"]
+  .performance-area
+  .range-control.vertical
+  input::-webkit-slider-thumb {
+  margin-top: 0;
+  margin-left: -7.5px;
+}
+:root[data-theme^="anatomy-"]
+  .app-shell
+  :is(
+    .track-drawer,
+    .settings-modal,
+    .analysis-popover,
+    .dropdown,
+    .grid-editor,
+    .sampler-strip
+  ) {
+  background: var(--anatomy-card);
+  border: var(--anatomy-line) solid var(--anatomy-mid);
+  border-radius: var(--anatomy-card-radius);
+  box-shadow: 0 8px 24px
+    color-mix(in srgb, var(--anatomy-halo) 20%, transparent);
+}
+:root[data-theme^="anatomy-"]
+  .app-shell
+  :is(input:not([type="range"]), select, .search, .readout) {
+  background: var(--anatomy-shade-3);
+  border: var(--anatomy-line) solid var(--anatomy-lo);
+  box-shadow: none;
+  border-radius: var(--anatomy-control-radius);
+}
+:root[data-theme^="anatomy-"] .app-shell .search input {
+  background: transparent;
+  border: 0;
+}
+:root[data-theme^="anatomy-"] .app-shell .settings-tabs button {
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+}
+:root[data-theme^="anatomy-"] .app-shell .settings-tabs button.selected {
+  border-bottom: 1px solid var(--color-accent);
+}
+:root[data-theme^="anatomy-"] .app-shell .controller-playlists-pane > button {
+  border: 0;
+  border-bottom: var(--anatomy-line) solid var(--anatomy-faint);
+  box-shadow: none;
+}
+:root[data-theme^="anatomy-"]
+  .app-shell
+  .controller-playlists-pane
+  > button.controller-selected {
+  background: var(--color-selected);
+  border-left: 1px solid var(--color-accent);
+}
+:root[data-theme^="anatomy-"] .app-shell .track-table th {
+  font-family: var(--anatomy-mono), monospace;
+  font-weight: 400;
+}
+/* Preview cards reflect the component language even inside Hardware settings. */
+.app-shell .settings-body .theme-option[data-theme^="anatomy-"] {
+  background: var(--anatomy-card);
+  border-width: var(--anatomy-weight);
+  border-radius: 2px;
+  box-shadow: none;
+}
+.theme-option[data-theme^="anatomy-"] .theme-preview {
+  border-radius: 0;
+  background: var(--anatomy-card);
+}
+.theme-option[data-theme^="anatomy-"] .theme-preview :is(i:nth-child(2), b) {
+  background: var(--anatomy-top);
+  border: 1px solid var(--anatomy-mid);
+  box-shadow:
+    inset 0 0 0 3px var(--anatomy-card),
+    inset 0 0 0 4px var(--anatomy-faint);
+}
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme^="anatomy-"] .app-shell button {
+    transition: none;
+  }
+}
+
+/* Quiet controls keep the labels and tab hierarchy around the mechanical faces. */
+:root[data-theme^="anatomy-"]
+  .app-shell
+  :is(
+    .tabs button,
+    .set-cue,
+    .controller-chip,
+    .icon-button,
+    .reset-wave-zoom
+  ) {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  color: var(--anatomy-text);
+}
+:root[data-theme^="anatomy-"] .performance-area .tabs button.selected {
+  color: var(--color-accent-text);
+  border-bottom: 1px solid var(--color-accent);
+}
+:root[data-theme^="anatomy-"] .performance-area .headphone-button.enabled {
+  color: var(--color-accent-text);
+  border-color: var(--color-accent);
+  background: var(--color-selected);
+}
+:root[data-theme^="anatomy-"] .app-shell .settings-tabs button.selected {
+  color: var(--color-accent-text);
+}
+
+:root[data-theme^="anatomy-"] .anatomy-dial :is(path, circle) {
+  vector-effect: non-scaling-stroke;
+}

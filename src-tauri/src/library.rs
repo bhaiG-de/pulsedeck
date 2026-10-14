@@ -17,6 +17,8 @@ pub struct TrackRecord {
     pub path: String,
     pub title: String,
     pub artist: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
     pub duration_seconds: f64,
     pub bpm: f64,
     pub key: Option<String>,
@@ -55,6 +57,59 @@ pub struct Playlist {
     pub id: i64,
     pub name: String,
     pub track_ids: Vec<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SourceCues {
+    pub cue_seconds: f64,
+    pub hot_cues: [Option<f64>; 8],
+    pub memory_cues: [Option<f64>; 10],
+    pub annotations: std::collections::BTreeMap<String, String>,
+}
+impl Default for SourceCues {
+    fn default() -> Self {
+        Self {
+            cue_seconds: 0.0,
+            hot_cues: [None; 8],
+            memory_cues: [None; 10],
+            annotations: Default::default(),
+        }
+    }
+}
+impl SourceCues {
+    pub fn update_memory(&mut self, points: [Option<f64>; 10]) {
+        let labels: Vec<(f64, String)> = self
+            .memory_cues
+            .iter()
+            .enumerate()
+            .filter_map(|(i, t)| {
+                t.and_then(|t| {
+                    self.annotations
+                        .get(&format!("memory:{i}"))
+                        .map(|label| (t, label.clone()))
+                })
+            })
+            .collect();
+        self.memory_cues = points;
+        self.memory_cues.sort_unstable_by(|a, b| {
+            a.unwrap_or(f64::INFINITY)
+                .total_cmp(&b.unwrap_or(f64::INFINITY))
+        });
+        self.annotations
+            .retain(|key, _| !key.starts_with("memory:"));
+        for (i, time) in self.memory_cues.iter().enumerate() {
+            if let Some((_, label)) =
+                time.and_then(|t| labels.iter().find(|(old, _)| (old - t).abs() < 1e-6))
+            {
+                self.annotations
+                    .insert(format!("memory:{i}"), label.clone());
+            }
+        }
+    }
+    pub fn normalize_memory(&mut self) {
+        self.update_memory(self.memory_cues);
+    }
 }
 
 pub struct Library {
@@ -107,6 +162,7 @@ impl Library {
 
     fn from_connection(db: Connection) -> Result<Self, String> {
         db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
+          CREATE TABLE IF NOT EXISTS source_cues(source TEXT PRIMARY KEY, revision INTEGER NOT NULL, cues TEXT NOT NULL);
           CREATE TABLE IF NOT EXISTS tracks(
             id INTEGER PRIMARY KEY, path TEXT NOT NULL UNIQUE, title TEXT NOT NULL,
             artist TEXT NOT NULL DEFAULT '', duration_seconds REAL NOT NULL, bpm REAL NOT NULL,
@@ -137,6 +193,7 @@ impl Library {
             ("camelot", "TEXT"),
             ("key_confidence", "REAL"),
             ("analysis_json", "TEXT NOT NULL DEFAULT '{}'"),
+            ("tags", "TEXT NOT NULL DEFAULT '[]'"),
         ] {
             if !columns.contains(name) {
                 db.execute(
@@ -344,7 +401,7 @@ impl Library {
     }
 
     pub fn tracks(&self) -> Result<Vec<TrackRecord>, String> {
-        let mut stmt = self.db.prepare("SELECT id,path,title,artist,duration_seconds,bpm,key_name,sample_rate,waveform,added_at,hot_cues,beatgrid_offset_seconds,memory_cues,cue_seconds,camelot,key_confidence,analysis_json FROM tracks ORDER BY added_at DESC,id DESC").map_err(|e| e.to_string())?;
+        let mut stmt = self.db.prepare("SELECT id,path,title,artist,duration_seconds,bpm,key_name,sample_rate,waveform,added_at,hot_cues,beatgrid_offset_seconds,memory_cues,cue_seconds,camelot,key_confidence,analysis_json,tags FROM tracks ORDER BY added_at DESC,id DESC").map_err(|e| e.to_string())?;
         let rows = stmt.query_map([], Self::row).map_err(|e| e.to_string())?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())
@@ -356,6 +413,7 @@ impl Library {
             path: row.get(1)?,
             title: row.get(2)?,
             artist: row.get(3)?,
+            tags: serde_json::from_str(&row.get::<_, String>(17)?).unwrap_or_default(),
             duration_seconds: row.get(4)?,
             bpm: row.get(5)?,
             key: row.get(6)?,
@@ -390,7 +448,7 @@ impl Library {
     }
 
     pub fn track_by_path(&self, path: &str) -> Result<Option<TrackRecord>, String> {
-        self.db.query_row("SELECT id,path,title,artist,duration_seconds,bpm,key_name,sample_rate,waveform,added_at,hot_cues,beatgrid_offset_seconds,memory_cues,cue_seconds,camelot,key_confidence,analysis_json FROM tracks WHERE path=?1",[path],Self::row).optional().map_err(|e|e.to_string())
+        self.db.query_row("SELECT id,path,title,artist,duration_seconds,bpm,key_name,sample_rate,waveform,added_at,hot_cues,beatgrid_offset_seconds,memory_cues,cue_seconds,camelot,key_confidence,analysis_json,tags FROM tracks WHERE path=?1",[path],Self::row).optional().map_err(|e|e.to_string())
     }
 
     pub fn upsert(&self, track: &TrackRecord) -> Result<TrackRecord, String> {
@@ -425,11 +483,11 @@ impl Library {
             .map_err(|e| e.to_string())?
             .as_millis()
             .to_string();
-        self.db.execute("INSERT INTO tracks(path,title,artist,duration_seconds,bpm,key_name,sample_rate,waveform,added_at,camelot,key_confidence,analysis_json,beatgrid_offset_seconds)
-          VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)
+        self.db.execute("INSERT INTO tracks(path,title,artist,duration_seconds,bpm,key_name,sample_rate,waveform,added_at,camelot,key_confidence,analysis_json,beatgrid_offset_seconds,tags)
+          VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)
           ON CONFLICT(path) DO UPDATE SET title=excluded.title,artist=excluded.artist,duration_seconds=excluded.duration_seconds,
           bpm=excluded.bpm,key_name=excluded.key_name,sample_rate=excluded.sample_rate,waveform=excluded.waveform,camelot=excluded.camelot,key_confidence=excluded.key_confidence,analysis_json=excluded.analysis_json,beatgrid_offset_seconds=excluded.beatgrid_offset_seconds",
-          params![track.path,track.title,track.artist,track.duration_seconds,bpm,track.key,track.sample_rate,waveform,now,track.camelot,track.key_confidence,analysis_json,grid_offset]).map_err(|e|e.to_string())?;
+          params![track.path,track.title,track.artist,track.duration_seconds,bpm,track.key,track.sample_rate,waveform,now,track.camelot,track.key_confidence,analysis_json,grid_offset,serde_json::to_string(&track.tags).map_err(|e|e.to_string())?]).map_err(|e|e.to_string())?;
         let record = self
             .track_by_path(&track.path)?
             .ok_or_else(|| "Imported track was not found".to_string())?;
@@ -446,6 +504,38 @@ impl Library {
             cache.retain(|_, f| f.track_id != Some(id));
         }
         Ok(()) // Original music files are never removed.
+    }
+
+    pub fn set_tags(&self, id: i64, tags: Vec<String>) -> Result<TrackRecord, String> {
+        if tags.len() > 32 {
+            return Err("Invalid tags: use at most 32 tags per song".into());
+        }
+        let mut normalized = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for tag in tags {
+            let tag = tag.trim();
+            if tag.chars().count() > 128 {
+                return Err("Invalid tag: use at most 128 characters".into());
+            }
+            if !tag.is_empty() && seen.insert(tag.to_lowercase()) {
+                normalized.push(tag.to_owned());
+            }
+        }
+        if self
+            .db
+            .execute(
+                "UPDATE tracks SET tags=?1 WHERE id=?2",
+                params![
+                    serde_json::to_string(&normalized).map_err(|e| e.to_string())?,
+                    id
+                ],
+            )
+            .map_err(|e| e.to_string())?
+            == 0
+        {
+            return Err("Track not found".into());
+        }
+        self.db.query_row("SELECT id,path,title,artist,duration_seconds,bpm,key_name,sample_rate,waveform,added_at,hot_cues,beatgrid_offset_seconds,memory_cues,cue_seconds,camelot,key_confidence,analysis_json,tags FROM tracks WHERE id=?1", [id], Self::row).map_err(|e| e.to_string())
     }
 
     pub fn metadata(
@@ -607,6 +697,135 @@ impl Library {
         Ok(())
     }
 
+    pub fn source_cues(&self, source: &str) -> Result<(u64, SourceCues), String> {
+        let row: Option<(u64, String)> = self
+            .db
+            .query_row(
+                "SELECT revision,cues FROM source_cues WHERE source=?1",
+                [source],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        if let Some((revision, json)) = row {
+            return Ok((
+                revision,
+                serde_json::from_str(&json).map_err(|e| e.to_string())?,
+            ));
+        }
+        let mut cues = SourceCues::default();
+        if let Some(track) = self.track_by_path(source)? {
+            cues.cue_seconds = track.cue_seconds;
+            cues.hot_cues = track.hot_cues.try_into().unwrap_or([None; 8]);
+            cues.memory_cues = track.memory_cues.try_into().unwrap_or([None; 10]);
+        }
+        Ok((0, cues))
+    }
+    pub fn save_source_cues(
+        &self,
+        source: &str,
+        cues: &SourceCues,
+        expected: Option<u64>,
+    ) -> Result<u64, String> {
+        let mut normalized = cues.clone();
+        normalized.normalize_memory();
+        let cues = &normalized;
+        if cues
+            .annotations
+            .iter()
+            .any(|(key, value)| key.len() > 80 || value.len() > 256)
+        {
+            return Err(
+                "Cue annotation keys must be at most 80 bytes and labels at most 256 bytes".into(),
+            );
+        }
+        if !cues.cue_seconds.is_finite()
+            || cues.cue_seconds < 0.0
+            || cues
+                .hot_cues
+                .iter()
+                .chain(cues.memory_cues.iter())
+                .flatten()
+                .any(|v| !v.is_finite() || *v < 0.0)
+        {
+            return Err("Cue times must be finite and nonnegative".into());
+        }
+        let tx = self.db.unchecked_transaction().map_err(|e| e.to_string())?;
+        let (revision, old) = self.source_cues(source)?;
+        if expected.is_some_and(|r| r != revision) {
+            return Err("Cue metadata revision conflict".into());
+        }
+        if old == *cues {
+            tx.commit().map_err(|e| e.to_string())?;
+            return Ok(revision);
+        }
+        let next = revision + 1;
+        let json = serde_json::to_string(cues).map_err(|e| e.to_string())?;
+        tx.execute("INSERT INTO source_cues(source,revision,cues) VALUES(?1,?2,?3) ON CONFLICT(source) DO UPDATE SET revision=excluded.revision,cues=excluded.cues", params![source,next,json]).map_err(|e|e.to_string())?;
+        tx.execute(
+            "UPDATE tracks SET hot_cues=?1,memory_cues=?2,cue_seconds=?3 WHERE path=?4",
+            params![
+                serde_json::to_string(&cues.hot_cues).map_err(|e| e.to_string())?,
+                serde_json::to_string(&cues.memory_cues).map_err(|e| e.to_string())?,
+                cues.cue_seconds,
+                source
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(next)
+    }
+    pub fn playlist_edit(
+        &self,
+        id: i64,
+        action: &str,
+        name: Option<&str>,
+        tracks: &[i64],
+    ) -> Result<(), String> {
+        if !self.playlists()?.iter().any(|p| p.id == id) {
+            return Err("Playlist not found".into());
+        }
+        let tx = self.db.unchecked_transaction().map_err(|e| e.to_string())?;
+        match action {
+            "rename" => {
+                let name = name.unwrap_or("").trim();
+                if name.is_empty() || name.len() > 200 {
+                    return Err("Choose a playlist name between 1 and 200 characters".into());
+                }
+                tx.execute(
+                    "UPDATE playlists SET name=?1 WHERE id=?2",
+                    params![name, id],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            "delete" => {
+                tx.execute("DELETE FROM playlists WHERE id=?1", [id])
+                    .map_err(|e| e.to_string())?;
+            }
+            "remove" => {
+                for track in tracks {
+                    tx.execute(
+                        "DELETE FROM playlist_tracks WHERE playlist_id=?1 AND track_id=?2",
+                        params![id, track],
+                    )
+                    .map_err(|e| e.to_string())?;
+                }
+            }
+            "replace" => {
+                let mut unique = std::collections::HashSet::new();
+                if tracks.iter().any(|t| !unique.insert(*t)) {
+                    return Err("A playlist cannot contain duplicate tracks".into());
+                }
+                tx.execute("DELETE FROM playlist_tracks WHERE playlist_id=?1", [id])
+                    .map_err(|e| e.to_string())?;
+                for (position, track) in tracks.iter().enumerate() {
+                    tx.execute("INSERT INTO playlist_tracks(playlist_id,track_id,position) VALUES(?1,?2,?3)",params![id,track,position as i64]).map_err(|e|e.to_string())?;
+                }
+            }
+            _ => return Err("Unknown playlist action".into()),
+        }
+        tx.commit().map_err(|e| e.to_string())
+    }
     pub fn create_playlist(&self, name: &str) -> Result<Playlist, String> {
         let name = name.trim();
         if name.is_empty() || name.len() > 200 {
@@ -777,12 +996,108 @@ pub fn export_xml(tracks: &[TrackRecord], playlists: &[Playlist]) -> Result<Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn song_tags_survive_reimport_and_restart_without_changing_track_metadata() {
+        let path = std::env::temp_dir().join(format!("pd-tags-{}.sqlite", std::process::id()));
+        let lib = Library::open(&path).unwrap();
+        let saved = lib.upsert(&track()).unwrap();
+        assert!(saved.tags.is_empty());
+        let tagged = lib
+            .set_tags(
+                saved.id,
+                vec![
+                    " Afro house ".into(),
+                    "chill vibe".into(),
+                    "AFRO HOUSE".into(),
+                    " ".into(),
+                    "café".into(),
+                ],
+            )
+            .unwrap();
+        assert_eq!(tagged.tags, ["Afro house", "chill vibe", "café"]);
+        assert_eq!(tagged.bpm, saved.bpm);
+        assert_eq!(tagged.hot_cues, saved.hot_cues);
+        assert!(lib.set_tags(saved.id, vec!["x".repeat(129)]).is_err());
+        assert!(lib.set_tags(-1, vec![]).is_err());
+        assert_eq!(lib.upsert(&track()).unwrap().tags, tagged.tags);
+        drop(lib);
+        let lib = Library::open(&path).unwrap();
+        assert_eq!(
+            lib.track_by_path(&saved.path).unwrap().unwrap().tags,
+            tagged.tags
+        );
+        assert!(lib.set_tags(saved.id, vec![]).unwrap().tags.is_empty());
+        drop(lib);
+        let _ = std::fs::remove_file(path);
+    }
+    #[test]
+    fn source_cues_are_durable_for_local_and_spotify_and_reject_stale_edits() {
+        let root = std::env::temp_dir().join(format!("pd-cues-{}.sqlite", std::process::id()));
+        let lib = Library::open(&root).unwrap();
+        let saved = lib.upsert(&track()).unwrap();
+        let mut cues = SourceCues::default();
+        cues.hot_cues[7] = Some(40.0);
+        cues.memory_cues[0] = Some(2.0);
+        cues.cue_seconds = 1.0;
+        cues.annotations.insert("hot:7".into(), "Outro".into());
+        let revision = lib.save_source_cues(&saved.path, &cues, Some(0)).unwrap();
+        assert_eq!(revision, 1);
+        assert_eq!(
+            lib.save_source_cues(&saved.path, &cues, Some(1)).unwrap(),
+            1
+        );
+        assert!(lib.save_source_cues(&saved.path, &cues, Some(0)).is_err());
+        lib.save_source_cues("spotify:track:0000000000000000000000", &cues, Some(0))
+            .unwrap();
+        drop(lib);
+        let lib = Library::open(&root).unwrap();
+        assert_eq!(lib.source_cues(&saved.path).unwrap(), (1, cues.clone()));
+        assert_eq!(
+            lib.source_cues("spotify:track:0000000000000000000000")
+                .unwrap()
+                .1,
+            cues
+        );
+        assert_eq!(
+            lib.track_by_path(&saved.path).unwrap().unwrap().hot_cues[7],
+            Some(40.0)
+        );
+        drop(lib);
+        std::fs::remove_file(root).unwrap();
+    }
+    #[test]
+    fn playlist_reordering_is_atomic_and_invalid_replacement_preserves_membership() {
+        let lib = Library::from_connection(Connection::open_in_memory().unwrap()).unwrap();
+        let a = lib.upsert(&track()).unwrap();
+        let mut b = track();
+        b.path = "/tmp/another.wav".into();
+        let b = lib.upsert(&b).unwrap();
+        let p = lib.create_playlist("Set").unwrap();
+        lib.add_to_playlist(p.id, a.id).unwrap();
+        lib.add_to_playlist(p.id, b.id).unwrap();
+        lib.playlist_edit(p.id, "replace", None, &[b.id, a.id])
+            .unwrap();
+        assert_eq!(lib.playlists().unwrap()[0].track_ids, vec![b.id, a.id]);
+        assert!(lib
+            .playlist_edit(p.id, "replace", None, &[a.id, 999999])
+            .is_err());
+        assert_eq!(lib.playlists().unwrap()[0].track_ids, vec![b.id, a.id]);
+        assert!(lib
+            .playlist_edit(p.id, "replace", None, &[a.id, a.id])
+            .is_err());
+        lib.playlist_edit(p.id, "rename", Some("Work"), &[])
+            .unwrap();
+        assert_eq!(lib.playlists().unwrap()[0].name, "Work");
+        lib.playlist_edit(p.id, "remove", None, &[a.id]).unwrap();
+        assert_eq!(lib.playlists().unwrap()[0].track_ids, vec![b.id]);
+    }
     fn track() -> TrackRecord {
         TrackRecord {
             id: 1,
             path: "/tmp/Music & beats/song.wav".into(),
             title: "A & B <mix>".into(),
             artist: "DJ".into(),
+            tags: Vec::new(),
             duration_seconds: 90.,
             bpm: 120.,
             key: Some("Am".into()),

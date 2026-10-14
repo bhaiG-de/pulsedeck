@@ -10,6 +10,16 @@ The packaged application is produced at `target/release/bundle/macos/PulseDeck.a
 
 Choose audio device, requested buffer size and output routing in Settings. On a four-channel device, select separate master and headphone channels. FLX4 CoreAudio/CoreMIDI discovery and connection are exposed in Settings; no vendor macOS driver is installed. Physical FLX4 channel order and control behavior still need verification after macOS recognizes the connected controller.
 
+## CLI control
+
+The desktop app hosts a private local control endpoint. Build the `pulsedeckctl` client with `bash tools/rust-env.sh cargo build -p pulsedeck-cli`, open PulseDeck, and run `target/debug/pulsedeckctl status --json`. `npm run cli -- ...` is also available.
+
+The CLI exposes the native deck/mixer/cue/loop/sampler controls, library/playlists, recording, audio/MIDI settings and Spotify services, plus an acknowledged bridge for UI presentation controls. Commands share the app's engine and persistence. Discovery, structured repairable errors, source/revision guards, jobs, batches and native timed ramps support automation. See the [CLI guide](research/cli-guide.md) and [control map](research/cli-control-map.md).
+
+## DJ agent skills
+
+The [seven repository-local DJ skills](.agents/skills/README.md) teach shell agents to inspect musical evidence, prepare sets/decks, transition, run sessions, record/export, and troubleshoot through `pulsedeckctl`. The index includes installation, invocation, generated-fixture trials and listening limits. MCP remains deferred.
+
 ## Spotify
 
 Settings → Spotify accepts your own public Spotify developer Client ID. Register `http://127.0.0.1:8765/callback` in the developer dashboard, add your account to the development allowlist, and sign in through the browser. The implementation uses PKCE, a local callback and macOS Keychain refresh-token storage. It loads playlists and liked songs and controls an available Spotify Connect device. The optional official Spotify widget has browser-dependent playback/preview limits.
@@ -18,6 +28,8 @@ Settings → Spotify accepts your own public Spotify developer Client ID. Regist
 
 Load A/B prepares full-track stereo PCM in RAM before native transport begins. Preparation is capped at256 MiB /about12m40s pertrack and120s; recording is disabled while these sources are loaded. No saved audio/export, vendor credential extraction or custom protected transport is implemented. See [adapter details](crates/spotify-playback/README.md) and [authentication diagnosis](research/spotify-authentication.md).
 
+
+Native load failures report credential-safe metadata, delivery, format, decoder or playback-key stages. Metadata/delivery failures and playback-key timeouts get one delayed retry within the preparation deadline, using the same authorized session and only before any PCM has arrived. Old drawer errors clear when a new deck preparation starts.
 
 ## Develop and validate
 

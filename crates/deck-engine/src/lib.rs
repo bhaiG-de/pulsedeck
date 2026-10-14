@@ -1,5 +1,7 @@
 //! Independent native two-deck audio engine. UI and device controllers submit
 //! bounded commands; file decoding and state serialization happen off the render thread.
+#[cfg(test)]
+mod automation_tests;
 mod decode;
 mod dsp;
 mod model;
@@ -43,15 +45,24 @@ enum Retired {
     Recorder(recording::Recorder),
 }
 enum RenderCommand {
+    Fence(u64),
     Unload {
+        revision: u64,
         deck: usize,
     },
     Control(EngineCommand),
+    GuardedControl {
+        command: EngineCommand,
+        deck: usize,
+        revision: u64,
+    },
     Load {
+        revision: u64,
         deck: usize,
         track: Arc<TrackData>,
     },
     InstantDouble {
+        revision: u64,
         deck: usize,
         track: Arc<TrackData>,
         generation: u64,
@@ -93,13 +104,29 @@ impl RenderState {
                 break;
             };
             match command {
-                RenderCommand::Unload { deck } => {
+                RenderCommand::Fence(sequence) => self.mixer.applied_fence = sequence,
+                RenderCommand::Unload { deck, revision } => {
+                    self.mixer.load_revisions[deck] = revision;
                     for track in self.mixer.unload(deck).into_iter().flatten() {
                         let _ = self.retired.push(Retired::Track(track));
                     }
                 }
                 RenderCommand::Control(command) => self.mixer.command(command),
-                RenderCommand::Load { deck, track } => {
+                RenderCommand::GuardedControl {
+                    command,
+                    deck,
+                    revision,
+                } => {
+                    if self.mixer.load_revisions[deck] == revision {
+                        self.mixer.command(command);
+                    }
+                }
+                RenderCommand::Load {
+                    deck,
+                    track,
+                    revision,
+                } => {
+                    self.mixer.load_revisions[deck] = revision;
                     if !track.analysis.recording_allowed {
                         if let Some(old) = self.recording.take() {
                             old.stats.active.store(false, Ordering::Release);
@@ -114,6 +141,7 @@ impl RenderState {
                     }
                 }
                 RenderCommand::InstantDouble {
+                    revision,
                     deck,
                     track,
                     generation,
@@ -124,6 +152,7 @@ impl RenderState {
                             let _ = self.retired.push(Retired::Recorder(old));
                         }
                     }
+                    self.mixer.load_revisions[deck] = revision;
                     for old in self
                         .mixer
                         .instant_double(deck, track, generation)
@@ -289,6 +318,7 @@ struct PreparationControl {
     shutdown: AtomicBool,
 }
 struct Shared {
+    next_fence: AtomicU64,
     metadata_revision: AtomicU64,
     committed_load_revision: [AtomicU64; 2],
     load_generation: [AtomicU64; 2],
@@ -296,6 +326,7 @@ struct Shared {
     preparation: Arc<PreparationControl>,
     producer: Mutex<Producer<RenderCommand>>,
     tracks: Mutex<[Option<TrackAnalysis>; 2]>,
+    samples: Mutex<[Option<TrackAnalysis>; 16]>,
     atoms: Arc<SnapshotAtoms>,
     lifecycle: mpsc::Sender<Lifecycle>,
 }
@@ -322,8 +353,10 @@ impl EngineHandle {
         let (retired, mut retire_consumer) = RingBuffer::new(QUEUE_CAPACITY * 2);
         let atoms = Arc::new(SnapshotAtoms::new());
         let (render_tx, render_rx) = mpsc::channel();
+        let mixer = Mixer::new();
+        let samples = std::array::from_fn(|i| Some(mixer.samples[i].analysis.clone()));
         let state = Arc::new(StateCell::new(Box::new(RenderState {
-            mixer: Mixer::new(),
+            mixer,
             commands: consumer,
             retired,
             recording: None,
@@ -366,6 +399,7 @@ impl EngineHandle {
             shutdown: AtomicBool::new(false),
         });
         let shared = Arc::new(Shared {
+            next_fence: AtomicU64::new(1),
             metadata_revision: AtomicU64::new(0),
             committed_load_revision: std::array::from_fn(|_| AtomicU64::new(0)),
             load_generation: std::array::from_fn(|_| AtomicU64::new(0)),
@@ -373,6 +407,7 @@ impl EngineHandle {
             preparation: preparation.clone(),
             producer: Mutex::new(producer),
             tracks: Mutex::new([None, None]),
+            samples: Mutex::new(samples),
             atoms,
             lifecycle: render_tx,
         });
@@ -406,6 +441,13 @@ impl EngineHandle {
             .map_err(|_| "Audio device did not respond within 10 seconds".to_string())?
     }
     pub fn start_recording(&self, path: &Path) -> Result<RecordingStatus, String> {
+        self.start_recording_with_policy(path, false)
+    }
+    pub fn start_recording_with_policy(
+        &self,
+        path: &Path,
+        overwrite: bool,
+    ) -> Result<RecordingStatus, String> {
         if self
             .shared
             .tracks
@@ -435,7 +477,8 @@ impl EngineHandle {
                 let _ = worker.join();
             }
         }
-        let (recorder, job) = recording::create(path, self.snapshot().sample_rate)?;
+        let (recorder, job) =
+            recording::create_with_policy(path, self.snapshot().sample_rate, overwrite)?;
         if let Err(error) = self.enqueue(RenderCommand::StartRecording(recorder)) {
             job.stats.active.store(false, Ordering::Release);
             if let Some(worker) = job.worker {
@@ -512,8 +555,40 @@ impl EngineHandle {
             let _ = rx.recv_timeout(Duration::from_secs(5));
         }
     }
+    /// A fence acknowledges preceding control application, including while
+    /// audio is stopped. Asynchronous pitch preparation has its own status.
+    pub fn fence(&self) -> Result<u64, String> {
+        let mut producer = self
+            .shared
+            .producer
+            .lock()
+            .map_err(|_| "Command queue poisoned")?;
+        let sequence = self.shared.next_fence.fetch_add(1, Ordering::Relaxed);
+        producer
+            .push(RenderCommand::Fence(sequence))
+            .map_err(|_| "Audio command queue is full; retry shortly")?;
+        Ok(sequence)
+    }
+    pub fn wait_for_fence(&self, sequence: u64, timeout: Duration) -> Result<(), String> {
+        let started = std::time::Instant::now();
+        while self.shared.atoms.applied_fence.load(Ordering::Acquire) < sequence {
+            if started.elapsed() >= timeout {
+                return Err("Timed out waiting for command application".into());
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
+        Ok(())
+    }
     pub fn command(&self, command: EngineCommand) -> Result<(), String> {
+        self.command_for_revision(command, None)
+    }
+    pub fn command_for_revision(
+        &self,
+        command: EngineCommand,
+        expected: Option<u64>,
+    ) -> Result<(), String> {
         command.validate()?;
+        let command_deck = command.deck();
         let preparation_deck = match &command {
             EngineCommand::SetTempo { deck, .. }
             | EngineCommand::SetPitch { deck, .. }
@@ -529,6 +604,10 @@ impl EngineHandle {
             if producer.slots() < 2 {
                 return Err("Audio command queue is full; retry shortly".into());
             }
+            if expected.is_some_and(|r| self.load_revision(deck) != r) {
+                return Err("Loaded source revision conflict".into());
+            }
+            let revision = self.load_revision(deck);
             let mut settings = self
                 .shared
                 .preparation
@@ -561,7 +640,11 @@ impl EngineHandle {
             let generation = setting.generation;
             self.shared.preparation.generation[deck].store(generation, Ordering::Release);
             producer
-                .push(RenderCommand::Control(command))
+                .push(RenderCommand::GuardedControl {
+                    command,
+                    deck,
+                    revision,
+                })
                 .map_err(|_| "Audio command queue full")?;
             producer
                 .push(RenderCommand::PreparationTarget { deck, generation })
@@ -569,7 +652,27 @@ impl EngineHandle {
             let _ = self.shared.preparation.wake.try_send(());
             Ok(())
         } else {
-            self.enqueue(RenderCommand::Control(command))
+            let mut producer = self
+                .shared
+                .producer
+                .lock()
+                .map_err(|_| "Command queue poisoned")?;
+            let render = if let Some(deck) = command_deck {
+                let revision = self.load_revision(deck);
+                if expected.is_some_and(|r| r != revision) {
+                    return Err("Loaded source revision conflict".into());
+                }
+                RenderCommand::GuardedControl {
+                    command,
+                    deck,
+                    revision,
+                }
+            } else {
+                RenderCommand::Control(command)
+            };
+            producer
+                .push(render)
+                .map_err(|_| "Audio command queue is full; retry shortly".into())
         }
     }
     fn enqueue(&self, command: RenderCommand) -> Result<(), String> {
@@ -641,6 +744,7 @@ impl EngineHandle {
         // Producer lock makes the asset plus transport command a single queue item.
         producer
             .push(RenderCommand::InstantDouble {
+                revision: self.load_revision(deck) + 1,
                 deck,
                 track: source,
                 generation,
@@ -718,7 +822,10 @@ impl EngineHandle {
             .metadata_revision
             .fetch_add(1, Ordering::Release);
         producer
-            .push(RenderCommand::Unload { deck })
+            .push(RenderCommand::Unload {
+                deck,
+                revision: self.load_revision(deck),
+            })
             .map_err(|_| "Audio command queue is full; retry shortly".into())
     }
     /// Accept normal decoded provider output on a worker. No SDK or network runs
@@ -760,6 +867,13 @@ impl EngineHandle {
         let track = decode::decode_file(path)?;
         let analysis = track.analysis.clone();
         self.enqueue(RenderCommand::LoadSample { slot, track })?;
+        self.shared
+            .samples
+            .lock()
+            .map_err(|_| "Sample metadata unavailable")?[slot] = Some(analysis.clone());
+        self.shared
+            .metadata_revision
+            .fetch_add(1, Ordering::Release);
         Ok(analysis)
     }
     pub fn load_demo(&self, deck: usize) -> Result<TrackAnalysis, String> {
@@ -809,6 +923,7 @@ impl EngineHandle {
         let setting = &mut settings[deck];
         producer
             .push(RenderCommand::Load {
+                revision: self.load_revision(deck) + 1,
                 deck,
                 track: track.clone(),
             })
@@ -983,6 +1098,12 @@ impl EngineHandle {
             }),
             revision: self.shared.metadata_revision.load(Ordering::Acquire),
             tracks: tracks.clone(),
+            samples: self
+                .shared
+                .samples
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone(),
         }
     }
     pub fn load_revision(&self, deck: usize) -> u64 {
@@ -1416,6 +1537,64 @@ fn build<T: cpal::SizedSample + cpal::FromSample<f32>>(
 mod tests {
     use super::*;
     #[test]
+    fn completion_fences_source_guards_and_explicit_cues_preserve_transport() {
+        let engine = EngineHandle::new().unwrap();
+        engine.load_demo(0).unwrap();
+        engine
+            .command(EngineCommand::Seek {
+                deck: 0,
+                seconds: 4.0,
+            })
+            .unwrap();
+        engine.command(EngineCommand::Play { deck: 0 }).unwrap();
+        let fence = engine.fence().unwrap();
+        engine
+            .wait_for_fence(fence, Duration::from_secs(2))
+            .unwrap();
+        let before = engine.snapshot();
+        let revision = engine.load_revision(0);
+        engine
+            .command_for_revision(
+                EngineCommand::SetHotCuePoint {
+                    deck: 0,
+                    index: 7,
+                    seconds: 8.0,
+                },
+                Some(revision),
+            )
+            .unwrap();
+        let fence = engine.fence().unwrap();
+        engine
+            .wait_for_fence(fence, Duration::from_secs(2))
+            .unwrap();
+        let after = engine.snapshot();
+        assert_eq!(
+            after.decks[0].position_seconds,
+            before.decks[0].position_seconds
+        );
+        assert_eq!(after.decks[0].playing, before.decks[0].playing);
+        assert_eq!(after.decks[0].hot_cues[7], Some(8.0));
+        engine.load_demo(0).unwrap();
+        assert!(engine
+            .command_for_revision(
+                EngineCommand::SetHotCuePoint {
+                    deck: 0,
+                    index: 0,
+                    seconds: 2.0
+                },
+                Some(revision)
+            )
+            .is_err());
+        let fence = engine.fence().unwrap();
+        engine
+            .wait_for_fence(fence, Duration::from_secs(2))
+            .unwrap();
+        assert!(engine.snapshot().decks[0]
+            .hot_cues
+            .iter()
+            .all(Option::is_none));
+    }
+    #[test]
     fn invalid_routes_are_rejected() {
         assert!(validate_routing(
             &AudioRouting {
@@ -1494,6 +1673,7 @@ mod tests {
         let weak = Arc::downgrade(&old);
         producer
             .push(RenderCommand::Load {
+                revision: 0,
                 deck: 0,
                 track: old,
             })
@@ -1502,6 +1682,7 @@ mod tests {
         render.drain();
         producer
             .push(RenderCommand::Load {
+                revision: 0,
                 deck: 0,
                 track: decode::demo_track(1),
             })
@@ -1585,6 +1766,7 @@ mod realtime_audit {
         state.mixer.load(0, decode::demo_track(0));
         producer
             .push(RenderCommand::Load {
+                revision: 0,
                 deck: 0,
                 track: decode::demo_track(1),
             })
@@ -1647,6 +1829,19 @@ mod realtime_audit {
                 deck: 0,
                 beats: None,
             },
+            EngineCommand::SetHotCuePoint {
+                deck: 0,
+                index: 7,
+                seconds: 7.0,
+            },
+            EngineCommand::Ramp {
+                target: ControlTarget::Crossfader,
+                value: 0.5,
+                seconds: 0.05,
+                clock: None,
+                beats: None,
+                quantize: None,
+            },
             EngineCommand::Pause { deck: 0 },
             EngineCommand::Jog {
                 deck: 0,
@@ -1658,6 +1853,7 @@ mod realtime_audit {
         }
         producer
             .push(RenderCommand::InstantDouble {
+                revision: 0,
                 deck: 1,
                 track: state.mixer.decks[0].track.as_ref().unwrap().clone(),
                 generation: 17,

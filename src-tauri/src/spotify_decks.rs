@@ -190,6 +190,7 @@ pub async fn load_spotify_track(
                 cached,
             )?;
             crate::spotify_analysis::store(&app, &analysis)?;
+            crate::control::restore_cues(&app, deck, &analysis.path)?;
             if !crate::beat_stage_current(&analysis) {
                 if state.beat_model_spotify.load(Ordering::Acquire) {
                     crate::spawn_beat_model(&app, deck, request);
