@@ -1,4 +1,5 @@
 use crate::spectral::{downsample, Spectrum};
+use rustfft::{num_complex::Complex, FftPlanner};
 use serde::{Deserialize, Serialize};
 const RATE: u32 = 8000;
 const HOP: usize = 80;
@@ -109,51 +110,93 @@ pub fn estimate_phase(
 ) -> Option<BeatPhaseEstimate> {
     phase_from_segments(&segments(samples, rate), bpm)
 }
-/// Short, causal energy-rise envelopes locate actual attacks. The spectral
-/// tempo envelope has a future-looking Hann window and is not itself an attack
-/// timestamp. Separate low/mid/high rises retain bass emphasis against offbeats.
+/// Attack envelopes for beat phase. One FFT splits the excerpt into zero-phase
+/// low/mid/high bands and forms each band's analytic signal. Its squared
+/// magnitude is an energy envelope without carrier ripple: a kick's 40-80 Hz
+/// body is one smooth envelope, not a train of per-cycle energy steps that a
+/// 5 ms RMS window would report as rises across the whole body. The positive
+/// log-energy step between adjacent frames is timestamped at their shared
+/// boundary, so nothing delays the envelope and no compensation is needed. Log
+/// steps weight where an attack starts rather than where the loud body sits.
 fn phase_novelty(signal: &[f32]) -> Vec<f64> {
-    let low_alpha = 1.0 - (-2.0 * std::f64::consts::PI * 250.0 / RATE as f64).exp();
-    let upper_alpha = 1.0 - (-2.0 * std::f64::consts::PI * 2500.0 / RATE as f64).exp();
-    let mut low = [0.0_f64; 2];
-    let mut upper = [0.0_f64; 2];
-    let mut previous = [0.0_f64; 3];
-    let mut bands: [Vec<f64>; 3] = std::array::from_fn(|_| Vec::new());
-    for window in signal.chunks(PHASE_HOP) {
-        let mut energy = [0.0; 3];
-        for value in window {
-            let x = *value as f64;
-            low[0] += low_alpha * (x - low[0]);
-            low[1] += low_alpha * (low[0] - low[1]);
-            upper[0] += upper_alpha * (x - upper[0]);
-            upper[1] += upper_alpha * (upper[0] - upper[1]);
-            let values = [low[1], upper[1] - low[1], x - upper[1]];
-            for band in 0..3 {
-                energy[band] += values[band] * values[band];
-            }
-        }
-        for band in 0..3 {
-            let rms = (energy[band] / window.len() as f64).sqrt();
-            bands[band].push((rms - previous[band]).max(0.0));
-            previous[band] = rms;
-        }
+    let frames = signal.len() / PHASE_HOP;
+    let mut result = vec![0.0; frames];
+    if frames < 8 {
+        return result;
     }
-    let mut result = vec![0.0; bands[0].len()];
-    for (band, envelope) in bands.iter().enumerate() {
-        let rms =
-            (envelope.iter().map(|x| x * x).sum::<f64>() / envelope.len().max(1) as f64).sqrt();
-        if rms < 1e-6 {
+    // Padding keeps band-filter ringing from wrapping between excerpt ends.
+    let size = (signal.len() + RATE as usize / 4).next_power_of_two();
+    let mut planner = FftPlanner::<f64>::new();
+    let forward = planner.plan_fft_forward(size);
+    let inverse = planner.plan_fft_inverse(size);
+    let mean = signal.iter().map(|x| *x as f64).sum::<f64>() / signal.len() as f64;
+    let mut spectrum = signal
+        .iter()
+        .map(|x| Complex::new(*x as f64 - mean, 0.0))
+        .chain(std::iter::repeat(Complex::new(0.0, 0.0)))
+        .take(size)
+        .collect::<Vec<_>>();
+    forward.process(&mut spectrum);
+    // Complementary second-order Butterworth magnitudes: low + mid + high = 1.
+    let lowpass = |freq: f64, cutoff: f64| 1.0 / (1.0 + (freq / cutoff).powi(4)).sqrt();
+    let mut band = vec![Complex::new(0.0, 0.0); size];
+    for (index, weight) in [0.82, 0.12, 0.06].into_iter().enumerate() {
+        for (bin, value) in band.iter_mut().enumerate() {
+            let freq = bin as f64 * RATE as f64 / size as f64;
+            let low = lowpass(freq, 250.0);
+            let upper = lowpass(freq, 2500.0);
+            let gain = [low, upper - low, 1.0 - upper][index];
+            // Analytic signal: no DC, doubled positive and no negative frequencies.
+            *value = if bin == 0 || bin >= size / 2 {
+                Complex::new(0.0, 0.0)
+            } else {
+                spectrum[bin] * (2.0 * gain / size as f64)
+            };
+        }
+        inverse.process(&mut band);
+        let energy = (0..frames)
+            .map(|frame| {
+                band[frame * PHASE_HOP..(frame + 1) * PHASE_HOP]
+                    .iter()
+                    .map(|v| v.norm_sqr())
+                    .sum::<f64>()
+                    / PHASE_HOP as f64
+            })
+            .collect::<Vec<_>>();
+        let floor = energy.iter().sum::<f64>() / frames as f64 * 0.001;
+        if floor < 1e-14 {
             continue;
         }
-        let weight = [0.82, 0.12, 0.06][band];
-        for (i, value) in envelope.iter().enumerate() {
-            result[i] += weight * (value / rms).min(12.0);
+        let mut rises = vec![0.0; frames];
+        for frame in 1..frames {
+            rises[frame] =
+                ((energy[frame] + floor).ln() - (energy[frame - 1] + floor).ln()).max(0.0);
+        }
+        let rms = (rises.iter().map(|x| x * x).sum::<f64>() / frames as f64).sqrt();
+        if rms < 1e-9 {
+            continue;
+        }
+        for (value, rise) in result.iter_mut().zip(&rises) {
+            *value += weight * (rise / rms).min(12.0);
         }
     }
     for value in result.iter_mut().take(4) {
         *value = 0.0;
     }
-    result
+    // Remove the dense background of small log steps (sustained notes, noise,
+    // reverb) with a symmetric 0.5 s local mean, so only distinct attacks fold.
+    let mut prefix = vec![0.0; frames + 1];
+    for (i, value) in result.iter().enumerate() {
+        prefix[i + 1] = prefix[i] + value;
+    }
+    (0..frames)
+        .map(|i| {
+            let low = i.saturating_sub(50);
+            let high = (i + 51).min(frames);
+            let local = (prefix[high] - prefix[low]) / (high - low) as f64;
+            (result[i] - local).max(0.0)
+        })
+        .collect()
 }
 fn phase_from_segments(segments: &[NoveltySegment], bpm: Option<f64>) -> Option<BeatPhaseEstimate> {
     let bpm = bpm.filter(|v| v.is_finite() && (30.0..=300.0).contains(v))?;
@@ -212,8 +255,6 @@ fn phase_from_segments(segments: &[NoveltySegment], bpm: Option<f64>) -> Option<
         .max_by(|a, b| a.1.total_cmp(b.1))?;
     let mut index = peak.0;
     let maximum = *peak.1;
-    let mean = aggregate.iter().sum::<f64>() / BINS as f64;
-    let concentration = ((maximum / mean.max(1e-12) - 1.0) / 6.0).clamp(0.0, 1.0);
     // When two equally supported subdivisions fit one tempo period, prefer the
     // first detected beat in that period; never invent a downbeat assignment.
     for candidate in 0..index {
@@ -225,17 +266,31 @@ fn phase_from_segments(segments: &[NoveltySegment], bpm: Option<f64>) -> Option<
             break;
         }
     }
-    let agreement = histograms
-        .iter()
-        .filter(|h| {
-            let local = h.iter().copied().fold(0.0_f64, f64::max);
-            h[index] >= local * 0.65
-        })
-        .count() as f64
-        / histograms.len() as f64;
+    // An excerpt agrees when it supports a beat within 25 ms of the chosen
+    // phase. Attack envelopes are sharp enough that BPM rounding alone (0.02
+    // BPM at 112 BPM drifts 27 ms over 150 s) would otherwise read as conflict.
+    // For the same reason concentration is judged inside each 24 s excerpt,
+    // where that drift is negligible, rather than on the drift-smeared aggregate.
+    let tolerance = (0.025 / period * BINS as f64).round() as isize;
+    let mut agreeing = 0;
+    let mut concentration = 0.0;
+    for (histogram, weight) in histograms.iter().zip(&weights) {
+        let local = histogram.iter().copied().fold(0.0_f64, f64::max);
+        let near = (-tolerance..=tolerance)
+            .map(|delta| histogram[(index as isize + delta).rem_euclid(BINS as isize) as usize])
+            .fold(0.0_f64, f64::max);
+        if near >= local * 0.65 {
+            agreeing += 1;
+        }
+        // Each histogram sums to one, so its mean bin is 1 / BINS.
+        concentration += ((near * BINS as f64 - 1.0) / 6.0).clamp(0.0, 1.0) * weight / total_weight;
+    }
+    let agreement = agreeing as f64 / histograms.len() as f64;
     let periodicity = weights.iter().sum::<f64>() / weights.len() as f64;
     let confidence = (concentration * periodicity.clamp(0.0, 1.0)).sqrt() * (0.5 + 0.5 * agreement);
-    if confidence < 0.22 || agreement < 0.5 {
+    // A strict majority must agree: two excerpts that disagree are no evidence
+    // of one uniform grid.
+    if confidence < 0.22 || agreement <= 0.5 {
         return None;
     }
     let delta = parabolic(
@@ -759,5 +814,133 @@ mod phase_stability_tests {
             }
         }
         assert!(estimate_phase(&pcm, rate, Some(bpm)).is_none());
+    }
+}
+
+#[cfg(test)]
+mod realistic_kick_phase_tests {
+    use super::*;
+    use std::f64::consts::PI;
+    /// A 3 ms click over a sub whose low-band energy builds for tens of
+    /// milliseconds and then sustains, like the kicks measured on commercial
+    /// house/EDM. A 5 ms RMS envelope saw each 40-60 Hz body cycle as a rise
+    /// and put the grid 80-100 ms after the click; isolated fast-decay
+    /// fixtures never exposed that.
+    fn layered_kick(u: f64, sub_hz: f64, attack: f64, hold: f64, release: f64) -> f64 {
+        let envelope = if u < attack {
+            0.5 - 0.5 * (PI * u / attack).cos()
+        } else if u < attack + hold {
+            1.0
+        } else {
+            (-(u - attack - hold) / release).exp()
+        };
+        let glide = (90.0 - sub_hz) * 0.015 * (1.0 - (-u / 0.015).exp());
+        let sub = (2.0 * PI * (sub_hz * u + glide)).sin() * envelope * 0.6;
+        let click = ((2.0 * PI * 1800.0 * u).sin() * 0.5 + (2.0 * PI * 400.0 * u).sin())
+            * (-u / 0.003).exp()
+            * 0.35;
+        sub + click
+    }
+    /// Pitch-swept kick with a 2 ms attack and a long 50 Hz tail.
+    fn swept_kick(u: f64) -> f64 {
+        let sweep = (150.0 - 50.0) / 30.0 * (1.0 - (-30.0 * u).exp());
+        (2.0 * PI * (50.0 * u + sweep)).sin() * (u / 0.002).min(1.0) * (-u * 9.0).exp() * 0.7
+    }
+    /// Kicks on every beat from `offset`; optionally a sustained bass that the
+    /// kick ducks (sidechain) and noise hats on the offbeat.
+    fn track(
+        bpm: f64,
+        offset: f64,
+        seconds: f64,
+        rate: u32,
+        kick: impl Fn(f64) -> f64,
+        mix: bool,
+    ) -> Vec<[f32; 2]> {
+        let period = 60.0 / bpm;
+        let mut seed = 17_u32;
+        (0..(seconds * rate as f64) as usize)
+            .map(|i| {
+                let t = i as f64 / rate as f64;
+                seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                if t < offset {
+                    return [0.0; 2];
+                }
+                let u = (t - offset).rem_euclid(period);
+                let mut value = kick(u);
+                if mix {
+                    let duck = (1.0 - (-u / 0.06).exp()).powi(2);
+                    value += (2.0 * PI * 55.0 * t).sin() * 0.25 * duck;
+                    let hat = (u - period * 0.5).rem_euclid(period);
+                    let noise = seed as f64 / u32::MAX as f64 * 2.0 - 1.0;
+                    value += noise * (-hat * 90.0).exp() * 0.15;
+                }
+                [value as f32; 2]
+            })
+            .collect()
+    }
+    fn error(actual: f64, expected: f64, bpm: f64) -> f64 {
+        let period = 60.0 / bpm;
+        ((actual - expected + period * 0.5).rem_euclid(period) - period * 0.5).abs()
+    }
+    #[test]
+    fn layered_kicks_place_the_grid_on_the_click_not_the_sub_body() {
+        for (bpm, offset, rate, sub_hz, attack, hold, release) in [
+            (112.0, 0.137, 44100, 50.0, 0.040, 0.10, 0.08),
+            (125.0, 0.211, 48000, 45.0, 0.030, 0.12, 0.08),
+        ] {
+            let pcm = track(
+                bpm,
+                offset,
+                30.0,
+                rate,
+                |u| layered_kick(u, sub_hz, attack, hold, release),
+                false,
+            );
+            let phase = estimate_phase(&pcm, rate, Some(bpm)).unwrap();
+            assert!(
+                error(phase.offset_seconds, offset, bpm) < 0.008,
+                "{bpm}: {phase:?}"
+            );
+            assert!(phase.confidence > 0.35, "{bpm}: {phase:?}");
+        }
+    }
+    #[test]
+    fn sidechained_bass_and_offbeat_hats_keep_the_kick_phase() {
+        for (bpm, offset, rate) in [(112.0, 0.137, 44100), (127.3, 0.05, 48000)] {
+            let pcm = track(bpm, offset, 40.0, rate, swept_kick, true);
+            let phase = estimate_phase(&pcm, rate, Some(bpm)).unwrap();
+            assert!(
+                error(phase.offset_seconds, offset, bpm) < 0.008,
+                "{bpm}: {phase:?}"
+            );
+        }
+    }
+    #[test]
+    fn bpm_rounding_drift_between_excerpts_keeps_a_grid_centred_on_the_kicks() {
+        // A 0.05 BPM tempo error moves the kicks 47 ms between the first and
+        // last excerpt. That is not conflicting phase: the grid at the supplied
+        // BPM should sit on the kicks mid-track and split the unavoidable drift.
+        let (bpm, offset, rate) = (124.0, 0.173, 8000);
+        let pcm = track(
+            bpm,
+            offset,
+            200.0,
+            rate,
+            |u| layered_kick(u, 50.0, 0.03, 0.08, 0.06),
+            false,
+        );
+        let rounded = bpm + 0.05;
+        let phase = estimate_phase(&pcm, rate, Some(rounded)).unwrap();
+        let (period, rounded_period) = (60.0 / bpm, 60.0 / rounded);
+        for (time, limit) in [(100.0, 0.008), (41.0, 0.030), (159.0, 0.030)] {
+            let kick = offset + ((time - offset) / period).round() * period;
+            let line = phase.offset_seconds
+                + ((kick - phase.offset_seconds) / rounded_period).round() * rounded_period;
+            assert!(
+                (line - kick).abs() < limit,
+                "{time}: {:.1} ms",
+                (line - kick) * 1e3
+            );
+        }
     }
 }
