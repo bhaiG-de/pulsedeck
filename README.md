@@ -16,6 +16,8 @@ A native, two-deck DJ app for macOS. Mix local music and Spotify, read the beatg
 2. Open it and double-click **Install PulseDeck** for the custom installer; drag its PulseDeck icon into the Applications target or use Install. Opening the DMG mounts it in Finder; it does not automatically launch the installer. The installer includes the app inside its own bundle.
 3. Launch PulseDeck. Import a local folder or configure Spotify in Settings.
 
+For agent control, select **Install/update DJ skills for Codex**, **Install/update DJ skills for Claude Code**, or both in the installer. See [Claude Code setup](#use-with-claude-code) below.
+
 PulseDeck runs one normal instance per user. Opening it again, including from another app copy, brings the existing window forward. Startup errors show an explanation; invalid optional Spotify settings leave local playback available and retain the settings file for recovery.
 
 Requires an Apple Silicon Mac and macOS 12 or newer. Release downloads include `SHA256SUMS.txt`; verify with `shasum -a 256 -c SHA256SUMS.txt` beside the downloaded DMG.
@@ -121,9 +123,34 @@ Unavailable audio or an unusable grid can prevent continuation. The app preserve
 
 ## Agents and CLI
 
+PulseDeck supports **Codex and Claude Code** through the same bundled CLI and three self-contained DJ skills. Install the skills for either tool, or both, using the installer checkboxes.
+
 Three skills separate [musical judgment](.agents/skills/djing-art/SKILL.md), [performance control](.agents/skills/pulsedeck-control/SKILL.md) and [library knowledge](.agents/skills/pulsedeck-library/SKILL.md). Their [continuous-set workflow](.agents/skills/pulsedeck-control/references/continuous-sets.md) starts one detached queue and ends the agent turn after acceptance. Healthy queues need no `--follow`, periodic reads or model-side timing loop.
 
-Build the CLI with `bash tools/rust-env.sh cargo build -p pulsedeck-cli`. Examples use `pd` as shorthand for `target/debug/pulsedeckctl`; the desktop app must be running.
+### Use with Claude Code
+
+1. Install [Claude Code](https://code.claude.com/docs/en/overview), then select its DJ-skills checkbox in the PulseDeck installer. Codex and Claude Code can be selected independently.
+2. Keep PulseDeck open, with local tracks imported or Spotify configured in its Settings.
+3. Start a new Claude Code session and invoke a skill, or ask Claude to use the PulseDeck skills. For example:
+
+```text
+/pulsedeck-library Show my available local tracks and playlists.
+/pulsedeck-control Check PulseDeck's current deck and audio state.
+/djing-art Plan a progressive house set from my library without starting playback.
+```
+
+The installer follows Claude Code's [personal skill layout](https://code.claude.com/docs/en/skills): `~/.claude/skills/<skill-name>/SKILL.md`, or `skills` inside `CLAUDE_CONFIG_DIR` when configured. Existing PulseDeck skills are backed up before replacement; unrelated skills are preserved. The installed skill packages include their supporting references and use PulseDeck's bundled CLI. The desktop app owns audio and timing during playback.
+
+### Use the CLI directly
+
+The installed app includes `pulsedeckctl`. Define `pd` for the examples below; the desktop app must be running:
+
+```sh
+pd() { /Applications/PulseDeck.app/Contents/MacOS/pulsedeckctl "$@"; }
+pd status --view compact --json
+```
+
+If installed under your home folder, use `~/Applications/PulseDeck.app/Contents/MacOS/pulsedeckctl` instead. For development, build with `bash tools/rust-env.sh cargo build -p pulsedeck-cli` and use `target/debug/pulsedeckctl`.
 
 ```sh
 # Bounded analysed opener shortlist; no repeated Spotify page fetches.
@@ -143,7 +170,7 @@ pd commands describe mix.queue.start --json
 
 `mix.options` defaults to a compact shortlist with evidence/warnings; `detail:true` exposes full passage/guard data. `commands list` returns concise names/descriptions; `--detail` opts into the full catalog. Request IDs make uncertain retries idempotent. Read-only field selection, event cursors and source/control revision guards are shared with the UI.
 
-Native events are available to background integrations. An event subscription alone does not automatically resume a Codex chat; do not simulate that integration by repeatedly waking a model to read an idle CLI. Interactive `--follow` remains available for people or host-owned background processes.
+Native events are available to background integrations. An event subscription alone does not automatically resume an agent session; do not simulate that integration by repeatedly waking a model to read an idle CLI. Interactive `--follow` remains available for people or host-owned background processes.
 
 ## Develop
 
