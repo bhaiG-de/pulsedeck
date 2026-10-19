@@ -13,7 +13,7 @@ A native, two-deck DJ app for macOS. Mix local music and Spotify, read the beatg
 ## Install
 
 1. Download the Apple Silicon (`aarch64`) `.dmg` from **GitHub Releases → Assets**.
-2. Open it and launch **Install PulseDeck** for the animated installer; drag its PulseDeck icon into the Applications target or use Install. You can also drag **PulseDeck.app** directly into the DMG’s Applications shortcut.
+2. Open it and double-click **Install PulseDeck** for the custom installer; drag its PulseDeck icon into the Applications target or use Install. Opening the DMG mounts it in Finder; it does not automatically launch the installer. The installer includes the app inside its own bundle.
 3. Launch PulseDeck. Import a local folder or configure Spotify in Settings.
 
 PulseDeck runs one normal instance per user. Opening it again, including from another app copy, brings the existing window forward. Startup errors show an explanation; invalid optional Spotify settings leave local playback available and retain the settings file for recovery.
@@ -27,7 +27,7 @@ The current build is ad-hoc signed and **not Apple-notarized**. macOS may requir
 
 The native installer uses the app’s aluminium chassis, Hanken Grotesk/DM Mono type and exact header mark, with a live drag-position indicator, reactive install target, Reduced Motion support and transactional app replacement. It confirms replacement, requires the installed app to be quit, and preserves the previous app if source copying fails. It does not modify the library or account data.
 
-The installer can install/update **pulsedeck-control**, **pulsedeck-library** and **djing-art** into `${CODEX_HOME:-~/.codex}/skills`. Existing DJ skills (including legacy names) are backed up outside skill discovery in `pulsedeck-skill-backups` before replacement; restart Codex to discover the installed skills. Uncheck the option for app-only installation. Dragging the app directly in Finder installs only the app.
+The installer has separate options to install/update **pulsedeck-control**, **pulsedeck-library** and **djing-art** for Codex and Claude Code. Codex uses `${CODEX_HOME:-~/.codex}/skills`; Claude Code uses `${CLAUDE_CONFIG_DIR:-~/.claude}/skills`. Existing DJ skills (including legacy names) are backed up inside the selected agent's configuration folder, outside skill discovery in `pulsedeck-skill-backups`, before replacement. Unrelated skills are preserved. Restart the selected tools to discover the installed skills. Uncheck both options for app-only installation. In Claude Code, invoke `/pulsedeck-control`, `/pulsedeck-library` or `/djing-art`.
 
 The signed app includes the CLI at `/Applications/PulseDeck.app/Contents/MacOS/pulsedeckctl` and self-contained skill packages in `Contents/Resources/dj-skills`; a source checkout is not required for agent control.
 

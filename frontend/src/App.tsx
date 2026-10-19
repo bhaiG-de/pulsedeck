@@ -1908,19 +1908,12 @@ export default function App() {
       reason?: string;
       decision_required?: boolean;
     }>("mix-queue-notice", ({ payload }) => save(payload))
-      .then(async (unlisten) => {
+      .then((unlisten) => {
         if (disposed) {
           unlisten();
           return;
         }
         stop = unlisten;
-        const q = await control<{
-          queue_id: string;
-          state: string;
-          reason?: string;
-          decision_required?: boolean;
-        }>("mix.queue.status", {});
-        if (q.decision_required) save(q);
       })
       .catch(() => {});
     return () => {

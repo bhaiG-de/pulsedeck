@@ -1,5 +1,7 @@
 ## Stability fixes in 0.2.2
 
+- Updated 0.2.2 download: one custom installer with the app bundled inside, plus independent Codex and Claude Code DJ-skill installation options and backups.
+- Historical mix outcomes no longer appear as a startup toast; new session outcomes still appear when they occur.
 - Opening another app copy focuses the running PulseDeck instead of crashing or restoring the same session twice.
 - Startup failures show a useful error; damaged Spotify settings preserve the original file and leave local decks available.
 - Invalid device/buffer/routing selections preserve healthy audio output; status reflects renderer failures. Output changes require stopping an active recording first.
@@ -10,7 +12,7 @@
 
 ## Install PulseDeck on macOS
 
-Download the `.dmg` under **Assets**, open it, and launch **Install PulseDeck** for the animated drag-to-install experience. The installer can also install/update the three Codex DJ skills, backing up existing DJ skills before replacement. Restart Codex afterward. Or drag **PulseDeck.app** directly into **Applications** for app-only installation. The `aarch64` build is for Apple Silicon Macs (M1 or newer). macOS 12 or newer is required. `SHA256SUMS.txt` contains the download checksum.
+Download the `.dmg` under **Assets**, open it, and double-click **Install PulseDeck** for the custom drag-to-install experience. Opening the DMG mounts it in Finder; it does not automatically launch the installer. The installer contains the app and has separate options for the three DJ skills in Codex and Claude Code, backing up existing DJ skills before replacement. Restart the selected tools afterward. Turn off both skills options for app-only installation. The `aarch64` build is for Apple Silicon Macs (M1 or newer). macOS 12 or newer is required. `SHA256SUMS.txt` contains the download checksum.
 
 This build is ad-hoc signed and is **not Apple-notarized**. macOS may require approval in System Settings → Privacy & Security before its first launch. No Apple Developer certificate or account credentials are included in this repository or release.
 

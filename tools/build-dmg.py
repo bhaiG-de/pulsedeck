@@ -51,6 +51,8 @@ def main():
     shutil.copy2(ROOT / 'src-tauri/icons/icon.png', resources / 'AppIcon.png')
     for font in (ROOT / 'installer/resources').iterdir():
         shutil.copy2(font, resources / font.name)
+    # Keep the payload inside the installer: Gatekeeper may translocate this bundle.
+    shutil.copytree(app, resources / app.name, symlinks=True)
     (installer / 'Contents/Info.plist').write_bytes(plistlib.dumps({
         'CFBundleName': 'Install PulseDeck', 'CFBundleDisplayName': 'Install PulseDeck',
         'CFBundleIdentifier': 'app.pulsedeck.installer', 'CFBundleExecutable': 'PulseDeckInstaller',
@@ -67,12 +69,11 @@ def main():
         temp = Path(temp)
         stage = temp / 'contents'
         stage.mkdir()
-        shutil.copytree(app, stage / app.name, symlinks=True)
         shutil.copytree(installer, stage / installer.name, symlinks=True)
-        (stage / 'Applications').symlink_to('/Applications')
         (stage / 'Read Me.txt').write_text(
-            'Welcome to PulseDeck.\n\nOpen Install PulseDeck for the animated drag-to-install experience.\n'
-            'Or drag PulseDeck.app onto Applications directly.\n\n'
+            'Welcome to PulseDeck.\n\nDouble-click Install PulseDeck to open the custom installer.\n'
+            'Use its Install button or drag its PulseDeck icon to the Applications target.\n'
+            'Opening the disk image mounts it in Finder; it does not automatically run the installer.\n\n'
             'This build is ad-hoc signed, not Apple-notarized. macOS may require first-launch approval in Privacy & Security.\n'
             'Your music, library and accounts stay in their own app-private folders.\n')
         shutil.copy2(ROOT / 'src-tauri/icons/icon.icns', stage / '.VolumeIcon.icns')
@@ -86,6 +87,17 @@ def main():
                 raise SystemExit(result.returncode)
             time.sleep(2)
         run('hdiutil', 'verify', image)
+        mount = temp / 'mounted'
+        run('hdiutil', 'attach', '-readonly', '-nobrowse', '-mountpoint', mount, image)
+        try:
+            visible = {path.name for path in mount.iterdir() if not path.name.startswith('.')}
+            assert visible == {installer.name, 'Read Me.txt'}, f'Unexpected DMG entry points: {visible}'
+            mounted_installer = mount / installer.name
+            run(mounted_installer / 'Contents/MacOS/PulseDeckInstaller', '--self-test')
+            run('codesign', '--verify', '--deep', '--strict', mounted_installer)
+            run('python3', ROOT / 'tools/verify-release.py', mounted_installer / 'Contents/Resources/PulseDeck.app')
+        finally:
+            run('hdiutil', 'detach', mount)
         destination = args.output / f'PulseDeck_{version}_{arch}.dmg'
         shutil.copy2(image, destination)
     digest = hashlib.sha256(destination.read_bytes()).hexdigest()

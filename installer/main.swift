@@ -28,23 +28,23 @@ let skillNames = ["pulsedeck-control", "pulsedeck-library", "djing-art"]
 let legacySkillNames = ["track-inspection", "set-preparation", "prepare-next-track", "transition", "session-dj", "recording-and-export", "setup-and-troubleshooting"].map { "pulsedeck-" + $0 }
 
 // Stage everything first and retain existing packages outside the skill search path.
-func installSkills(source: URL, codexHome: URL) throws -> URL? {
+func installSkills(source: URL, agentHome: URL) throws -> URL? {
     let fm = FileManager.default
     for name in skillNames {
         guard fm.fileExists(atPath: source.appendingPathComponent(name + "/SKILL.md").path) else {
             throw NSError(domain: "PulseDeck", code: 3, userInfo: [NSLocalizedDescriptionKey: "The bundled DJ skills are incomplete."])
         }
     }
-    let destination = codexHome.appendingPathComponent("skills")
+    let destination = agentHome.appendingPathComponent("skills")
     if (try? destination.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true {
         throw NSError(domain: "PulseDeck", code: 4, userInfo: [NSLocalizedDescriptionKey: "The skills folder is a link. Install skills manually into its intended destination."])
     }
     try fm.createDirectory(at: destination, withIntermediateDirectories: true)
-    let stage = codexHome.appendingPathComponent(".pulsedeck-skills-\(UUID().uuidString)")
+    let stage = agentHome.appendingPathComponent(".pulsedeck-skills-\(UUID().uuidString)")
     defer { try? fm.removeItem(at: stage) }
     try fm.createDirectory(at: stage, withIntermediateDirectories: true)
     for name in skillNames { try fm.copyItem(at: source.appendingPathComponent(name), to: stage.appendingPathComponent(name)) }
-    let backup = codexHome.appendingPathComponent("pulsedeck-skill-backups/\(UUID().uuidString)")
+    let backup = agentHome.appendingPathComponent("pulsedeck-skill-backups/\(UUID().uuidString)")
     var saved = [String](), published = [String]()
     do {
         for name in skillNames + legacySkillNames {
@@ -82,13 +82,15 @@ final class InstallModel: ObservableObject {
     @Published var error: String?
     @Published var pointer = CGPoint(x: 430, y: 260)
     @Published var confirmReplace = false
-    @Published var includeSkills = true
+    @Published var includeCodexSkills = true
+    @Published var includeClaudeSkills = false
     @Published var skillMessage: String?
     let codexHome = ProcessInfo.processInfo.environment["CODEX_HOME"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) } ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex")
+    let claudeHome = ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"].flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) } ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude")
     let source: URL
     let destination: URL
     init() {
-        source = Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("PulseDeck.app")
+        source = Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/PulseDeck.app")
         let fm = FileManager.default
         let folder = fm.isWritableFile(atPath: "/Applications") ? URL(fileURLWithPath: "/Applications") : fm.homeDirectoryForCurrentUser.appendingPathComponent("Applications")
         destination = folder.appendingPathComponent("PulseDeck.app")
@@ -105,20 +107,21 @@ final class InstallModel: ObservableObject {
     func install() {
         guard !copying else { return }
         copying = true; dragging = false; hovering = false; error = nil
-        let source = source, destination = destination, includeSkills = includeSkills, codexHome = codexHome
+        let source = source, destination = destination
+        let skillTargets = [("Codex", codexHome, includeCodexSkills), ("Claude Code", claudeHome, includeClaudeSkills)].filter { $0.2 }
         DispatchQueue.global(qos: .userInitiated).async {
             do {
                 try installBundle(source: source, destination: destination)
-                var skillMessage: String?
-                if includeSkills {
+                var messages = [String]()
+                for (name, home, _) in skillTargets {
                     do {
-                        let backup = try installSkills(source: destination.appendingPathComponent("Contents/Resources/dj-skills"), codexHome: codexHome)
-                        skillMessage = "Three DJ skills installed. Restart Codex to discover them." + (backup.map { " Previous skills saved in \($0.path)." } ?? "")
+                        let backup = try installSkills(source: destination.appendingPathComponent("Contents/Resources/dj-skills"), agentHome: home)
+                        messages.append("Three DJ skills installed for \(name). Restart \(name) to discover them." + (backup.map { " Previous skills saved in \($0.path)." } ?? ""))
                     } catch {
-                        skillMessage = "PulseDeck installed; skills could not be installed: \(error.localizedDescription)"
+                        messages.append("PulseDeck installed; \(name) skills could not be installed: \(error.localizedDescription)")
                     }
                 }
-                let message = skillMessage
+                let message = messages.isEmpty ? nil : messages.joined(separator: "\n")
                 DispatchQueue.main.async { self.copying = false; self.installed = true; self.skillMessage = message }
             } catch {
                 DispatchQueue.main.async { self.copying = false; self.error = "Could not install: \(error.localizedDescription)" }
@@ -265,9 +268,11 @@ struct InstallerView: View {
                     }.frame(maxWidth:.infinity).padding(.vertical,24)
                 }.padding(.top,30).padding(.bottom,6)
                 if !model.installed {
-                    Toggle("Install/update DJ skills for Codex",isOn:$model.includeSkills).toggleStyle(.checkbox)
-                        .font(ui(13)).disabled(model.copying).padding(.top,20)
-                    Text("Three skills. Existing versions are backed up before replacement.")
+                    VStack(alignment:.leading,spacing:6) {
+                        Toggle("Install/update DJ skills for Codex",isOn:$model.includeCodexSkills)
+                        Toggle("Install/update DJ skills for Claude Code",isOn:$model.includeClaudeSkills)
+                    }.toggleStyle(.checkbox).font(ui(13)).disabled(model.copying).padding(.top,20)
+                    Text("Three skills per tool. Existing versions are backed up before replacement.")
                         .font(ui(11)).foregroundColor(ink.opacity(0.55)).padding(.top,4)
                 }
                 if let message = model.skillMessage { Text(message).font(ui(11)).foregroundColor(ink.opacity(0.7)).padding(.top,12).fixedSize(horizontal:false,vertical:true) }
@@ -344,6 +349,8 @@ for name in ["HankenGrotesk", "DMMono-Regular"] {
     if let url = Bundle.main.url(forResource:name,withExtension:"ttf") { CTFontManagerRegisterFontsForURL(url as CFURL,.process,nil) }
 }
 if CommandLine.arguments.contains("--self-test") {
+    let payload = Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/PulseDeck.app")
+    precondition((NSDictionary(contentsOf: payload.appendingPathComponent("Contents/Info.plist")))?["CFBundleIdentifier"] as? String == "app.pulsedeck.desktop", "Installer must contain its own PulseDeck payload")
     if Bundle.main.url(forResource:"HankenGrotesk",withExtension:"ttf") != nil {
         precondition(NSFont(name:"HankenGrotesk-Regular",size:14) != nil)
         precondition(NSFont(name:"DMMono-Regular",size:14) != nil)
@@ -370,17 +377,30 @@ if CommandLine.arguments.contains("--self-test") {
         try fm.createDirectory(at:folder,withIntermediateDirectories:true)
         try Data("first".utf8).write(to:folder.appendingPathComponent("SKILL.md"))
     }
-    let firstBackup = try installSkills(source:skills,codexHome:codexHome)
+    let firstBackup = try installSkills(source:skills,agentHome:codexHome)
     precondition(firstBackup == nil)
     let oldSkill = codexHome.appendingPathComponent("skills/pulsedeck-control/SKILL.md")
     try Data("custom".utf8).write(to:oldSkill)
-    let backup = try installSkills(source:skills,codexHome:codexHome)!
+    let backup = try installSkills(source:skills,agentHome:codexHome)!
     precondition((try? String(contentsOf:backup.appendingPathComponent("pulsedeck-control/SKILL.md"),encoding:.utf8)) == "custom")
     precondition((try? String(contentsOf:oldSkill,encoding:.utf8)) == "first")
+    let claudeHome = root.appendingPathComponent("claude")
+    let unrelated = claudeHome.appendingPathComponent("skills/unrelated/SKILL.md")
+    try fm.createDirectory(at:unrelated.deletingLastPathComponent(),withIntermediateDirectories:true)
+    try Data("keep".utf8).write(to:unrelated)
+    let claudeFirstBackup = try installSkills(source:skills,agentHome:claudeHome)
+    precondition(claudeFirstBackup == nil)
+    let claudeSkill = claudeHome.appendingPathComponent("skills/pulsedeck-control/SKILL.md")
+    try Data("Claude customization".utf8).write(to:claudeSkill)
+    let claudeBackup = try installSkills(source:skills,agentHome:claudeHome)!
+    precondition((try? String(contentsOf:claudeBackup.appendingPathComponent("pulsedeck-control/SKILL.md"),encoding:.utf8)) == "Claude customization")
+    precondition((try? String(contentsOf:claudeSkill,encoding:.utf8)) == "first")
+    precondition((try? String(contentsOf:unrelated,encoding:.utf8)) == "keep")
+    precondition((try? String(contentsOf:backup.appendingPathComponent("pulsedeck-control/SKILL.md"),encoding:.utf8)) == "custom")
     try fm.removeItem(at:skills.appendingPathComponent("djing-art"))
-    do { _ = try installSkills(source:skills,codexHome:codexHome); fatalError("Incomplete skills accepted") } catch {}
+    do { _ = try installSkills(source:skills,agentHome:codexHome); fatalError("Incomplete skills accepted") } catch {}
     precondition((try? String(contentsOf:oldSkill,encoding:.utf8)) == "first")
-    print("Installer app copy/replacement, skill install/update/backup and failure preservation passed in temporary folders.")
+    print("Installer app copy/replacement, Codex and Claude Code skill install/update/backup, unrelated skill preservation and failure preservation passed in temporary folders.")
 } else {
     let application=NSApplication.shared; let delegate=InstallerDelegate(); application.delegate=delegate
     application.setActivationPolicy(.regular); application.run()

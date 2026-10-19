@@ -85,7 +85,7 @@ jobs:
               mount = pathlib.Path(temporary).resolve() / 'mounted'
               subprocess.run(['hdiutil', 'attach', '-readonly', '-nobrowse', '-mountpoint', str(mount), str(image)], check=True)
               try:
-                  subprocess.run(['python3', 'tools/test-release.py', str(mount / 'PulseDeck.app')], check=True)
+                  subprocess.run(['python3', 'tools/test-release.py', str(mount / 'Install PulseDeck.app/Contents/Resources/PulseDeck.app')], check=True)
               finally:
                   subprocess.run(['hdiutil', 'detach', str(mount)], check=True)
           PYTHON
