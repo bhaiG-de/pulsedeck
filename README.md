@@ -43,15 +43,23 @@ Use the **Successor queue** to run an ordered set or a collection with tempo, en
 
 ## How to install
 
-### Download the DMG
+### Download the ready-to-run app
 
 Requires **Apple Silicon and macOS 12 or newer**.
 
-1. Download the `aarch64.dmg` from [the latest release](https://github.com/bhaiG-de/pulsedeck/releases/latest).
-2. Open the DMG, then double-click **Install PulseDeck**. Drag the PulseDeck icon to its Applications target, or click **Install**.
-3. Select the optional DJ skills for **Codex**, **Claude Code**, or both, then launch PulseDeck from Applications.
+1. Download **PulseDeck_0.2.2_aarch64.zip** from [the latest release](https://github.com/bhaiG-de/pulsedeck/releases/latest).
+2. Double-click the ZIP to extract **PulseDeck.app**, then move it to **Applications** and open it. No installer or build tools are needed; the audio engine, analysis models, control CLI and DJ skills are bundled.
+3. If macOS blocks the first launch, dismiss the warning, open **System Settings → Privacy & Security**, scroll to **Security**, choose **Open Anyway** for **PulseDeck.app**, and confirm **Open**. This download is not Apple-notarized, so the ZIP still requires approval.
 
-The app is currently ad-hoc signed, **not Apple-notarized**; first launch may need approval in **System Settings → Privacy & Security**. Releases include `SHA256SUMS.txt` for download verification.
+### Custom installer and optional agent setup
+
+Use the DMG if you want the custom installer to set up DJ skills in Codex or Claude Code automatically.
+
+1. Download the `aarch64.dmg` from [the latest release](https://github.com/bhaiG-de/pulsedeck/releases/latest).
+2. Open the DMG. **START HERE.html** explains first-launch approval and includes a shortcut to Privacy & Security. Double-click **Install PulseDeck** to open the custom installer.
+3. Select the optional DJ skills for **Codex**, **Claude Code**, or both. Drag the PulseDeck icon to the Applications target or click **Install PulseDeck**, then open the app.
+
+The app is currently ad-hoc signed, **not Apple-notarized**. If macOS blocks the installer, dismiss the warning, use **Open Privacy & Security.inetloc** in the DMG, then scroll to **Security → Open Anyway** for **Install PulseDeck.app** and confirm **Open**. Approve only a download you trust from the official release. If the installed **PulseDeck.app** is also blocked, repeat for that app. On macOS 12, use **System Preferences → Security & Privacy → General**. The installer also has **First-launch help**. See [Apple’s instructions](https://support.apple.com/en-us/102445). Releases include `SHA256SUMS.txt` for download verification.
 
 ### Run from source
 

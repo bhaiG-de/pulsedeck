@@ -22,12 +22,13 @@ def run(*args, **kwargs):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--app', type=Path, default=ROOT / 'target/release/bundle/macos/PulseDeck.app')
+    parser.add_argument('--cli', type=Path, default=ROOT / 'target/release/pulsedeckctl')
     parser.add_argument('--output', type=Path, default=ROOT / 'target/release/bundle/dmg')
     args = parser.parse_args()
     app = args.app.resolve()
     # Embed the client and self-contained skills before the final app signature.
     cli = app / 'Contents/MacOS/pulsedeckctl'
-    shutil.copy2(ROOT / 'target/release/pulsedeckctl', cli)
+    shutil.copy2(args.cli, cli)
     skills = app / 'Contents/Resources/dj-skills'
     if skills.exists():
         shutil.rmtree(skills)
@@ -49,8 +50,8 @@ def main():
     resources.mkdir(parents=True)
     shutil.copy2(ROOT / 'src-tauri/icons/icon.icns', resources / 'icon.icns')
     shutil.copy2(ROOT / 'src-tauri/icons/icon.png', resources / 'AppIcon.png')
-    for font in (ROOT / 'installer/resources').iterdir():
-        shutil.copy2(font, resources / font.name)
+    for resource in (ROOT / 'installer/resources').iterdir():
+        shutil.copy2(resource, resources / resource.name)
     # Keep the payload inside the installer: Gatekeeper may translocate this bundle.
     shutil.copytree(app, resources / app.name, symlinks=True)
     (installer / 'Contents/Info.plist').write_bytes(plistlib.dumps({
@@ -70,12 +71,10 @@ def main():
         stage = temp / 'contents'
         stage.mkdir()
         shutil.copytree(installer, stage / installer.name, symlinks=True)
-        (stage / 'Read Me.txt').write_text(
-            'Welcome to PulseDeck.\n\nDouble-click Install PulseDeck to open the custom installer.\n'
-            'Use its Install button or drag its PulseDeck icon to the Applications target.\n'
-            'Opening the disk image mounts it in Finder; it does not automatically run the installer.\n\n'
-            'This build is ad-hoc signed, not Apple-notarized. macOS may require first-launch approval in Privacy & Security.\n'
-            'Your music, library and accounts stay in their own app-private folders.\n')
+        # Help must be readable even when Gatekeeper blocks the installer itself.
+        shutil.copy2(resources / 'First Launch.html', stage / 'START HERE.html')
+        settings_url = 'x-apple.systempreferences:com.apple.preference.security'
+        (stage / 'Open Privacy & Security.inetloc').write_bytes(plistlib.dumps({'URL': settings_url}))
         shutil.copy2(ROOT / 'src-tauri/icons/icon.icns', stage / '.VolumeIcon.icns')
         image = temp / 'PulseDeck.dmg'
         # A single create avoids create-dmg's mount/resize/convert race on recent macOS.
@@ -91,8 +90,10 @@ def main():
         run('hdiutil', 'attach', '-readonly', '-nobrowse', '-mountpoint', mount, image)
         try:
             visible = {path.name for path in mount.iterdir() if not path.name.startswith('.')}
-            assert visible == {installer.name, 'Read Me.txt'}, f'Unexpected DMG entry points: {visible}'
+            assert visible == {installer.name, 'START HERE.html', 'Open Privacy & Security.inetloc'}, f'Unexpected DMG entry points: {visible}'
             mounted_installer = mount / installer.name
+            assert (mount / 'START HERE.html').read_bytes() == (mounted_installer / 'Contents/Resources/First Launch.html').read_bytes()
+            assert plistlib.loads((mount / 'Open Privacy & Security.inetloc').read_bytes())['URL'] == settings_url
             run(mounted_installer / 'Contents/MacOS/PulseDeckInstaller', '--self-test')
             run('codesign', '--verify', '--deep', '--strict', mounted_installer)
             run('python3', ROOT / 'tools/verify-release.py', mounted_installer / 'Contents/Resources/PulseDeck.app')
@@ -100,9 +101,11 @@ def main():
             run('hdiutil', 'detach', mount)
         destination = args.output / f'PulseDeck_{version}_{arch}.dmg'
         shutil.copy2(image, destination)
-    digest = hashlib.sha256(destination.read_bytes()).hexdigest()
-    (args.output / 'SHA256SUMS.txt').write_text(f'{digest}  {destination.name}\n')
-    print(json.dumps({'dmg': str(destination), 'sha256': digest, 'installer': str(installer), 'version': version}, indent=2))
+    app_zip = args.output / f'PulseDeck_{version}_{arch}.zip'
+    run('python3', ROOT / 'tools/build-app-zip.py', '--app', app, '--output', app_zip)
+    checksums = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in (destination, app_zip)}
+    (args.output / 'SHA256SUMS.txt').write_text(''.join(f'{digest}  {name}\n' for name, digest in checksums.items()))
+    print(json.dumps({'dmg': str(destination), 'zip': str(app_zip), 'checksums': checksums, 'installer': str(installer), 'version': version}, indent=2))
 
 
 if __name__ == '__main__':

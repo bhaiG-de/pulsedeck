@@ -280,6 +280,9 @@ struct InstallerView: View {
                 Spacer(minLength:16)
                 HStack {
                     Text(model.destination.deletingLastPathComponent().path).font(mono(10)).foregroundColor(ink.opacity(0.5))
+                    Button("First-launch help") {
+                        if let guide = Bundle.main.url(forResource:"First Launch",withExtension:"html") { NSWorkspace.shared.open(guide) }
+                    }.buttonStyle(.link)
                     Spacer()
                     if model.copying {
                         ProgressView().controlSize(.small)
@@ -349,6 +352,7 @@ for name in ["HankenGrotesk", "DMMono-Regular"] {
     if let url = Bundle.main.url(forResource:name,withExtension:"ttf") { CTFontManagerRegisterFontsForURL(url as CFURL,.process,nil) }
 }
 if CommandLine.arguments.contains("--self-test") {
+    precondition(Bundle.main.url(forResource:"First Launch",withExtension:"html") != nil, "First-launch help must be available offline")
     let payload = Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/PulseDeck.app")
     precondition((NSDictionary(contentsOf: payload.appendingPathComponent("Contents/Info.plist")))?["CFBundleIdentifier"] as? String == "app.pulsedeck.desktop", "Installer must contain its own PulseDeck payload")
     if Bundle.main.url(forResource:"HankenGrotesk",withExtension:"ttf") != nil {

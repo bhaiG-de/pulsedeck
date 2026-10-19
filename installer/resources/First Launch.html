@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Install PulseDeck — first launch</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #e8e9eb; color: #18191b; font: 16px/1.6 -apple-system, BlinkMacSystemFont, sans-serif; }
+  main { max-width: 780px; margin: 48px auto; padding: 36px; background: #fff; border: 1px solid #d3d5d8; border-radius: 20px; }
+  header { font-weight: 600; letter-spacing: -.5px; }
+  header span { color: #c63d0c; }
+  h1 { margin: 24px 0 8px; font-size: 32px; line-height: 1.2; letter-spacing: -1px; }
+  h2 { font-size: 20px; margin-top: 28px; }
+  p { margin: 8px 0 16px; }
+  li { padding: 5px 0 5px 4px; }
+  a { color: #a53208; text-underline-offset: 3px; }
+  .button { display: inline-block; background: #252629; color: white; padding: 12px 18px; border-radius: 9px; text-decoration: none; font-weight: 600; }
+  .note { background: #f3f4f5; border-radius: 10px; padding: 16px 20px; }
+  .small { font-size: 14px; color: #50535a; }
+  @media (max-width: 600px) { main { margin: 16px; padding: 24px; } h1 { font-size: 28px; } }
+</style>
+<main>
+  <header><span>●</span> pulsedeck / macOS installation</header>
+  <h1>Your first launch, step by step.</h1>
+  <p>In the PulseDeck disk image, double-click <strong>Install PulseDeck.app</strong> to open the custom installer.</p>
+  <div class="note">
+    <strong>Seeing “Install PulseDeck.app Not Opened”?</strong>
+    <p>This release has not been notarized by Apple, so macOS may block its first launch. If you trust your download from the <a href="https://github.com/bhaiG-de/pulsedeck/releases/tag/v0.2.2">official PulseDeck release</a>, you can approve this app in macOS.</p>
+    <ol>
+      <li>Try opening <strong>Install PulseDeck.app</strong> once. Dismiss the warning with <strong>Done</strong>.</li>
+      <li>Open <strong>System Settings → Privacy &amp; Security</strong>. Scroll down to <strong>Security</strong> and find the message naming <strong>Install PulseDeck.app</strong>.</li>
+      <li>Click <strong>Open Anyway</strong>, authenticate if asked, and confirm <strong>Open</strong>. The custom installer can now launch.</li>
+    </ol>
+    <a class="button" href="x-apple.systempreferences:com.apple.preference.security">Open Privacy &amp; Security ↗</a>
+    <p class="small">You can also double-click “Open Privacy &amp; Security.inetloc” in the disk image. The shortcut opens settings; you choose whether to approve the app.</p>
+  </div>
+  <h2>Finish in the custom installer</h2>
+  <p>Choose DJ skills for Codex, Claude Code, or both. Click <strong>Install PulseDeck</strong> or drag its icon to the Applications target, then choose <strong>Open PulseDeck</strong>.</p>
+  <p>If macOS also blocks <strong>PulseDeck.app</strong>, repeat the approval steps for that app. Restart Codex or Claude Code after installing their skills.</p>
+  <p class="small">On macOS 12, use <strong>System Preferences → Security &amp; Privacy → General</strong>. If the shortcut does not open the right page, navigate there manually. If Open Anyway is missing, try opening the installer again; a managed Mac may require your administrator’s approval.</p>
+  <p class="small"><a href="https://support.apple.com/en-us/102445">Apple’s guide to opening downloaded apps</a> · <a href="https://github.com/bhaiG-de/pulsedeck/issues">Get help with PulseDeck</a></p>
+</main>
+</html>

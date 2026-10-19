@@ -12,9 +12,11 @@
 
 ## Install PulseDeck on macOS
 
+**Ready-to-run app:** download **PulseDeck_0.2.2_aarch64.zip**, unzip it, move **PulseDeck.app** to Applications, and open it. No installer or build tools are needed. The app includes its audio engine, offline analysis models, control CLI and DJ skills. Use the DMG below for automatic skill setup in Codex or Claude Code. The ZIP is also not Apple-notarized: if macOS blocks it, dismiss the warning and use System Settings → Privacy & Security → Security → Open Anyway for **PulseDeck.app**, then confirm **Open**.
+
 Download the `.dmg` under **Assets**, open it, and double-click **Install PulseDeck** for the custom drag-to-install experience. Opening the DMG mounts it in Finder; it does not automatically launch the installer. The installer contains the app and has separate options for the three DJ skills in Codex and Claude Code, backing up existing DJ skills before replacement. Restart the selected tools afterward. Turn off both skills options for app-only installation. The `aarch64` build is for Apple Silicon Macs (M1 or newer). macOS 12 or newer is required. `SHA256SUMS.txt` contains the download checksum.
 
-This build is ad-hoc signed and is **not Apple-notarized**. macOS may require approval in System Settings → Privacy & Security before its first launch. No Apple Developer certificate or account credentials are included in this repository or release.
+This build is ad-hoc signed and is **not Apple-notarized**. Open **START HERE.html** inside the DMG for offline first-launch instructions. If macOS blocks **Install PulseDeck.app**, dismiss the warning, double-click **Open Privacy & Security.inetloc**, scroll to **Security**, and choose **Open Anyway** for the installer, then confirm **Open**. Approve only a download you trust from this official release. Repeat for **PulseDeck.app** if the installed app is also blocked. On macOS 12, use System Preferences → Security & Privacy → General. The custom installer also includes **First-launch help**. See [Apple’s instructions](https://support.apple.com/en-us/102445). No Apple Developer certificate or account credentials are included in this repository or release.
 
 ## Included
 

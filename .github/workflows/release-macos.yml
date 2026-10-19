@@ -75,7 +75,7 @@ jobs:
           codesign --verify --deep --strict target/release/bundle/macos/PulseDeck.app
           python3 tools/verify-release.py target/release/bundle/macos/PulseDeck.app
           cd target/release/bundle/dmg
-          shasum -a 256 *.dmg > SHA256SUMS.txt
+          shasum -a 256 *.dmg *.zip > SHA256SUMS.txt
       - name: Test installed app from the DMG
         run: |
           python3 - <<'PYTHON'
@@ -94,6 +94,7 @@ jobs:
           name: PulseDeck-${{ env.RELEASE_TAG }}-${{ github.sha }}
           path: |
             target/release/bundle/dmg/*.dmg
+            target/release/bundle/dmg/*.zip
             target/release/bundle/dmg/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
@@ -106,6 +107,7 @@ jobs:
           body_path: .github/release-notes.md
           files: |
             target/release/bundle/dmg/*.dmg
+            target/release/bundle/dmg/*.zip
             target/release/bundle/dmg/SHA256SUMS.txt
           fail_on_unmatched_files: true
           overwrite_files: true
