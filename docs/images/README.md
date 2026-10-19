@@ -11,7 +11,7 @@ Six approved views of the real PulseDeck production frontend, rendered with Thre
 | `05-library.webp` | Local collection, metadata and tags |
 | `06-suggest.webp` | Ranked next moves and transition timing |
 
-All images are **3840 × 2160**, encoded as **lossless WebP**. Decoded RGBA pixels were checked against the approved PNG exports and are identical. Click an image in the main README to view its full resolution.
+All images are **3840 × 2160**, encoded as **lossless WebP** with maximum compression effort (libwebp quality 100, method 6). Together they total **9.52 MB**, down from 9.89 MB after a further lossless optimization. Decoded RGBA pixels match the approved PNG exports exactly; FFmpeg-decoded pixel hashes also match the previous WebP files. No resizing or lossy encoding is applied. Click an image in the main README to view its full resolution.
 
 The session uses real local track metadata in an isolated profile. Playback is paused and hot cues are staged; the empty successor queue and preparation requirements are preserved. No audio, account credentials, local library database or private source file paths are included.
 
