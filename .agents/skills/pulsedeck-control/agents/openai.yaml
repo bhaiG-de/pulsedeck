@@ -1,0 +1,4 @@
+interface:
+  display_name: "Controlling PulseDeck and workflows"
+  short_description: "Prepare decks, run mixes and verify PulseDeck controls"
+  default_prompt: "Use $pulsedeck-control: start supported continuous sets with one mix.queue.start and explicit repertoire/policy; use mix.execute for one chosen move. Follow lifecycle events."

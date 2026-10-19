@@ -94,6 +94,27 @@ pub struct ControllerSurface {
     pub smart_cfx_preset: &'static str,
 }
 impl ControlState {
+    pub fn set_browse_context(
+        &mut self,
+        track_ids: Vec<i64>,
+        selected: Option<i64>,
+    ) -> Result<(), String> {
+        if track_ids.len() > 100_000 {
+            return Err("Browser context exceeds 100,000 tracks".into());
+        }
+        let index = selected
+            .map(|id| {
+                track_ids
+                    .iter()
+                    .position(|track| *track == id)
+                    .ok_or("Selected track is not in the current browser")
+            })
+            .transpose()?;
+        self.selected =
+            index.unwrap_or_else(|| self.selected.min(track_ids.len().saturating_sub(1)));
+        self.browse_context = track_ids;
+        Ok(())
+    }
     pub fn observe(&mut self, command: &EngineCommand, derive_fx: bool) {
         match command {
             EngineCommand::SetEq {
@@ -670,12 +691,12 @@ pub fn handle(app: &tauri::AppHandle, action: ControllerAction) -> Result<(), St
                     control.browse_context[control.selected],
                 );
             } else if let Ok(lib) = state.library.lock() {
-                if let Ok(tracks) = lib.tracks() {
+                if let Ok(tracks) = lib.track_ids() {
                     if !tracks.is_empty() {
                         control.selected = (control.selected as isize + delta as isize)
                             .rem_euclid(tracks.len() as isize)
                             as usize;
-                        let _ = app.emit("controller_selection", tracks[control.selected].id);
+                        let _ = app.emit("controller_selection", tracks[control.selected]);
                     }
                 }
             }
@@ -684,18 +705,14 @@ pub fn handle(app: &tauri::AppHandle, action: ControllerAction) -> Result<(), St
             deck,
             shifted: false,
         } if deck < 2 && !control.browser_ui_active => {
-            let path = state
-                .library
-                .lock()
-                .ok()
-                .and_then(|lib| lib.tracks().ok())
-                .and_then(|tracks| {
-                    if let Some(id) = control.browse_context.get(control.selected) {
-                        tracks.iter().find(|t| t.id == *id).map(|t| t.path.clone())
-                    } else {
-                        tracks.get(control.selected).map(|t| t.path.clone())
-                    }
-                });
+            let path = state.library.lock().ok().and_then(|lib| {
+                let id = control
+                    .browse_context
+                    .get(control.selected)
+                    .copied()
+                    .or_else(|| lib.track_ids().ok()?.get(control.selected).copied())?;
+                lib.path_for_id(id).ok()
+            });
             if let Some(path) = path {
                 let app = app.clone();
                 std::thread::spawn(move || {
@@ -844,6 +861,23 @@ pub fn feedback(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paged_context_and_selection_commit_together_and_invalid_changes_roll_back() {
+        let mut control = ControlState::default();
+        control.set_browse_context(vec![1, 2], Some(2)).unwrap();
+        control
+            .set_browse_context(vec![1, 2, 3, 4], Some(4))
+            .unwrap();
+        assert_eq!(control.selected, 3);
+        assert!(control.set_browse_context(vec![9], Some(4)).is_err());
+        assert_eq!(control.browse_context, vec![1, 2, 3, 4]);
+        assert_eq!(control.selected, 3);
+        control.set_browse_context(vec![1, 2], None).unwrap();
+        assert_eq!(control.selected, 1);
+        assert!(control.set_browse_context(vec![0; 100001], None).is_err());
+        assert_eq!(control.browse_context, vec![1, 2]);
+    }
 
     #[test]
     fn tap_bpm_rejects_accidental_double_tap_and_resets_after_a_break() {

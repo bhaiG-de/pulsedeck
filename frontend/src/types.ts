@@ -25,36 +25,24 @@ export interface BeatModelStage {
   downbeats_seconds: number[];
   grid?: BeatModelGrid | null;
 }
-export type SectionLabel =
+export type CueRole =
   "intro" | "build_up" | "drop" | "breakdown" | "verse" | "hook" | "outro";
-export type Vocabulary = "dance" | "hip_hop";
-export interface Section {
-  start_seconds: number;
-  bars: number;
-  label: SectionLabel | null;
-  energy: number;
-  groove: number;
-  rise: number;
-  group: number;
-}
-export interface SectionStage {
-  bar_times?: number[];
-  beats_per_bar?: number;
-  version: number;
-  bpm: number;
-  downbeat_offset_seconds: number;
-  vocabulary: Vocabulary;
-  vocabulary_override?: Vocabulary | null;
-  sections: Section[];
-}
-export interface AnalysisSettings {
-  beat_model_spotify: boolean;
-  auto_hot_cues: boolean;
-  auto_memory_cues: boolean;
-}
 export interface NeuralRhythm {
   beats_per_bar?: number | null;
-  bar_evidence?: { half_phase_corrected?: boolean; beats_per_bar: number; recurrence: number; strong_windows: number; windows: number; pulse_repairs?: { start_seconds: number; end_seconds: number; inserted_beats: number; original_bpm: number; corrected_bpm: number }[] }[];
+  bar_evidence?: {
+    half_phase_corrected?: boolean;
+    beats_per_bar: number;
+    recurrence: number;
+    strong_windows: number;
+    windows: number;
+    pulse_repairs?: {
+      start_seconds: number;
+      end_seconds: number;
+      inserted_beats: number;
+      original_bpm: number;
+      corrected_bpm: number;
+    }[];
+  }[];
   beats_seconds: number[];
   downbeats_seconds: number[];
   bpm: number;
@@ -63,12 +51,43 @@ export interface NeuralRhythm {
   model: string;
   analysis_seconds: number;
 }
+export interface AnalysisStageStamp {
+  version: number;
+  dependency: string;
+  outcome: "ready" | "unavailable" | "failed";
+  reason: string | null;
+}
+export interface CuePoint {
+  id: string;
+  start_seconds: number;
+  end_seconds: number | null;
+  name: string;
+  role: CueRole | null;
+  origin: "manual" | "imported";
+  modified: boolean;
+  confirmed: boolean;
+}
+export interface AudioMeasurements {
+  version: number;
+  sample_rate: number;
+  frames: number;
+  audible_start_frame: number | null;
+  audible_end_frame: number | null;
+  threshold_dbfs: number;
+  integrated_lufs: number | null;
+  true_peak_dbtp: number | null;
+  normalization_gain_db: number;
+  error: string | null;
+}
 export interface TrackRecord {
+  audio_measurements?: AudioMeasurements | null;
   id: string | number;
   path: string;
   title: string;
   artist?: string;
   tags?: string[];
+  rating?: number;
+  color?: string;
   album?: string;
   duration?: number;
   duration_seconds?: number;
@@ -86,13 +105,18 @@ export interface TrackRecord {
   rhythm_error?: string | null;
   manual_grid_anchor_index?: number | null;
   analysis_version?: number;
+  source_fingerprint?: string | null;
+  source_release?: string | null;
+  analysis_stages?: Partial<
+    Record<"rhythm" | "waveform" | "key" | "neural", AnalysisStageStamp>
+  >;
   bpm_confidence?: number;
   bpm_candidates?: BpmCandidate[];
   bpm_ambiguous?: boolean;
   bpm_source?: string | null;
   key_candidates?: KeyCandidate[];
   beat_model?: BeatModelStage | null;
-  sections?: SectionStage | null;
+  cue_points?: CuePoint[];
   recording_allowed?: boolean;
   error?: string;
 }
@@ -109,6 +133,11 @@ export interface AudioDeviceInfo {
   is_default?: boolean;
 }
 export interface DeckSnapshot {
+  normalization_enabled?: boolean;
+  normalization_gain_db?: number;
+  fx_tail_active?: boolean;
+  fx_tail_peak?: number[];
+  restricted_tail_active?: boolean;
   id?: number;
   peak?: number[];
   memory_cues?: (number | null)[];
@@ -117,6 +146,12 @@ export interface DeckSnapshot {
   preparation_pending?: boolean;
   channel_fader?: number;
   sync_enabled?: boolean;
+  sync_rate_limits?: {
+    min_rate: number;
+    max_rate: number;
+    max_slew_per_second: number;
+  } | null;
+  sync_rate_limited?: boolean;
   is_master?: boolean;
   beatgrid_offset_seconds?: number;
   beatgrid_valid?: boolean;
@@ -129,6 +164,11 @@ export interface DeckSnapshot {
   launch_at_seconds?: number | null;
   track?: TrackRecord | null;
   playback_rate?: number;
+  actual_playback_rate?: number;
+  playback_bpm?: number | null;
+  target_playback_bpm?: number | null;
+  local_bpm?: number | null;
+  actual_playback_bpm?: number | null;
   echo?: number;
   reverb?: number;
   loop_start_seconds?: number | null;
@@ -144,6 +184,7 @@ export interface DeckSnapshot {
   playing?: boolean;
   jog_touch?: boolean;
   position_revision?: number;
+  grid_revision?: number;
   bpm?: number;
   original_bpm?: number;
   tempo?: number;
@@ -170,6 +211,7 @@ export interface DeckSnapshot {
   sync?: boolean;
 }
 export interface EngineSnapshot {
+  load_revisions?: number[];
   decks: DeckSnapshot[];
   sampler_gain?: number;
   crossfader?: number;
@@ -237,8 +279,8 @@ export interface AppState {
     current_path?: string | null;
     errors: string[];
     cancelled?: boolean;
+    analyzing?: boolean;
   };
-  analysis_settings?: AnalysisSettings;
   messages?: string[];
 }
 export const emptyEngine: EngineSnapshot = {

@@ -1,4 +1,0 @@
-interface:
-  display_name: "Session DJ"
-  short_description: "Run a verified sequence and yield to manual takeover"
-  default_prompt: "Use $pulsedeck-session-dj to handle the requested PulseDeck task through the CLI and verify the result."

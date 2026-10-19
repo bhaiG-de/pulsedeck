@@ -1,0 +1,9 @@
+# State and ownership
+
+Take a compact snapshot of the requested instance: sources and load revisions, playing/position and position revisions, live remaining time, master/Sync/rates, loops, cue selection, faders/EQ/filter/FX, global levels/routing, jobs and pending native work. Describe only an unfamiliar command; do not reload the full catalog each handover.
+
+Protect contributing decks and any user-prepared destination. A paused deck is not necessarily available. Load without `--replace-playing`; isolate only the incoming channel before preparation. Preserve the live master level, crossfader and output routing. Do not mute the global master or restart audio as a preparation shortcut. Source guards do not protect against manual knob or seek changes.
+
+Verify output and readiness to the degree the task requires. A positive software meter does not prove speaker/headphone sound. A cue-enabled deck does not prove discrete headphone routing. Full Beat This! scores do not prove a usable grid or a musical phrase; use [analysis semantics](../../references/musical-evidence.md) when timing evidence is uncertain.
+
+For Spotify, `account:null`, `dj_streaming_available:false` and collection `playable_in_deck:false` do not establish native sign-out: this experimental build can return those placeholders while native `connected:true` and `playback_permission:true`. Inspect native restoration/auth errors, then try the requested source on an available isolated deck through the ordinary guarded load path. Its actual result establishes readiness; respect a real provider/account refusal. Do not initiate login or ask for Premium solely from the placeholder fields. Status supplies compact source identities in `engine.decks[].track` and `metadata.tracks`, with an explicit `source_state`. Use the [loaded-source readiness check](deck-preparation.md#loaded-source-readiness) and guarded `deck wait` before reporting a failed load.

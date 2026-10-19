@@ -19,3 +19,13 @@ tract spike is historical research; its ONNX weights are not shipped.
 Anatomy theme palette values are adapted from [Anatomy](https://github.com/wheresryan22/anatomy),
 Copyright (c) 2026 Ryan, under the MIT license. Its permission notice is
 preserved in `frontend/ANATOMY-LICENSE`. No illustration runtime is included.
+
+Programme loudness and true-peak measurement use the MIT-licensed Rust `ebur128`
+crate, pinned to 0.1.10 in Cargo.lock: https://github.com/sdroege/ebur128. Its
+license is retained in the upstream crate distribution.
+
+The native installer bundles Hanken Grotesk and DM Mono from Google Fonts
+under the SIL Open Font License 1.1. Font files and their licenses are retained
+in `installer/resources`; they match the app's existing frontend typefaces.
+Sources: https://github.com/google/fonts/tree/main/ofl/hankengrotesk and
+https://github.com/google/fonts/tree/main/ofl/dmmono.

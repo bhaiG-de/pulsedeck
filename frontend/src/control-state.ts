@@ -1,5 +1,45 @@
 export type ControlHandler = (value: unknown) => unknown | Promise<unknown>;
 export type ControlHandlers = Record<string, ControlHandler>;
+/** Keep continuous gestures ordered without sending obsolete intermediate values. */
+export class LatestControlWriter {
+  private next: number | undefined;
+  private running = false;
+  private disposed = false;
+  private write: (value: number) => Promise<void>;
+  private settled: (error?: unknown) => void;
+  constructor(
+    write: (value: number) => Promise<void>,
+    settled: (error?: unknown) => void,
+  ) {
+    this.write = write;
+    this.settled = settled;
+  }
+  set(value: number) {
+    if (this.disposed) return;
+    this.next = value;
+    if (!this.running) void this.drain();
+  }
+  dispose() {
+    this.disposed = true;
+    this.next = undefined;
+  }
+  private async drain() {
+    this.running = true;
+    let error: unknown;
+    while (!this.disposed && this.next !== undefined) {
+      const value = this.next;
+      this.next = undefined;
+      try {
+        await this.write(value);
+        error = undefined;
+      } catch (failure) {
+        error = failure;
+      }
+    }
+    this.running = false;
+    if (!this.disposed) this.settled(error);
+  }
+}
 export class ControlInputError extends Error {
   readonly code = "invalid_arguments";
   readonly retryable = false;
@@ -118,4 +158,20 @@ export class ControlRegistry {
       throw new Error(`Unsupported UI action: ${target}.${action}`);
     return await handler(value);
   }
+}
+
+/** Hidden WebViews may suspend display frames while React still commits updates. */
+export function waitForUiCommit(): Promise<void> {
+  return new Promise((resolve) => {
+    let frame = 0;
+    const done = () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(done, 100);
+    frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(done);
+    });
+  });
 }

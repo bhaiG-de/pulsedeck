@@ -12,9 +12,14 @@ assert len(names) == len(catalog), "Duplicate catalog commands"
 main = (root / "src-tauri/src/main.rs").read_text()
 registered = main.split(".invoke_handler(tauri::generate_handler![", 1)[1].split("])", 1)[0]
 handlers = {name.strip() for name in registered.split(",") if name.strip()}
-mapped = set(manifest["handlers"]) | set(manifest["transport_handlers"])
-assert handlers == mapped, f"Handler coverage drift: missing={handlers - mapped}, obsolete={mapped - handlers}"
-assert set(manifest["handlers"].values()) <= names, "A mapped method is not callable in the catalog"
+assert handlers == set(manifest["transport_handlers"]), f"Only unified transport handlers may be registered: {handlers}"
+frontend = root / "frontend/src"
+assert not any(re.search(r"\bnative[<(]", p.read_text()) for p in frontend.glob("*.tsx")), "UI business calls must use control()"
+for p in frontend.glob("*.tsx"):
+    for method in re.findall(r'"([a-z_]+(?:\.[a-z_]+)+)"', p.read_text()):
+        if method in names or not method.startswith(("engine.","deck.","library.","playlist.","spotify.","audio.","midi.","recording.","sampler.","controller.","analysis.")):
+            continue
+        raise AssertionError(f"UI method missing from unified catalog: {method} ({p.name})")
 control = (root / "src-tauri/src/control.rs").read_text()
 dispatch = control.split("let result = match request.command.as_str() {", 1)[1].split("\nfn resolve_source", 1)[0]
 implemented = set()
@@ -31,4 +36,4 @@ assert len(examples) == len(variants), "Duplicate engine examples"
 midi = (root / "crates/flx4-midi/src/lib.rs").read_text().split("pub enum ControllerAction {", 1)[1].split("\n}", 1)[0]
 midi_variants = re.findall(r"^    ([A-Z]\w*)\s*(?:\{|,)", midi, re.M)
 assert set(midi_variants) == set(manifest["midi_actions"]), "MIDI action coverage drift"
-print(json.dumps({"product_commands": len(names), "native_handlers": len(manifest["handlers"]), "engine_actions": len(variants), "midi_action_kinds": len(midi_variants), "coverage": "complete"}))
+print(json.dumps({"product_commands": len(names), "native_handlers": len(handlers), "engine_actions": len(variants), "midi_action_kinds": len(midi_variants), "coverage": "complete"}))

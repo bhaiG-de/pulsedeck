@@ -7,7 +7,7 @@ use std::{
     collections::{HashMap, VecDeque},
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, Mutex,
+        Arc, Condvar, Mutex,
     },
     time::{Duration, Instant},
 };
@@ -19,10 +19,20 @@ pub struct Control {
     ui: Mutex<HashMap<String, Value>>,
     pending: Mutex<HashMap<String, std::sync::mpsc::Sender<Result<Value>>>>,
     completed: Mutex<VecDeque<(String, String, Response)>>,
-    execution: Mutex<()>,
+    in_flight: Mutex<HashMap<String, Arc<RequestFlight>>>,
+    scheduled_submission: Mutex<()>,
+    mix_preparing: Mutex<()>,
+    mix_prepared: Mutex<HashMap<String, PreparedMix>>,
+    mix_session: Mutex<Option<MixSession>>,
+    mix_queue: Mutex<Option<SuccessorQueue>>,
+    mix_takeover_revision: AtomicU64,
     events: Mutex<VecDeque<Value>>,
+    event_ready: Condvar,
     event_sequence: AtomicU64,
     jobs: Mutex<HashMap<String, Job>>,
+    journal: Mutex<Option<std::path::PathBuf>>,
+    journal_writer: Mutex<()>,
+    performance_baseline: Mutex<Option<Value>>,
     job_sequence: AtomicU64,
     _server: Mutex<Option<control_protocol::ipc::Server>>,
 }
@@ -30,6 +40,8 @@ pub struct Control {
 struct Job {
     cancel: Arc<std::sync::atomic::AtomicBool>,
     status: Value,
+    native_id: Option<u64>,
+    fingerprint: Option<String>,
 }
 fn failure(e: impl ToString) -> ControlError {
     let message = e.to_string();
@@ -115,18 +127,88 @@ fn id(args: &Value, key: &str) -> Result<i64> {
     }
     arg(args, key)
 }
-fn event(app: &tauri::AppHandle, kind: &str, data: Value) {
+fn event(app: &tauri::AppHandle, kind: &str, mut data: Value) {
     let control = app.state::<Control>();
-    let sequence = control.event_sequence.fetch_add(1, Ordering::AcqRel) + 1;
     if let Ok(mut events) = control.events.lock() {
-        events.push_back(json!({"sequence":sequence,"type":kind,"data":data}));
+        let sequence = control.event_sequence.fetch_add(1, Ordering::AcqRel) + 1;
+        if kind == "mix.updated" || kind == "mix.queue.updated" {
+            data["event_sequence"] = json!(sequence);
+        }
+        let feedback = if kind == "mix.updated" {
+            mix_event_feedback(&data)
+        } else if kind == "mix.queue.updated" {
+            queue_event_feedback(&data)
+        } else {
+            data.clone()
+        };
+        events.push_back(json!({"sequence":sequence,"type":kind,"data":feedback}));
         while events.len() > 512 {
             events.pop_front();
         }
+        control.event_ready.notify_all();
+        drop(events);
+        // The UI receives full options with the same cursor as the compact agent stream.
+        if kind == "mix.updated" {
+            let _ = app.emit("mix-updated", &data);
+        } else if kind == "mix.queue.updated" {
+            let _ = app.emit("mix-queue-updated", &data);
+        } else if kind == "mix.queue.notice" {
+            let _ = app.emit("mix-queue-notice", &data);
+        }
     };
 }
+
 pub fn start(app: &tauri::AppHandle) -> std::result::Result<(), String> {
     app.manage(Control::default());
+    let journal = app
+        .state::<AppState>()
+        .data_dir
+        .join("control-journal.json");
+    if let Err(error) = restore_control(app, journal) {
+        eprintln!("Control journal: {error}");
+    }
+    let observer = app.clone();
+    std::thread::spawn(move || loop {
+        if let Err(error) = poll_mix_session(&observer) {
+            eprintln!("Mix session: {error}");
+        }
+        if let Err(error) = poll_mix_previews(&observer) {
+            eprintln!("Mix audition: {error}");
+        }
+        if let Err(error) = poll_successor_preparation(&observer) {
+            eprintln!("Queue preparation: {error}");
+        }
+        let session_active = observer
+            .state::<Control>()
+            .mix_session
+            .lock()
+            .map(|session| session.as_ref().is_some_and(MixSession::active))
+            .unwrap_or(false);
+        let active = session_active
+            || observer
+                .state::<Control>()
+                .jobs
+                .lock()
+                .map(|jobs| {
+                    jobs.values()
+                        .any(|job| job.native_id.is_some() && !terminal_job(job))
+                })
+                .unwrap_or(false);
+        if active {
+            if let Err(error) = refresh_scheduled_jobs(&observer) {
+                eprintln!("Control journal: {error}");
+            }
+        }
+        if let Err(error) = poll_mix_operations(&observer) {
+            eprintln!("Mix feedback: {error}");
+        }
+        let control = observer.state::<Control>();
+        if let Ok(events) = control.events.lock() {
+            let _guard = control
+                .event_ready
+                .wait_timeout(events, Duration::from_millis(if active { 50 } else { 500 }));
+        };
+    });
     let runtime = app.clone();
     let server =
         control_protocol::ipc::Server::start(control_protocol::socket_path(), move |request| {
@@ -184,81 +266,52 @@ pub fn execute(app: &tauri::AppHandle, request: Request) -> Response {
     if let Err(e) = control_protocol::validate_arguments(&request) {
         return Response::failure(request.request_id, e);
     }
-    let fingerprint = json!([
+    let mut identity = json!([
         request.command,
         request.args,
         request.expected_load_revision,
         request.no_wait
-    ])
-    .to_string();
+    ]);
+    if let Some(view) = &request.view {
+        identity.as_array_mut().unwrap().push(json!({"view": view}));
+    }
+    let fingerprint = identity.to_string();
     let control = app.state::<Control>();
-    // A duplicate request cannot interleave between checking receipts and execution.
-    // Read-only queries remain available while a load or UI request is waiting.
-    let mutation = !matches!(
+    let mutation = request.command != "batch.validate"
+        && !control_protocol::selection::is_read(&request.command);
+    let reservation = match control.reserve(&request, &fingerprint, mutation) {
+        Ok(RequestClaim::Owner(owner)) => owner,
+        Ok(RequestClaim::Receipt(response)) => {
+            return control_protocol::selection::apply(&request, response)
+        }
+        Ok(RequestClaim::Pending(flight)) => {
+            return control_protocol::selection::apply(&request, flight.wait(&request))
+        }
+        Err(error) => return Response::failure(request.request_id.clone(), error),
+    };
+    // Only competing scheduled submissions share an ownership lock. Provider,
+    // dialog and UI waits never block unrelated native controls or their receipts.
+    let _scheduled = if matches!(
         request.command.as_str(),
-        "status"
-            | "state.get"
-            | "engine.transport"
-            | "engine.metadata"
-            | "events.get"
-            | "jobs.get"
-            | "jobs.list"
-            | "ui.state"
-            | "commands.list"
-            | "commands.describe"
-            | "capabilities"
-            | "jobs.cancel"
+        "batch.run"
+            | "mix.arm"
+            | "mix.session.start"
+            | "mix.session.stop"
+            | "mix.queue.start"
             | "automation.stop"
-            | "deck.load.cancel"
-            | "spotify.analysis.cancel"
-            | "engine.snapshot"
-            | "app.state"
-            | "app.activity"
-            | "library.tracks"
-            | "library.track"
-            | "track.inspect"
-            | "playlist.list"
-            | "cues.get"
-            | "recording.status"
-            | "controller.state"
-            | "midi.history"
-            | "midi.ports"
-            | "audio.devices"
-            | "spotify.status"
-            | "spotify.native.status"
-            | "spotify.playlists"
-            | "spotify.liked"
-            | "spotify.playlist_tracks"
-            | "spotify.album_tracks"
-            | "spotify.devices"
-            | "spotify.analysis.get"
-            | "spotify.analysis.status"
-            | "sampler.state"
-    );
-    let _execution = if mutation {
-        Some(control.execution.lock().unwrap_or_else(|e| e.into_inner()))
+    ) || matches!(
+        request.command.as_str(),
+        "batch.append" | "batch.invalidate" | "batch.seal"
+    ) {
+        Some(
+            control
+                .scheduled_submission
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()),
+        )
     } else {
         None
     };
-    if let Some((_, previous, response)) = control
-        .completed
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .iter()
-        .find(|(id, _, _)| id == &request.request_id)
-    {
-        return if previous == &fingerprint {
-            response.clone()
-        } else {
-            Response::failure(
-                request.request_id,
-                ControlError::new(
-                    "request_id_conflict",
-                    "This request ID was used for different arguments",
-                ),
-            )
-        };
-    }
     let response = match dispatch(app, &request) {
         Ok((stage, result)) => Response::success(&request, stage, result),
         Err(mut e) => {
@@ -318,12 +371,8 @@ pub fn execute(app: &tauri::AppHandle, request: Request) -> Response {
             Response::failure(request.request_id.clone(), e)
         }
     };
+    reservation.finish(response.clone());
     if mutation {
-        let mut receipts = control.completed.lock().unwrap_or_else(|e| e.into_inner());
-        receipts.push_back((request.request_id.clone(), fingerprint, response.clone()));
-        while receipts.len() > 256 {
-            receipts.pop_front();
-        }
         event(
             app,
             "command.completed",
@@ -334,12 +383,59 @@ pub fn execute(app: &tauri::AppHandle, request: Request) -> Response {
                 || request.command.starts_with("library.")
                 || request.command.starts_with("cues."))
         {
-            let _ = app.emit("library-updated", ());
+            let kind = if request.command.contains(".analysis.") {
+                "analysis"
+            } else if request.command.starts_with("cues.") {
+                "cues"
+            } else if request.command.starts_with("playlist.") {
+                "playlists"
+            } else {
+                "library"
+            };
+            let _ = app.emit("library-updated", json!({"command":request.command,"kind":kind,"source":response.result.as_ref().and_then(|v|v.get("source")).or_else(||request.args.get("source")),"cue_revision":response.result.as_ref().and_then(|v|v.get("cue_revision").or_else(||v.get("revision"))),"metadata_revision":state_metadata_revision(app)}));
         }
+    }
+    if mutation {
+        if let Err(error) = persist_control(app) {
+            eprintln!("Control journal: {error}");
+        }
+    }
+    let response = control_protocol::selection::apply(&request, response);
+    if request.command == "app.stop" && response.ok {
+        // Journal persistence can be slower than the response-flush grace period.
+        // Start shutdown only after the complete acknowledgement is ready.
+        let runtime = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            runtime.exit(0);
+        });
     }
     response
 }
-fn apply(app: &tauri::AppHandle, request: &Request, mut command: EngineCommand) -> Result<Value> {
+fn validate_playback_bpm_reference(reference: Option<f64>, bpm: f64, deck: usize) -> Result<()> {
+    deck_engine::playback_tempo_percent(reference, bpm)
+        .map(|_| ())
+        .map_err(|reason| {
+            let code = if reference.is_none_or(|value| !value.is_finite() || value <= 0.) {
+                "grid_unknown"
+            } else {
+                "invalid_arguments"
+            };
+            ControlError::new(code, reason)
+                .with_detail("deck", if deck == 0 { "A" } else { "B" })
+                .with_detail("reference_bpm", json!(reference))
+                .with_detail("requested_playback_bpm", bpm)
+        })
+}
+fn apply(app: &tauri::AppHandle, request: &Request, command: EngineCommand) -> Result<Value> {
+    apply_with_control_guard(app, request, command, None)
+}
+fn apply_with_control_guard(
+    app: &tauri::AppHandle,
+    request: &Request,
+    mut command: EngineCommand,
+    expected_control_revision: Option<u64>,
+) -> Result<Value> {
     command.validate().map_err(|e| {
         ControlError::new("invalid_arguments", e).with_detail(
             "expected",
@@ -347,6 +443,13 @@ fn apply(app: &tauri::AppHandle, request: &Request, mut command: EngineCommand) 
         )
     })?;
     let state = app.state::<AppState>();
+    let first_playback = matches!(command, EngineCommand::Play { .. })
+        && state
+            .engine
+            .transport_snapshot()
+            .decks
+            .iter()
+            .all(|d| !d.playing);
     let d = command.deck();
     let cue_edit = matches!(
         &command,
@@ -374,7 +477,16 @@ fn apply(app: &tauri::AppHandle, request: &Request, mut command: EngineCommand) 
                 "Deck contains another loaded source",
             ));
         }
-        let snap = state.engine.snapshot();
+        let snap = if matches!(command, EngineCommand::Seek { .. })
+            && request.args.get("snap").and_then(Value::as_str) == Some("beat")
+        {
+            state.engine.snapshot()
+        } else {
+            state.engine.transport_snapshot()
+        };
+        if let EngineCommand::SetPlaybackBpm { bpm, .. } = command {
+            validate_playback_bpm_reference(snap.decks[d].local_bpm, bpm, d)?;
+        }
         if let EngineCommand::Seek { seconds, .. } = &mut command {
             if request.args.get("snap").and_then(Value::as_str) == Some("beat") {
                 let d = &snap.decks[d];
@@ -400,7 +512,7 @@ fn apply(app: &tauri::AppHandle, request: &Request, mut command: EngineCommand) 
                 | EngineCommand::Seek { .. }
                 | EngineCommand::SetCue { .. }
                 | EngineCommand::MemoryCueSave { .. }
-        ) && snap.decks[d].track.is_none()
+        ) && state.engine.track_duration(d).is_none()
         {
             let deck = if d == 0 { "A" } else { "B" };
             return Err(ControlError::new(
@@ -459,14 +571,39 @@ fn apply(app: &tauri::AppHandle, request: &Request, mut command: EngineCommand) 
     command
         .validate()
         .map_err(|e| ControlError::new("invalid_arguments", e))?;
-    crate::engine_command_inner(
-        app.clone(),
-        app.state(),
-        command,
-        true,
-        request.expected_load_revision,
-    )
-    .map_err(failure)?;
+    state.engine.ensure_prepared(&command).map_err(failure)?;
+    if expected_control_revision.is_none() && manual_transport_takeover(&command) {
+        if let Some(deck) = d {
+            if app.state::<Control>().has_pending_load(deck) {
+                crate::spotify_decks::cancel_spotify_load(app.clone(), deck).map_err(failure)?;
+            }
+        }
+    }
+    if let Some(revision) = expected_control_revision {
+        // Recipes apply literal controls; smart controller macros belong to manual gestures.
+        let receipt = state
+            .engine
+            .command_for_control_revision(command.clone(), request.expected_load_revision, revision)
+            .map_err(|error| ControlError::new("manual_takeover", error))?;
+        state
+            .engine
+            .wait_for_control_receipt(receipt, Duration::from_millis(request.timeout_ms))
+            .map_err(|error| ControlError::new("manual_takeover", error))?;
+        state
+            .controller
+            .lock()
+            .map_err(failure)?
+            .observe(&command, false);
+    } else {
+        crate::engine_command_inner(
+            app.clone(),
+            app.state(),
+            command,
+            true,
+            request.expected_load_revision,
+        )
+        .map_err(failure)?;
+    }
     if request.no_wait {
         return Ok(json!({"accepted":true}));
     }
@@ -475,6 +612,17 @@ fn apply(app: &tauri::AppHandle, request: &Request, mut command: EngineCommand) 
         .engine
         .wait_for_fence(fence, Duration::from_millis(request.timeout_ms))
         .map_err(failure)?;
+    if first_playback {
+        let snapshot = state.engine.transport_snapshot();
+        if snapshot.decks.iter().any(|d| d.playing) {
+            *app.state::<Control>()
+                .performance_baseline
+                .lock()
+                .map_err(failure)? = Some(
+                json!({"instance":std::process::id(),"unix_ms":unix_ms(),"engine_epoch":snapshot.engine_epoch,"rendered_frames":snapshot.rendered_frames,"sample_rate":snapshot.sample_rate}),
+            );
+        }
+    }
     let persisted = if let Some(d) = d {
         if Some(state.engine.load_revision(d)) != source_revision {
             return Err(ControlError::new(
@@ -614,7 +762,9 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
             "deck.load"
                 | "deck.analyze"
                 | "library.import"
+                | "library.analysis.update"
                 | "library.import_xml"
+                | "library.write_metadata"
                 | "engine.wait"
                 | "ui.call"
         )
@@ -632,6 +782,19 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
         };
     }
     let result = match request.command.as_str() {
+        "mix.execute" => return execute_mix(app, request),
+        "mix.prepare" => return prepare_mix(app, request),
+        "mix.arm" => return arm_mix(app, request),
+        "mix.preview" => return preview_mix(app, request),
+        "mix.status" => return mix_status(app, request),
+        "mix.cancel" => return cancel_mix(app, request),
+        "mix.session.start" => return start_mix_session(app, request),
+        "mix.session.status" => return status_mix_session(app, request),
+        "mix.session.stop" => return stop_mix_session(app, request),
+        "mix.queue.start" => return start_successor_queue(app, request),
+        "mix.queue.status" => return status_successor_queue(app, request),
+        "mix.queue.edit" => return edit_successor_queue(app, request),
+        "mix.queue.stop" => return stop_successor_queue(app, request),
         "app.show" => {
             app.get_webview_window("main")
                 .ok_or_else(|| ControlError::new("ui_unavailable", "Main window is unavailable"))?
@@ -653,20 +816,44 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
             if state.engine.recording_status().active {
                 state.engine.stop_recording().map_err(failure)?;
             }
-            let runtime = app.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(Duration::from_millis(100));
-                runtime.exit(0);
-            });
             json!({"shutting_down":true})
         }
         "status" | "state.get" => {
-            json!({"protocol_version":control_protocol::VERSION,"instance":std::process::id(),"isolated":std::env::var_os("PULSEDECK_ISOLATED").is_some_and(|v|v=="1"),"engine":state.engine.transport_snapshot(),"metadata":metadata_summary(&state.engine),"controller":crate::get_controller_surface(app.state()),"audio":state.audio_status.lock().map_err(failure)?.clone(),"midi":state.midi.lock().map_err(failure)?.status(),"recording":state.engine.recording_status(),"source_jobs":state.source_jobs.snapshot(),"analysis":state.analysis.lock().map_err(failure)?.clone()})
+            refresh_scheduled_jobs(app)?;
+            let (engine, metadata) = compact_engine_state(&state.engine);
+            let mut result = json!({"protocol_version":control_protocol::VERSION,"instance":std::process::id(),"isolated":std::env::var_os("PULSEDECK_ISOLATED").is_some_and(|v|v=="1"),"engine":engine,"metadata":metadata,"controller":crate::get_controller_surface(app.state()),"audio":state.audio_status.lock().map_err(failure)?.clone(),"midi":state.midi.lock().map_err(failure)?.status(),"recording":state.engine.recording_status(),"source_jobs":state.source_jobs.snapshot(),"analysis":state.analysis.lock().map_err(failure)?.clone(),"performance_baseline":app.state::<Control>().performance_baseline.lock().map_err(failure)?.clone(),"jobs":app.state::<Control>().jobs.lock().map_err(failure)?.iter().map(|(id,j)|json!({"id":id,"state":j.status["state"],"reason":j.status["reason"],"mode":j.status["mode"],"operation_id":j.status["operation_id"]})).collect::<Vec<_>>()});
+            if request.view.as_deref() == Some("resume") {
+                let mut jobs: Vec<_> = app
+                    .state::<Control>()
+                    .jobs
+                    .lock()
+                    .map_err(failure)?
+                    .iter()
+                    .filter(|(_, j)| j.status["mode"] == "scheduled")
+                    .map(|(id, j)| json!({"id":id,"status":job_status(&j.status, a["detail"] == true)}))
+                    .collect();
+                jobs.sort_by_key(|j| j["status"]["created_unix_ms"].as_u64().unwrap_or(0));
+                result["jobs"] = json!(jobs.into_iter().rev().take(1).collect::<Vec<_>>());
+                result["journal"] = json!({"durable":true,"replay":false});
+            }
+            if matches!(request.view.as_deref(), Some("handover" | "compact")) {
+                for key in ["controller", "midi", "recording", "analysis"] {
+                    result.as_object_mut().unwrap().remove(key);
+                }
+            }
+            result
         }
-        "app.state" => call!(crate::get_app_state(app.state())),
+        "app.state" => call!(crate::get_app_state(
+            app.state(),
+            optional::<bool>(a, "library")?.unwrap_or(true)
+        )),
         "app.activity" => call!(crate::get_activity_state(app.state())),
         "engine.snapshot" => serialized(state.engine.snapshot())?,
-        "engine.transport" => serialized(state.engine.transport_snapshot())?,
+        "engine.transport" => {
+            let (mut transport, metadata) = compact_engine_state(&state.engine);
+            transport["metadata_revision"] = metadata["revision"].clone();
+            transport
+        }
         "engine.metadata" => serialized(state.engine.metadata_snapshot())?,
         "engine.command" => {
             let command = parse_engine(a.get("command").cloned().unwrap_or_else(|| a.clone()))?;
@@ -680,6 +867,7 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
             ));
         }
         "deck.load" => {
+            let spotify_uri = spotify_load_uri(a)?;
             let d = deck(a)?;
             if state.engine.transport_snapshot().decks[d].playing
                 && !optional::<bool>(a, "replace_playing")?.unwrap_or(false)
@@ -689,38 +877,42 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
                     "Pause the deck or explicitly set replace_playing=true",
                 ));
             }
-            let result = if optional::<bool>(a, "demo")?.unwrap_or(false) {
+            let mut result = if optional::<bool>(a, "demo")?.unwrap_or(false) {
                 asynchronous!(crate::load_demo(app.clone(), d))
-            } else if let Some(uri) = optional::<String>(a, "uri")? {
+            } else if let Some(uri) = spotify_uri {
                 asynchronous!(crate::spotify_decks::load_spotify_track(
                     app.clone(),
                     d,
-                    uri
+                    uri,
+                    Some(request.request_id.clone())
                 ))
             } else {
                 let path = if let Some(track) = a.get("track") {
-                    let tracks = state
+                    let track_id = id(&json!({"track":track}), "track")?;
+                    state
                         .library
                         .lock()
                         .map_err(failure)?
-                        .tracks()
-                        .map_err(failure)?;
-                    let track_id = id(&json!({"track":track}), "track")?;
-                    tracks
-                        .into_iter()
-                        .find(|t| t.id == track_id)
-                        .ok_or_else(|| ControlError::new("track_not_found", "Track not found"))?
-                        .path
+                        .path_for_id(track_id)
+                        .map_err(|_| ControlError::new("track_not_found", "Track not found"))?
                 } else {
                     arg(a, "path")?
                 };
-                asynchronous!(crate::load_track(app.clone(), d, path))
+                asynchronous!(crate::load_track_owned(
+                    app.clone(),
+                    d,
+                    path,
+                    request.request_id.clone()
+                ))
             };
             let fence = state.engine.fence().map_err(failure)?;
             state
                 .engine
                 .wait_for_fence(fence, Duration::from_millis(request.timeout_ms))
                 .map_err(failure)?;
+            if !optional::<bool>(a, "detail")?.unwrap_or(false) {
+                compact_control_result(&mut result);
+            }
             return Ok((
                 "ready",
                 json!({"track":result,"load_revision":state.engine.load_revision(d),"sequence":fence}),
@@ -746,21 +938,46 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
             deck(a)?
         )),
         "deck.analyze" => asynchronous!(crate::reanalyze_loaded_track(app.clone(), deck(a)?)),
-        "analysis.settings.get" => serialized(crate::analysis_settings(&state))?,
-        "analysis.settings.set" => call!(crate::set_analysis_settings(
-            app.state(),
-            arg(a, "settings")?
-        )),
         "library.analysis.update" => asynchronous!(crate::update_library_analysis(app.clone())),
         "library.analysis.cancel" => {
             crate::cancel_library_analysis(app.state());
             Value::Null
         }
-        "deck.sections.vocabulary" => asynchronous!(crate::set_section_vocabulary(
-            app.clone(),
-            deck(a)?,
-            optional(a, "vocabulary")?
-        )),
+        "mix.options" => {
+            let mut args = a.clone();
+            let detail = optional::<bool>(a, "detail")?.unwrap_or(false);
+            args.as_object_mut()
+                .ok_or_else(|| failure("Expected argument object"))?
+                .remove("detail");
+            if !detail && args.get("limit").is_none() {
+                args["limit"] = json!(5);
+            }
+            if args.get("deck").is_some() {
+                args["deck"] = json!(deck(a)?);
+            }
+            let request = serde_json::from_value(args).map_err(failure)?;
+            let value = asynchronous!(crate::next_move::options(app.clone(), request));
+            if detail {
+                value
+            } else {
+                compact_options(value)
+            }
+        }
+        "mix.openers" => opener_candidates(app, a)?,
+        "mix.index_scope" => {
+            let mut coverage = asynchronous!(crate::spotify::index_mix_scope(
+                app.clone(),
+                arg(a, "scope")?
+            ));
+            if !optional::<bool>(a, "detail")?.unwrap_or(false) {
+                compact_coverage(&mut coverage);
+            }
+            coverage
+        }
+        "mix.index_scope.cancel" => {
+            crate::spotify::cancel_mix_scope_index();
+            Value::Null
+        }
         "library.suggest_next" => asynchronous!(crate::suggest::suggest_next(
             app.clone(),
             if a.get("deck").is_some() {
@@ -768,7 +985,15 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
             } else {
                 None
             },
-            optional(a, "energy_direction")?
+            optional(a, "energy_direction")?,
+            Some(crate::suggest::SuggestionOptions {
+                sources: optional(a, "sources")?,
+                provider: optional(a, "provider")?,
+                playlist: optional(a, "playlist")?,
+                max_stretch_percent: optional(a, "max_stretch_percent")?,
+                allow_half_double: optional(a, "allow_half_double")?,
+                limit: optional(a, "limit")?
+            })
         )),
         "library.history.clear" => call!(crate::suggest::clear_play_history(app.clone())),
         "automation.ramp" => {
@@ -855,89 +1080,153 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
                     "Deck source changed before readiness was verified",
                 ));
             }
-            json!({"sequence":fence,"load_revision":revision})
+            let source = if let Some(d) = d {
+                let snapshot = state.engine.scheduled_snapshot().map_err(failure)?;
+                Some(ready_source(&snapshot, d, revision.unwrap())?)
+            } else {
+                None
+            };
+            json!({"sequence":fence,"load_revision":revision,"source":source})
         }
-        "library.import" => asynchronous!(crate::import_tracks(app.clone(), arg(a, "paths")?)),
+        "library.import" => {
+            let dialog = dialog_selection(a, &["paths", "folder"])?;
+            let kind = optional::<String>(a, "kind")?.unwrap_or_else(|| "files".into());
+            let paths = if dialog {
+                match kind.as_str() {
+                    "files" => tauri::async_runtime::block_on(crate::choose_tracks(app.clone()))
+                        .map_err(failure)?,
+                    "folder" => tauri::async_runtime::block_on(crate::choose_folder(app.clone()))
+                        .map_err(failure)?,
+                    _ => {
+                        return Err(ControlError::new(
+                            "invalid_arguments",
+                            "Unknown import kind",
+                        ))
+                    }
+                }
+            } else if let Some(folder) = a.get("folder") {
+                if kind != "files" {
+                    return Err(ControlError::new(
+                        "invalid_arguments",
+                        "kind applies only to dialog imports",
+                    ));
+                }
+                let folder = folder.as_str().ok_or_else(|| {
+                    ControlError::new("invalid_arguments", "folder must be a path string")
+                })?;
+                crate::import_scan::audio_paths(std::path::Path::new(folder)).map_err(failure)?
+            } else {
+                if kind != "files" {
+                    return Err(ControlError::new(
+                        "invalid_arguments",
+                        "kind applies only to dialog imports",
+                    ));
+                }
+                arg(a, "paths")?
+            };
+            asynchronous!(crate::import_tracks(
+                app.clone(),
+                paths,
+                optional::<bool>(a, "summary")?
+            ))
+        }
         "library.tracks" => {
-            let mut tracks = state
+            let query = crate::library::BrowserQuery {
+                search: optional::<String>(a, "search")?.unwrap_or_default(),
+                sort: optional::<String>(a, "sort")?.unwrap_or_else(|| "title".into()),
+                playlist: a
+                    .get("playlist")
+                    .map(|p| id(&json!({"id":p}), "id"))
+                    .transpose()?,
+                bpm_min: optional(a, "bpm_min")?,
+                bpm_max: optional(a, "bpm_max")?,
+                offset: optional(a, "offset")?.unwrap_or(0),
+                limit: optional::<usize>(a, "limit")?.unwrap_or(100).min(1000),
+                filters: optional(a, "filters")?.unwrap_or_default(),
+            };
+            let library = state.library.lock().map_err(failure)?;
+            let mut page = library.browser_page(&query).map_err(failure)?;
+            if optional::<bool>(a, "waveform")?.unwrap_or(false) {
+                for track in page["tracks"].as_array_mut().unwrap() {
+                    let path = track["path"]
+                        .as_str()
+                        .ok_or_else(|| failure("Track path missing"))?;
+                    let full = library
+                        .track_by_path(path)
+                        .map_err(failure)?
+                        .ok_or_else(|| failure("Track no longer exists"))?;
+                    let rating = track["rating"].clone();
+                    let color = track["color"].clone();
+                    *track = serialized(full)?;
+                    track["rating"] = rating;
+                    track["color"] = color;
+                }
+            }
+            return Ok(("applied", page));
+        }
+        "library.track" => {
+            let library = state.library.lock().map_err(failure)?;
+            let path = library.path_for_id(id(a, "id")?).map_err(failure)?;
+            serialized(
+                library
+                    .track_by_path(&path)
+                    .map_err(failure)?
+                    .ok_or_else(|| failure("Track not found"))?,
+            )?
+        }
+        "library.write_metadata" => asynchronous!(crate::write_library_metadata(
+            app.clone(),
+            id(a, "id")?,
+            arg(a, "revision")?
+        )),
+        "library.details" => serialized(
+            state
                 .library
                 .lock()
                 .map_err(failure)?
-                .tracks()
+                .track_details(id(a, "id")?)
+                .map_err(failure)?,
+        )?,
+        "library.edit_details" => {
+            let patch: crate::library::DetailsPatch = arg(a, "patch")?;
+            let details = state
+                .library
+                .lock()
+                .map_err(failure)?
+                .edit_details(id(a, "id")?, patch)
                 .map_err(failure)?;
-            if let Some(playlist) = a.get("playlist") {
-                let id = id(&json!({"id":playlist}), "id")?;
-                let playlist = state
-                    .library
-                    .lock()
-                    .map_err(failure)?
-                    .playlists()
-                    .map_err(failure)?
-                    .into_iter()
-                    .find(|p| p.id == id)
-                    .ok_or_else(|| ControlError::new("playlist_not_found", "Playlist not found"))?;
-                tracks.retain(|t| playlist.track_ids.contains(&t.id));
-            }
-            if let Some(search) = optional::<String>(a, "search")? {
-                let search = search.to_lowercase();
-                tracks.retain(|t| {
-                    format!(
-                        "{} {} {} {} {}",
-                        t.title,
-                        t.artist,
-                        t.bpm,
-                        t.key.as_deref().unwrap_or(""),
-                        t.tags.join(" ")
-                    )
-                    .to_lowercase()
-                    .contains(&search)
-                });
-            }
-            match optional::<String>(a, "sort")?.as_deref().unwrap_or("title") {
-                "title" => tracks.sort_by_key(|t| t.title.to_lowercase()),
-                "bpm" => tracks.sort_by(|a, b| a.bpm.total_cmp(&b.bpm)),
-                "duration" => {
-                    tracks.sort_by(|a, b| a.duration_seconds.total_cmp(&b.duration_seconds))
-                }
-                _ => {
-                    return Err(ControlError::new(
-                        "invalid_arguments",
-                        "Sort must be title, bpm or duration",
-                    ))
-                }
-            }
-            let total = tracks.len();
-            let offset = optional::<usize>(a, "offset")?.unwrap_or(0);
-            let limit = optional::<usize>(a, "limit")?.unwrap_or(100).min(1000);
-            let mut page = serialized(
-                tracks
-                    .into_iter()
-                    .skip(offset)
-                    .take(limit)
-                    .collect::<Vec<_>>(),
-            )?;
-            if !optional::<bool>(a, "waveform")?.unwrap_or(false) {
-                for t in page.as_array_mut().unwrap() {
-                    t.as_object_mut().unwrap().remove("waveform");
-                    t.as_object_mut().unwrap().remove("waveform_bands");
-                    compact_neural_summary(t);
-                }
-            }
-            json!({"tracks":page,"total":total,"offset":offset,"next_offset":(offset.saturating_add(limit)<total).then_some(offset.saturating_add(limit))})
+            let path = state
+                .library
+                .lock()
+                .map_err(failure)?
+                .path_for_id(details.id)
+                .map_err(failure)?;
+            crate::apply_library_names(&state.engine, &path, &details.title, &details.artist);
+            serialized(details)?
         }
-        "library.track" => {
-            let track_id = id(a, "id")?;
-            serialized(
-                state
-                    .library
-                    .lock()
-                    .map_err(failure)?
-                    .tracks()
-                    .map_err(failure)?
-                    .into_iter()
-                    .find(|t| t.id == track_id)
-                    .ok_or_else(|| ControlError::new("track_not_found", "Track not found"))?,
-            )?
+        "library.tag_categories" => serialized(
+            state
+                .library
+                .lock()
+                .map_err(failure)?
+                .tag_categories()
+                .map_err(failure)?,
+        )?,
+        "library.edit_taxonomy" => {
+            let categories = state
+                .library
+                .lock()
+                .map_err(failure)?
+                .edit_taxonomy(
+                    &arg::<String>(a, "kind")?,
+                    optional(a, "id")?,
+                    optional(a, "category")?,
+                    &optional::<String>(a, "name")?.unwrap_or_default(),
+                    optional(a, "position")?,
+                    optional(a, "delete")?.unwrap_or(false),
+                )
+                .map_err(failure)?;
+            serialized(categories)?
         }
         "library.set_tags" => {
             let track = state
@@ -1005,6 +1294,7 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
                     ));
                 }
                 let effective = &transport.decks[d];
+                track["grid_revision"] = json!(effective.grid_revision);
                 track["bpm"] = json!(effective.bpm);
                 track["beatgrid_offset_seconds"] = json!(effective
                     .beatgrid_valid
@@ -1020,18 +1310,19 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
                     track["beatgrid_confidence"] = Value::Null;
                 }
             }
-            let mut result = crate::track_inspection::view(
-                track,
-                optional(a, "start_seconds")?.unwrap_or(0.0),
-                optional(a, "end_seconds")?,
-                optional(a, "points")?.unwrap_or(64),
-            )?;
             let (cue_revision, cues) = state
                 .library
                 .lock()
                 .map_err(failure)?
                 .source_cues(&source)
                 .map_err(failure)?;
+            track["cue_points"] = json!(cues.points);
+            let mut result = crate::track_inspection::view(
+                track,
+                optional(a, "start_seconds")?.unwrap_or(0.0),
+                optional(a, "end_seconds")?,
+                optional(a, "points")?.unwrap_or(64),
+            )?;
             result["metadata"]["tags"] = json!(state
                 .library
                 .lock()
@@ -1043,32 +1334,31 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
             result["source"] = json!(source);
             result["requested_source"] = a.get("source").cloned().unwrap_or(Value::Null);
             result["load_revision"] = json!(d.map(|d| metadata.load_revisions[d]));
+            result["grid_revision"] = result["metadata"]
+                .get("grid_revision")
+                .cloned()
+                .unwrap_or(Value::Null);
+            result["beat_events"]["grid_revision"] = result["grid_revision"].clone();
             result["cues"] = json!({"revision":cue_revision,"cues":cues});
             result
         }
         "library.remove" => call!(crate::delete_track(app.state(), id(a, "id")?)),
-        "library.import_xml" => asynchronous!(crate::import_rekordbox_xml(
-            app.clone(),
-            Some(arg(a, "path")?)
-        )),
+        "library.import_xml" => {
+            let dialog = dialog_selection(a, &["path"])?;
+            asynchronous!(crate::import_rekordbox_xml(
+                app.clone(),
+                if dialog { None } else { Some(arg(a, "path")?) },
+                optional(a, "summary")?
+            ))
+        }
         "library.export_xml" => {
-            use std::io::Write;
-            let path: String = arg(a, "path")?;
-            let lib = state.library.lock().map_err(failure)?;
-            let xml = crate::library::export_xml(
-                &lib.tracks().map_err(failure)?,
-                &lib.playlists().map_err(failure)?,
-            )
+            let dialog = dialog_selection(a, &["path"])?;
+            let path = tauri::async_runtime::block_on(crate::export_rekordbox_xml_to(
+                app.clone(),
+                if dialog { None } else { Some(arg(a, "path")?) },
+                optional::<bool>(a, "overwrite")?.unwrap_or(false),
+            ))
             .map_err(failure)?;
-            let overwrite = optional::<bool>(a, "overwrite")?.unwrap_or(false);
-            let mut file = std::fs::OpenOptions::new()
-                .write(true)
-                .create(overwrite)
-                .truncate(overwrite)
-                .create_new(!overwrite)
-                .open(&path)
-                .map_err(failure)?;
-            file.write_all(xml.as_bytes()).map_err(failure)?;
             json!({"path":path})
         }
         "playlist.list" => serialized(
@@ -1119,6 +1409,93 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
                     }
                     cues = serde_json::from_value(merged)
                         .map_err(|e| ControlError::new("invalid_arguments", e.to_string()))?;
+                } else if let Some(value) = a.get("point") {
+                    let id = value.get("id").and_then(Value::as_str).map(str::to_owned);
+                    let mut point = if let Some(id) = id {
+                        cues.points
+                            .iter()
+                            .find(|p| p.id == id)
+                            .cloned()
+                            .ok_or_else(|| {
+                                ControlError::new("invalid_arguments", "Unknown cue point ID")
+                            })?
+                    } else {
+                        let id = format!("user:{}", cues.next_id);
+                        cues.next_id += 1;
+                        audio_analysis::CuePoint::manual(id, 0., String::new())
+                    };
+                    let mut merged = serialized(&point)?;
+                    let values = value.as_object().ok_or_else(|| {
+                        ControlError::new("invalid_arguments", "point must be an object")
+                    })?;
+                    for (key, value) in values {
+                        if ![
+                            "id",
+                            "start_seconds",
+                            "end_seconds",
+                            "name",
+                            "role",
+                            "confirmed",
+                        ]
+                        .contains(&key.as_str())
+                        {
+                            return Err(ControlError::new("invalid_arguments","Cue edits accept identity, timing, name, role and confirmation only"));
+                        }
+                        merged[key] = value.clone();
+                    }
+                    point = serde_json::from_value(merged).map_err(failure)?;
+                    point.modified = true;
+                    point.confirmed = true;
+                    if let Some(old) = cues.points.iter_mut().find(|p| p.id == point.id) {
+                        *old = point;
+                    } else {
+                        cues.points.push(point);
+                    }
+                    cues.project();
+                } else if let Some(id) = a.get("delete_id").and_then(Value::as_str) {
+                    cues.delete(id);
+                } else if let Some(bind) = a.get("bind") {
+                    let kind: String = arg(bind, "kind")?;
+                    let id: Option<String> = optional(bind, "id")?;
+                    if id
+                        .as_ref()
+                        .is_some_and(|id| !cues.points.iter().any(|p| &p.id == id))
+                    {
+                        return Err(ControlError::new(
+                            "invalid_arguments",
+                            "Binding requires an existing cue point ID",
+                        ));
+                    }
+                    match kind.as_str() {
+                        "main" => cues.bindings.main = id,
+                        "hot" => {
+                            let i: usize = arg(bind, "index")?;
+                            if i >= 8 {
+                                return Err(ControlError::new(
+                                    "invalid_arguments",
+                                    "Hot cue index must be 0..7",
+                                ));
+                            }
+                            cues.bindings.hot[i] = id;
+                        }
+                        "memory" => {
+                            let i: usize = arg(bind, "index")?;
+                            if i >= 10 {
+                                return Err(ControlError::new(
+                                    "invalid_arguments",
+                                    "Memory cue index must be 0..9",
+                                ));
+                            }
+                            cues.bindings.memory[i] = id;
+                        }
+                        _ => {
+                            return Err(ControlError::new(
+                                "invalid_arguments",
+                                "Cue binding kind must be main, hot or memory",
+                            ))
+                        }
+                    };
+                    cues.project();
                 } else {
                     let kind: String = arg(a, "kind")?;
                     let seconds: Option<f64> = optional(a, "seconds")?;
@@ -1165,7 +1542,13 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
                     }
                 }
                 let duration = duration.unwrap();
-                cues.normalize_memory();
+                cues.reconcile_legacy(
+                    cues.hot_cues,
+                    cues.memory_cues,
+                    cues.cue_seconds,
+                    &cues.annotations.clone(),
+                );
+                cues.validate(duration).map_err(failure)?;
                 if cues.cue_seconds > duration
                     || cues
                         .hot_cues
@@ -1179,14 +1562,38 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
                         "Cue time is outside track duration",
                     ));
                 }
+                let metadata = state.engine.metadata_snapshot();
+                if a.get("deck").is_some() {
+                    let d = deck(a)?;
+                    if request
+                        .expected_load_revision
+                        .is_some_and(|expected| metadata.load_revisions[d] != expected)
+                        || metadata.tracks[d].as_ref().is_none_or(|t| t.path != source)
+                    {
+                        return Err(ControlError::new(
+                            "source_changed",
+                            "Loaded source changed before cue commit",
+                        ));
+                    }
+                }
                 let revision = lib
                     .save_source_cues(&source, &cues, optional(a, "expected_revision")?)
                     .map_err(failure)?;
                 // Keep the persistence lock until queued updates apply, preventing
                 // the legacy observer from writing older deck values over this edit.
-                let metadata = state.engine.metadata_snapshot();
                 for (d, t) in metadata.tracks.iter().enumerate() {
                     if t.as_ref().is_some_and(|t| t.path == source) {
+                        state
+                            .engine
+                            .update_loaded_analysis_for_revision(
+                                d,
+                                &t.as_ref().unwrap().id,
+                                Some(metadata.load_revisions[d]),
+                                |a| {
+                                    a.cue_points = cues.points.clone();
+                                },
+                            )
+                            .map_err(failure)?;
                         for command in [
                             EngineCommand::RestoreHotCues {
                                 deck: d,
@@ -1258,7 +1665,8 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
         )),
         "controller.context" => call!(crate::set_controller_browse_context(
             app.state(),
-            arg(a, "track_ids")?
+            arg(a, "track_ids")?,
+            optional(a, "selected_track_id")?
         )),
         "controller.browser_active" => call!(crate::set_controller_browser_active(
             app.state(),
@@ -1281,13 +1689,12 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
         }
         "sampler.load" => {
             let slot: usize = arg(a, "slot")?;
-            let path: String = arg(a, "path")?;
-            serialized(
-                state
-                    .engine
-                    .load_sample(slot, std::path::Path::new(&path))
-                    .map_err(failure)?,
-            )?
+            let dialog = dialog_selection(a, &["path"])?;
+            asynchronous!(crate::load_sample_at(
+                app.clone(),
+                slot,
+                if dialog { None } else { Some(arg(a, "path")?) }
+            ))
         }
         "sampler.state" => {
             let meta = state.engine.metadata_snapshot();
@@ -1297,29 +1704,17 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
         "recording.status" => serialized(state.engine.recording_status())?,
         "recording.start" => {
             if !state.engine.transport_snapshot().running {
-                return Err(
-                    ControlError::new("audio_not_running", "Start audio before recording")
-                        .with_detail("example", "pulsedeckctl audio start --json"),
-                );
-            }
-            let path: String = arg(a, "path")?;
-            if std::path::Path::new(&path).exists()
-                && !optional::<bool>(a, "overwrite")?.unwrap_or(false)
-            {
                 return Err(ControlError::new(
-                    "file_exists",
-                    "Recording destination already exists",
+                    "audio_not_running",
+                    "Start audio before recording",
                 ));
             }
-            serialized(
-                state
-                    .engine
-                    .start_recording_with_policy(
-                        std::path::Path::new(&path),
-                        optional::<bool>(a, "overwrite")?.unwrap_or(false),
-                    )
-                    .map_err(failure)?,
-            )?
+            let dialog = dialog_selection(a, &["path"])?;
+            asynchronous!(crate::start_recording_at(
+                app.clone(),
+                if dialog { None } else { Some(arg(a, "path")?) },
+                optional::<bool>(a, "overwrite")?.unwrap_or(false)
+            ))
         }
         "recording.stop" => asynchronous!(crate::stop_recording(app.clone())),
         "spotify.status" => asynchronous!(crate::spotify::spotify_status(app.state())),
@@ -1350,10 +1745,12 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
             optional(a, "offset")?.unwrap_or(0)
         )),
         "spotify.liked" => asynchronous!(crate::spotify::spotify_liked_tracks(
+            app.clone(),
             app.state(),
             optional(a, "offset")?.unwrap_or(0)
         )),
         "spotify.playlist_tracks" => asynchronous!(crate::spotify::spotify_playlist_tracks(
+            app.clone(),
             app.state(),
             arg(a, "playlist_id")?,
             optional(a, "offset")?.unwrap_or(0)
@@ -1432,63 +1829,88 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
                 })??,
             ));
         }
-        "events.get" => {
-            let control = app.state::<Control>();
-            let since = optional::<u64>(a, "since")?.unwrap_or(0);
-            let events = control.events.lock().map_err(failure)?;
-            let gap = events
-                .front()
-                .and_then(|e| e["sequence"].as_u64())
-                .is_some_and(|s| since > 0 && since.saturating_add(1) < s);
-            json!({"events":events.iter().filter(|e|e["sequence"].as_u64().unwrap_or(0)>since).cloned().collect::<Vec<_>>(),"resync_required":gap,"sequence":control.event_sequence.load(Ordering::Acquire)})
-        }
+        "events.get" => read_events(app, request)?,
         "batch.validate" => {
-            let steps: Vec<Request> = arg(a, "steps")?;
-            if steps.len() > 256 {
-                return Err(ControlError::new(
-                    "invalid_arguments",
-                    "At most 256 batch steps",
+            if a.get("schedule").is_some() {
+                let snapshot = state
+                    .engine
+                    .scheduled_snapshot()
+                    .map_err(scheduled_failure)?;
+                let (schedule, commands) = scheduled_commands_at(request, Some(&snapshot))?;
+                let count = commands.len();
+                state
+                    .engine
+                    .validate_scheduled_batch(&schedule, commands)
+                    .map_err(scheduled_failure)?;
+                return Ok((
+                    "applied",
+                    json!({"valid":true,"mode":"scheduled","steps":count,"operation_id":schedule.operation_id}),
                 ));
             }
-            for step in &steps {
-                step.validate()?;
-                validate_step(step)?;
-                if !catalog().iter().any(|v| v["command"] == step.command) {
-                    return Err(ControlError::new(
-                        "command_unsupported",
-                        format!("Unknown command {}", step.command),
-                    ));
-                }
+            let actions = command_job_actions(&a["steps"], &[], "validate")?;
+            if actions.is_empty() && a["open"] != true {
+                return Err(ControlError::new(
+                    "invalid_arguments",
+                    "Closed batches need at least one step",
+                ));
             }
-            json!({"valid":true,"steps":steps.len()})
+            json!({"valid":true,"steps":actions.len(),"mode":"commands"})
         }
         "batch.run" => {
             return start_batch(app, request);
         }
-        "jobs.list" => serialized(
-            app.state::<Control>()
-                .jobs
-                .lock()
-                .map_err(failure)?
-                .iter()
-                .map(|(id, j)| json!({"id":id,"status":j.status}))
-                .collect::<Vec<_>>(),
-        )?,
+        "batch.append" | "batch.invalidate" | "batch.seal" => {
+            return patch_scheduled_batch(app, request);
+        }
+        "jobs.list" => {
+            refresh_scheduled_jobs(app)?;
+            serialized(
+                app.state::<Control>()
+                    .jobs
+                    .lock()
+                    .map_err(failure)?
+                    .iter()
+                    .map(|(id, j)| json!({"id":id,"status":job_status(&j.status, a["detail"] == true)}))
+                    .collect::<Vec<_>>(),
+            )?
+        }
         "jobs.get" => {
+            refresh_scheduled_jobs(app)?;
             let id: String = arg(a, "id")?;
-            app.state::<Control>()
-                .jobs
-                .lock()
-                .map_err(failure)?
+            let control = app.state::<Control>();
+            let jobs = control.jobs.lock().map_err(failure)?;
+            let job = jobs
                 .get(&id)
-                .ok_or_else(|| ControlError::new("job_not_found", "Job not found"))?
-                .status
-                .clone()
+                .ok_or_else(|| ControlError::new("job_not_found", "Job not found"))?;
+            let mut result = job_status(&job.status, a["detail"] == true);
+            result["event_sequence"] = json!(control.event_sequence.load(Ordering::Acquire));
+            result
         }
         "jobs.cancel" | "automation.stop" => {
             let control = app.state::<Control>();
+            if request.command == "automation.stop" {
+                let mut stored = control.mix_prepared.lock().map_err(failure)?;
+                for p in stored.values_mut().filter(|p| !mix_terminal(&p.state)) {
+                    p.cancelled.store(true, Ordering::Release);
+                    p.state = "cancelled".into();
+                    for deck in 0..2 {
+                        state
+                            .source_jobs
+                            .cancel_owner(deck, &format!("{}:load", p.id));
+                    }
+                    event(app, "mix.updated", mix_summary(p));
+                }
+            }
             let jobs = control.jobs.lock().map_err(failure)?;
             if request.command == "automation.stop" {
+                manual_mix_session_takeover(app, &EngineCommand::CancelRamps);
+                let scheduled = state.engine.transport_snapshot().scheduled_batch;
+                if scheduled.state.active() {
+                    state
+                        .engine
+                        .cancel_scheduled_batch(scheduled.id, false)
+                        .map_err(failure)?;
+                }
                 for job in jobs.values() {
                     job.cancel.store(true, Ordering::Release);
                 }
@@ -1518,18 +1940,60 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
                 }
             } else {
                 let id: String = arg(a, "id")?;
+                if let Some(job) = jobs.get(&id) {
+                    if let Some(native_id) = job.native_id {
+                        state
+                            .engine
+                            .cancel_scheduled_batch(
+                                native_id,
+                                optional::<String>(a, "mode")?.as_deref() == Some("stabilize"),
+                            )
+                            .map_err(failure)?;
+                    }
+                }
                 jobs.get(&id)
                     .ok_or_else(|| ControlError::new("job_not_found", "Job not found"))?
                     .cancel
                     .store(true, Ordering::Release);
             }
+            control.event_ready.notify_all();
             Value::Null
         }
         "commands.list" | "capabilities" => {
-            json!({"protocol_version":control_protocol::VERSION,"commands":catalog(),"engine_commands":engine_catalog(),"ui":&*app.state::<Control>().ui.lock().map_err(failure)?,"unsupported":["mic_input","android_mono","smart_fader_next","spotify_playlist_writes","structural_section_detection"]})
+            let mut result = discovery_catalog(a)?;
+            if optional::<bool>(a, "detail")?.unwrap_or(false) {
+                result["ui"] = json!(&*app.state::<Control>().ui.lock().map_err(failure)?);
+                result["unsupported"] = json!([
+                    "mic_input",
+                    "android_mono",
+                    "smart_fader_next",
+                    "spotify_playlist_writes"
+                ]);
+            }
+            result
         }
         "commands.describe" => {
             let name: String = arg(a, "name")?;
+            if let Some(action) = optional::<String>(a, "action")? {
+                if name != "engine.command" {
+                    return Err(ControlError::new(
+                        "invalid_arguments",
+                        "action is only valid for engine.command",
+                    ));
+                }
+                return Ok((
+                    "applied",
+                    engine_catalog()
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .find(|entry| entry["type"] == action)
+                        .cloned()
+                        .ok_or_else(|| {
+                            ControlError::new("command_unsupported", "Engine action not found")
+                        })?,
+                ));
+            }
             catalog()
                 .into_iter()
                 .find(|v| v["command"] == name)
@@ -1561,7 +2025,20 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
                 | "app.activity"
                 | "library.tracks"
                 | "library.track"
+                | "library.import"
+                | "library.edit_details"
+                | "library.edit_taxonomy"
+                | "library.write_metadata"
+                | "library.import_xml"
+                | "library.export_xml"
+                | "library.details"
+                | "library.tag_categories"
                 | "track.inspect"
+                | "library.suggest_next"
+                | "mix.options"
+                | "mix.openers"
+                | "mix.index_scope"
+                | "mix.index_scope.cancel"
                 | "playlist.list"
                 | "cues.get"
                 | "recording.status"
@@ -1661,10 +2138,99 @@ fn compact_neural_summary(track: &mut Value) {
         rhythm.insert("scores_calibrated".into(), json!(false));
     }
 }
-fn metadata_summary(engine: &deck_engine::EngineHandle) -> Value {
-    let metadata = engine.metadata_snapshot();
-    json!({"revision":metadata.revision,"load_revisions":metadata.load_revisions,"tracks":metadata.tracks.iter().map(|t|t.as_ref().map(|t|json!({"id":t.id,"path":t.path,"title":t.title,"artist":t.artist,"duration_seconds":t.duration_seconds,"bpm":t.bpm,"key":t.key,"recording_allowed":t.recording_allowed}))).collect::<Vec<_>>(),"samples":metadata.samples.iter().map(|t|t.as_ref().map(|t|json!({"id":t.id,"title":t.title,"path":t.path,"duration_seconds":t.duration_seconds}))).collect::<Vec<_>>()})
+/// Compact read receipts use the same neural summary as library reads while
+/// retaining identities, source guards, stage outcomes and command errors.
+fn compact_control_result(value: &mut Value) {
+    compact_neural_summary(value);
+    match value {
+        Value::Object(object) => {
+            for key in [
+                "waveform",
+                "waveform_bands",
+                "beat_logits",
+                "downbeat_logits",
+                "beats_seconds",
+                "downbeats_seconds",
+                "bar_evidence",
+            ] {
+                if let Some(payload) = object.remove(key) {
+                    if let Some(array) = payload.as_array() {
+                        object.insert(format!("{key}_count"), json!(array.len()));
+                    }
+                }
+            }
+            for child in object.values_mut() {
+                compact_control_result(child);
+            }
+        }
+        Value::Array(values) => {
+            for child in values {
+                compact_control_result(child);
+            }
+        }
+        _ => {}
+    }
 }
+fn ready_source(
+    snapshot: &deck_engine::EngineSnapshot,
+    deck: usize,
+    revision: u64,
+) -> Result<String> {
+    if snapshot.load_revisions[deck] != revision {
+        return Err(ControlError::new(
+            "source_changed",
+            "Deck source changed before readiness was verified",
+        ));
+    }
+    if snapshot.decks[deck].preparation_pending {
+        return Err(ControlError::new(
+            "preparation_pending",
+            "Deck preparation is still pending",
+        ));
+    }
+    snapshot.decks[deck]
+        .track
+        .as_ref()
+        .map(|track| track.path.clone())
+        .ok_or_else(|| ControlError::new("deck_empty", "No source is loaded on the requested deck"))
+}
+/// Join identities only across the same source epoch. The real-time transport
+/// intentionally contains no TrackAnalysis, which must not serialize as an empty deck.
+fn compact_engine_state(engine: &deck_engine::EngineHandle) -> (Value, Value) {
+    let metadata = engine.metadata_summary_snapshot();
+    let transport = engine.transport_snapshot();
+    compact_engine_snapshots(&transport, &metadata)
+}
+fn metadata_summary(engine: &deck_engine::EngineHandle) -> Value {
+    compact_engine_state(engine).1
+}
+fn compact_engine_snapshots(
+    transport: &deck_engine::EngineSnapshot,
+    metadata: &deck_engine::EngineMetadataSnapshot,
+) -> (Value, Value) {
+    let mut engine = json!(transport);
+    let mut summary = json!({"revision":metadata.revision,"load_revisions":metadata.load_revisions,"tracks":metadata.tracks.iter().map(|t|t.as_ref().map(|t|json!({"id":t.id,"path":t.path,"title":t.title,"artist":t.artist,"duration_seconds":t.duration_seconds,"bpm":t.bpm,"key":t.key,"recording_allowed":t.recording_allowed}))).collect::<Vec<_>>(),"samples":metadata.samples.iter().map(|t|t.as_ref().map(|t|json!({"id":t.id,"title":t.title,"path":t.path,"duration_seconds":t.duration_seconds}))).collect::<Vec<_>>()});
+    for d in 0..2 {
+        let deck = &mut engine["decks"][d];
+        if transport.load_revisions[d] != metadata.load_revisions[d] {
+            // Never attach another release's metadata during a source commit.
+            deck.as_object_mut().unwrap().remove("track");
+            deck["source_state"] = json!("metadata_pending");
+            summary["tracks"][d] = Value::Null;
+        } else {
+            deck["track"] = summary["tracks"][d].clone();
+            deck["source_state"] = json!(if metadata.tracks[d].is_none() {
+                "empty"
+            } else if transport.decks[d].preparation_pending {
+                "preparing"
+            } else {
+                "ready"
+            });
+        }
+    }
+    (engine, summary)
+}
+
 fn validate_action(action: &flx4_midi::ControllerAction) -> Result<()> {
     let value = serialized(action)?;
     if value
@@ -1707,111 +2273,57 @@ fn validate_action(action: &flx4_midi::ControllerAction) -> Result<()> {
     Ok(())
 }
 fn start_batch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, Value)> {
-    let steps: Vec<Request> = arg(&request.args, "steps")?;
-    if steps.is_empty() || steps.len() > 256 {
-        return Err(ControlError::new(
-            "invalid_arguments",
-            "Batch needs 1..256 steps",
-        ));
+    if request.args.get("schedule").is_some() {
+        return start_scheduled_batch(app, request);
     }
-    for (index, step) in steps.iter().enumerate() {
-        step.validate()?;
-        validate_step(step).map_err(|e| {
-            e.with_detail("step_index", index as u64)
-                .with_detail("step_command", step.command.clone())
-        })?;
-        if step.command == "batch.run" {
-            return Err(ControlError::new(
-                "invalid_arguments",
-                "Nested batches are not supported",
-            ));
-        }
-    }
-    let id = format!(
-        "job-{}-{}",
-        std::process::id(),
-        app.state::<Control>()
-            .job_sequence
-            .fetch_add(1, Ordering::Relaxed)
-    );
-    let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let control = app.state::<Control>();
-    if control.jobs.lock().map_err(failure)?.len() >= 256 {
-        return Err(ControlError::new(
-            "busy",
-            "Job history is full; restart the runtime to clear it",
-        ));
-    }
-    control.jobs.lock().map_err(failure)?.insert(
-        id.clone(),
-        Job {
-            cancel: cancel.clone(),
-            status: json!({"state":"running","completed":0,"total":steps.len(),"results":[]}),
-        },
-    );
-    let runtime = app.clone();
-    let job_id = id.clone();
-    std::thread::spawn(move || {
-        let mut results = Vec::new();
-        let mut final_state = "completed";
-        for mut step in steps {
-            if cancel.load(Ordering::Acquire) {
-                final_state = "cancelled";
-                break;
-            }
-            step.request_id = format!("{}:{}", job_id, results.len());
-            let response = execute(&runtime, step);
-            let ok = response.ok;
-            results.push(response);
-            if let Some(job) = runtime
-                .state::<Control>()
-                .jobs
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .get_mut(&job_id)
-            {
-                job.status["completed"] = json!(results.len());
-                job.status["results"] = json!(results);
-            }
-            if !ok {
-                final_state = if cancel.load(Ordering::Acquire) {
-                    "cancelled"
-                } else {
-                    "failed"
-                };
-                break;
-            }
-        }
-        if let Some(job) = runtime
-            .state::<Control>()
-            .jobs
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get_mut(&job_id)
-        {
-            job.status["state"] = json!(final_state);
-        }
-        event(
-            &runtime,
-            "job.completed",
-            json!({"id":job_id,"state":final_state}),
-        );
-    });
-    Ok(("accepted", json!({"job_id":id})))
+    start_command_batch(app, request)
 }
+
 fn job_cancelled(app: &tauri::AppHandle, request: &Request) -> bool {
-    request.request_id.rsplit_once(':').is_some_and(|(job, _)| {
+    request_owner_cancelled(app, &request.request_id)
+}
+pub(crate) fn request_owner_cancelled(app: &tauri::AppHandle, request_id: &str) -> bool {
+    request_id.split_once(':').is_some_and(|(job, _)| {
+        if job.starts_with("mix-queue-") {
+            return successor_queue_owner_cancelled(app, job, request_id);
+        }
+        let control = app.state::<Control>();
+        if control
+            .mix_prepared
+            .lock()
+            .map(|mixes| {
+                mixes
+                    .get(job)
+                    .is_some_and(|p| p.cancelled.load(Ordering::Acquire))
+            })
+            .unwrap_or(false)
+        {
+            return true;
+        }
         app.state::<Control>()
             .jobs
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get(job)
-            .is_some_and(|j| j.cancel.load(Ordering::Acquire))
+            .map(|jobs| {
+                jobs.get(job)
+                    .is_some_and(|job| job.cancel.load(Ordering::Acquire))
+            })
+            .unwrap_or(false)
     })
 }
 
+fn validate_control_track_uri(uri: &str) -> Result<()> {
+    spotify_playback::validate_track_uri(uri).map_err(|reason| {
+        ControlError::new("invalid_track_uri", reason)
+            .with_detail("argument", "uri")
+            .with_detail("uri", uri)
+            .with_detail("hint", "Copy the complete URI exactly from spotify.liked or spotify.playlist results; do not reconstruct or shorten the identifier.")
+    })
+}
 fn validate_step(request: &Request) -> Result<()> {
     control_protocol::validate_arguments(request)?;
+    if request.command == "deck.load" {
+        spotify_load_uri(&request.args)?;
+    }
     if request.command == "engine.command" {
         let value = request
             .args
@@ -1936,6 +2448,57 @@ fn catalog() -> Vec<Value> {
         command["native_input_schema"] =
             serde_json::to_value(schemars::schema_for!(flx4_midi::ControllerAction)).unwrap();
     }
+    for entry in &mut catalog {
+        if matches!(
+            entry["command"].as_str(),
+            Some("batch.run" | "batch.validate")
+        ) {
+            let mut schedule_schema =
+                serde_json::to_value(schemars::schema_for!(deck_engine::BatchSchedule)).unwrap();
+            if let Some(required) = schedule_schema["required"].as_array_mut() {
+                required.retain(|key| {
+                    !matches!(
+                        key.as_str(),
+                        Some(
+                            "expected_load_revisions"
+                                | "expected_position_revisions"
+                                | "expected_grid_revisions"
+                                | "expected_engine_epoch"
+                                | "expected_control_revision"
+                                | "arm_before_event"
+                        )
+                    )
+                });
+            }
+            schedule_schema["description"]=json!("Omitted guards capture one current coherent source generation. Native execution rejects any subsequent source/position/grid/control change. Omitted arm_before_event uses the first action event.");
+            entry["input_schema"]["properties"]["schedule"] = schedule_schema.clone();
+            entry["schedule_schema"] = schedule_schema.clone();
+            entry["prerequisite_schema"] =
+                serde_json::to_value(schemars::schema_for!(deck_engine::BatchPrerequisite))
+                    .unwrap();
+            let step_schema =
+                serde_json::to_value(schemars::schema_for!(ScheduledRequest)).unwrap();
+            entry["scheduled_step_schema"] = step_schema.clone();
+            let mut definitions = serde_json::Map::new();
+            for schema in [&schedule_schema, &step_schema] {
+                if let Some(defined) = schema["definitions"].as_object() {
+                    definitions.extend(defined.clone());
+                }
+            }
+            entry["input_schema"]["definitions"] = json!(definitions);
+            entry["input_schema"]["properties"]["steps"]["items"] =
+                json!({"anyOf":[command_step_schema(),step_schema]});
+        }
+    }
+    if let Some(entry) = catalog
+        .iter_mut()
+        .find(|entry| entry["command"] == "batch.append")
+    {
+        let schema = serde_json::to_value(schemars::schema_for!(ScheduledRequest)).unwrap();
+        entry["input_schema"]["definitions"] = schema["definitions"].clone();
+        entry["input_schema"]["properties"]["steps"]["items"] =
+            json!({"anyOf":[schema,command_step_schema()]});
+    }
     catalog
 }
 fn engine_catalog() -> Value {
@@ -1956,4 +2519,379 @@ fn engine_catalog() -> Value {
         entry["input_schema"] = typed;
     }
     examples
+}
+
+fn state_metadata_revision(app: &tauri::AppHandle) -> u64 {
+    app.state::<AppState>().engine.metadata_revision()
+}
+
+fn dialog_selection(args: &Value, paths: &[&str]) -> Result<bool> {
+    let dialog = optional::<bool>(args, "dialog")?.unwrap_or(false);
+    let supplied = paths
+        .iter()
+        .any(|p| args.get(*p).is_some_and(|v| !v.is_null()));
+    if dialog == supplied {
+        return Err(ControlError::new(
+            "invalid_arguments",
+            "Supply an explicit path/paths or dialog:true, exclusively",
+        ));
+    }
+    Ok(dialog)
+}
+
+// Request-ID reservation is independent of the audio engine. No service or
+// provider work runs under either map/cache lock.
+struct RequestFlight {
+    fingerprint: String,
+    load_deck: Option<usize>,
+    response: Mutex<Option<Response>>,
+    ready: Condvar,
+}
+enum RequestClaim<'a> {
+    Owner(RequestOwner<'a>),
+    Receipt(Response),
+    Pending(Arc<RequestFlight>),
+}
+struct RequestOwner<'a> {
+    control: &'a Control,
+    id: String,
+    flight: Arc<RequestFlight>,
+    retain: bool,
+    done: bool,
+}
+impl RequestFlight {
+    fn wait(&self, request: &Request) -> Response {
+        let mut response = self.response.lock().unwrap_or_else(|e| e.into_inner());
+        let started = Instant::now();
+        while response.is_none() {
+            let Some(remaining) =
+                Duration::from_millis(request.timeout_ms).checked_sub(started.elapsed())
+            else {
+                return Response::failure(request.request_id.clone(),ControlError::new("timeout","Original request remains in flight; inspect state/job or retry this same ID"));
+            };
+            let (next, _) = self
+                .ready
+                .wait_timeout(response, remaining)
+                .unwrap_or_else(|e| e.into_inner());
+            response = next;
+        }
+        response.as_ref().unwrap().clone()
+    }
+}
+impl Control {
+    fn reserve<'a>(
+        &'a self,
+        request: &Request,
+        fingerprint: &str,
+        retain: bool,
+    ) -> Result<RequestClaim<'a>> {
+        let mut flights = self.in_flight.lock().unwrap_or_else(|e| e.into_inner());
+        let receipts = self.completed.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((_, previous, response)) =
+            receipts.iter().find(|(id, _, _)| id == &request.request_id)
+        {
+            return if previous == fingerprint {
+                Ok(RequestClaim::Receipt(response.clone()))
+            } else {
+                Err(ControlError::new(
+                    "request_id_conflict",
+                    "This request ID was used for different arguments",
+                ))
+            };
+        }
+        drop(receipts);
+        if let Some(flight) = flights.get(&request.request_id) {
+            return if flight.fingerprint == fingerprint {
+                Ok(RequestClaim::Pending(flight.clone()))
+            } else {
+                Err(ControlError::new(
+                    "request_id_conflict",
+                    "This request ID is already in flight with different arguments",
+                ))
+            };
+        }
+        if flights.len() >= 256 {
+            return Err(ControlError::new(
+                "busy",
+                "At most 256 requests may be in flight",
+            ));
+        }
+        let load_deck = if matches!(request.command.as_str(), "deck.load" | "deck.demo") {
+            deck(&request.args).ok()
+        } else {
+            None
+        };
+        let flight = Arc::new(RequestFlight {
+            fingerprint: fingerprint.into(),
+            load_deck,
+            response: Mutex::new(None),
+            ready: Condvar::new(),
+        });
+        flights.insert(request.request_id.clone(), flight.clone());
+        Ok(RequestClaim::Owner(RequestOwner {
+            control: self,
+            id: request.request_id.clone(),
+            flight,
+            retain,
+            done: false,
+        }))
+    }
+    fn has_pending_load(&self, deck: usize) -> bool {
+        self.in_flight
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+            .any(|f| f.load_deck == Some(deck))
+    }
+}
+impl RequestOwner<'_> {
+    fn finish(mut self, response: Response) {
+        self.publish(response);
+        self.done = true;
+    }
+    fn publish(&self, response: Response) {
+        let mut flights = self
+            .control
+            .in_flight
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if self.retain {
+            let mut receipts = self
+                .control
+                .completed
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            receipts.push_back((
+                self.id.clone(),
+                self.flight.fingerprint.clone(),
+                response.clone(),
+            ));
+            while receipts.len() > 256 {
+                receipts.pop_front();
+            }
+        }
+        *self
+            .flight
+            .response
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(response);
+        flights.remove(&self.id);
+        drop(flights);
+        self.flight.ready.notify_all();
+    }
+}
+impl Drop for RequestOwner<'_> {
+    fn drop(&mut self) {
+        if !self.done {
+            self.publish(Response::failure(
+                self.id.clone(),
+                ControlError::new(
+                    "execution_interrupted",
+                    "Request execution was interrupted; inspect current state before retrying",
+                ),
+            ));
+        }
+    }
+}
+fn manual_transport_takeover(command: &EngineCommand) -> bool {
+    matches!(
+        command,
+        EngineCommand::Play { .. }
+            | EngineCommand::TogglePlay { .. }
+            | EngineCommand::Pause { .. }
+            | EngineCommand::Seek { .. }
+            | EngineCommand::ScrubTo { .. }
+            | EngineCommand::ScrubEnd { .. }
+            | EngineCommand::Cue { .. }
+            | EngineCommand::CuePress { .. }
+            | EngineCommand::TriggerHotCue { .. }
+            | EngineCommand::Jog { .. }
+            | EngineCommand::JogTouch { .. }
+    )
+}
+include!("control_scheduled.rs");
+include!("mix_execution.rs");
+include!("mix_session.rs");
+include!("mix_queue.rs");
+include!("control_discovery.rs");
+include!("control_command_queue.rs");
+
+#[cfg(test)]
+mod request_reservation_tests {
+    use super::*;
+    #[test]
+    fn compact_sources_distinguish_ready_empty_pending_and_replaced_epochs() {
+        let engine = deck_engine::EngineHandle::new().unwrap();
+        let track = engine.load_demo(0).unwrap();
+        let fence = engine.fence().unwrap();
+        engine
+            .wait_for_fence(fence, Duration::from_secs(2))
+            .unwrap();
+        let mut transport = engine.transport_snapshot();
+        let metadata = engine.metadata_snapshot();
+        let (view, summary) = compact_engine_snapshots(&transport, &metadata);
+        let compact = engine.metadata_summary_snapshot();
+        assert!(compact.tracks[0].as_ref().unwrap().waveform.is_empty());
+        assert_eq!(
+            (view.clone(), summary.clone()),
+            compact_engine_snapshots(&transport, &compact)
+        );
+
+        assert_eq!(view["decks"][0]["track"]["path"], track.path);
+        assert_eq!(view["decks"][0]["source_state"], "ready");
+        assert!(view["decks"][0]["track"].get("waveform").is_none());
+        assert_eq!(view["decks"][1]["source_state"], "empty");
+        assert!(view["decks"][1]["track"].is_null());
+        assert_eq!(view["decks"][0]["track"], summary["tracks"][0]);
+        transport.decks[0].preparation_pending = true;
+        assert_eq!(
+            compact_engine_snapshots(&transport, &metadata).0["decks"][0]["source_state"],
+            "preparing"
+        );
+        transport.load_revisions[0] += 1;
+        let (view, summary) = compact_engine_snapshots(&transport, &metadata);
+        assert_eq!(view["decks"][0]["source_state"], "metadata_pending");
+        assert!(view["decks"][0].get("track").is_none());
+        assert!(summary["tracks"][0].is_null());
+    }
+    #[test]
+    fn readiness_requires_a_loaded_source_and_current_epoch() {
+        let engine = deck_engine::EngineHandle::new().unwrap();
+        let mut snapshot = engine.snapshot();
+        assert_eq!(
+            ready_source(&snapshot, 0, 0).unwrap_err().code,
+            "deck_empty"
+        );
+        let track = engine.load_demo(0).unwrap();
+        let fence = engine.fence().unwrap();
+        engine
+            .wait_for_fence(fence, Duration::from_secs(2))
+            .unwrap();
+        snapshot = engine.snapshot();
+        let rev = snapshot.load_revisions[0];
+        assert_eq!(ready_source(&snapshot, 0, rev).unwrap(), track.path);
+        assert_eq!(
+            ready_source(&snapshot, 0, rev + 1).unwrap_err().code,
+            "source_changed"
+        );
+        snapshot.decks[0].preparation_pending = true;
+        assert_eq!(
+            ready_source(&snapshot, 0, rev).unwrap_err().code,
+            "preparation_pending"
+        );
+    }
+    fn request(id: &str, command: &str) -> Request {
+        let mut request = Request::new(command, json!({"deck":"B"}));
+        request.request_id = id.into();
+        request
+    }
+    fn owner<'a>(control: &'a Control, r: &Request, fingerprint: &str) -> RequestOwner<'a> {
+        match control.reserve(r, fingerprint, true).unwrap() {
+            RequestClaim::Owner(owner) => owner,
+            _ => panic!("expected owner"),
+        }
+    }
+    #[test]
+    fn held_provider_or_dialog_does_not_block_manual_dispatch() {
+        let control = Control::default();
+        let load = request("provider", "deck.load");
+        let pending = owner(&control, &load, "provider");
+        assert!(control.has_pending_load(1));
+        assert!(!control.has_pending_load(0));
+        let dialog = request("dialog", "sampler.load");
+        let dialog_pending = owner(&control, &dialog, "dialog");
+        let started = Instant::now();
+        let manual = request("manual", "engine.command");
+        let manual_owner = owner(&control, &manual, "fader");
+        manual_owner.finish(Response::success(
+            &manual,
+            "applied",
+            json!({"manual_takeover":true}),
+        ));
+        assert!(started.elapsed() < Duration::from_millis(100));
+        assert!(control.has_pending_load(1));
+        pending.finish(Response::failure(
+            load.request_id.clone(),
+            ControlError::new("cancelled", "manual takeover"),
+        ));
+        dialog_pending.finish(Response::success(&dialog, "applied", Value::Null));
+    }
+    #[test]
+    fn concurrent_identical_id_executes_once_and_returns_actual_receipt() {
+        let control = Arc::new(Control::default());
+        let r = request("same", "engine.command");
+        let first = owner(&control, &r, "same-payload");
+        let flight = match control.reserve(&r, "same-payload", true).unwrap() {
+            RequestClaim::Pending(flight) => flight,
+            _ => panic!("must join existing execution"),
+        };
+        let duplicate = r.clone();
+        let waiter = std::thread::spawn(move || flight.wait(&duplicate));
+        let actual = Response::success(&r, "applied", json!({"sequence":19,"manual_won":true}));
+        first.finish(actual.clone());
+        let joined = waiter.join().unwrap();
+        assert_eq!(joined.result, actual.result);
+        assert_eq!(joined.stage, "applied");
+        assert_eq!(control.completed.lock().unwrap().len(), 1);
+        assert!(matches!(
+            control.reserve(&r, "same-payload", true).unwrap(),
+            RequestClaim::Receipt(_)
+        ));
+    }
+    #[test]
+    fn conflicting_id_rejected_during_and_after_execution() {
+        let control = Control::default();
+        let r = request("same", "deck.load");
+        let first = owner(&control, &r, "original");
+        assert!(
+            matches!(control.reserve(&r,"changed",true),Err(e)if e.code=="request_id_conflict")
+        );
+        first.finish(Response::success(&r, "ready", json!({"load_revision":2})));
+        assert!(
+            matches!(control.reserve(&r,"changed",true),Err(e)if e.code=="request_id_conflict")
+        );
+    }
+    #[test]
+    fn duplicate_timeout_does_not_replace_owner_or_create_retry_execution() {
+        let control = Control::default();
+        let mut r = request("wait", "deck.load");
+        r.timeout_ms = 1;
+        let first = owner(&control, &r, "same");
+        let flight = match control.reserve(&r, "same", true).unwrap() {
+            RequestClaim::Pending(f) => f,
+            _ => panic!(),
+        };
+        assert_eq!(flight.wait(&r).error.unwrap().code, "timeout");
+        assert!(control.has_pending_load(1));
+        first.finish(Response::success(&r, "ready", json!({"load_revision":3})));
+        assert!(matches!(control.reserve(&r,"same",true).unwrap(),RequestClaim::Receipt(r)if r.ok));
+    }
+    #[test]
+    fn abandoned_execution_wakes_waiters_with_honest_failure() {
+        let control = Control::default();
+        let r = request("abandoned", "deck.load");
+        let first = owner(&control, &r, "same");
+        let flight = match control.reserve(&r, "same", true).unwrap() {
+            RequestClaim::Pending(f) => f,
+            _ => panic!(),
+        };
+        drop(first);
+        assert_eq!(flight.wait(&r).error.unwrap().code, "execution_interrupted");
+        assert!(!control.has_pending_load(1));
+    }
+    #[test]
+    fn provider_takeover_is_source_specific_and_knobs_do_not_cancel_loading() {
+        assert!(manual_transport_takeover(&EngineCommand::Play { deck: 1 }));
+        assert!(manual_transport_takeover(&EngineCommand::ScrubTo {
+            deck: 1,
+            seconds: 1.,
+            duration_ms: 8.
+        }));
+        assert!(!manual_transport_takeover(
+            &EngineCommand::SetChannelFader {
+                deck: 0,
+                value: 0.2
+            }
+        ));
+    }
 }

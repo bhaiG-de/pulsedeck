@@ -1,108 +1,173 @@
 # PulseDeck
 
-A working macOS DJ application with a native Rust audio engine and Tauri/React interface, following a REA investigation of installed rekordbox 7.2.19.0342. Audio rendering and CoreMIDI control run outside the webview.
+A native, two-deck DJ app for macOS, built with Rust and Tauri. Browse local music and Spotify collections, inspect beatgrids and waveforms, and use **Suggest** to plan a next move or hand a continuous set to the app-owned successor queue.
 
-The local-file performance build includes two decks, cue preview, eight hot cues, ten memory cues, loops, beat jump, jog/scratch, tempo, sync/master, key lock and pitch shift, EQ/filter, channel/crossfaders, master/headphone routing, echo/reverb, sixteen sample slots and WAV recording. The SQLite library supports imports, search, playlists and rekordbox XML migration.
+[Download for macOS](https://github.com/bhaiG-de/pulsedeck/releases/latest) · [Release history](https://github.com/bhaiG-de/pulsedeck/releases) · [DJ skills](.agents/skills/README.md)
 
-## Run
+## Install
 
-The packaged application is produced at `target/release/bundle/macos/PulseDeck.app`. Open it in Finder. Import local music or use **Load → Load test tone** to try the decks. Keyboard Space controls deck A; Enter controls deck B when focus is outside editable controls.
+1. Download the Apple Silicon (`aarch64`) `.dmg` from **GitHub Releases → Assets**.
+2. Open it and launch **Install PulseDeck** for the animated installer; drag its PulseDeck icon into the Applications target or use Install. You can also drag **PulseDeck.app** directly into the DMG’s Applications shortcut.
+3. Launch PulseDeck. Import a local folder or configure Spotify in Settings.
 
-Choose audio device, requested buffer size and output routing in Settings. On a four-channel device, select separate master and headphone channels. FLX4 CoreAudio/CoreMIDI discovery and connection are exposed in Settings; no vendor macOS driver is installed. Physical FLX4 channel order and control behavior still need verification after macOS recognizes the connected controller.
+Requires an Apple Silicon Mac and macOS 12 or newer. Release downloads include `SHA256SUMS.txt`; verify with `shasum -a 256 -c SHA256SUMS.txt` beside the downloaded DMG.
 
-## CLI control
+The current build is ad-hoc signed and **not Apple-notarized**. macOS may require first-launch approval in System Settings → Privacy & Security. User music, library databases and account credentials are not included in downloads.
 
-The desktop app hosts a private local control endpoint. Build the `pulsedeckctl` client with `bash tools/rust-env.sh cargo build -p pulsedeck-cli`, open PulseDeck, and run `target/debug/pulsedeckctl status --json`. `npm run cli -- ...` is also available.
+The native installer uses the app’s aluminium chassis, Hanken Grotesk/DM Mono type and exact header mark, with a live drag-position indicator, reactive install target, Reduced Motion support and transactional app replacement. It confirms replacement, requires the installed app to be quit, and preserves the previous app if source copying fails. It does not modify the library or account data.
 
-The CLI exposes the native deck/mixer/cue/loop/sampler controls, library/playlists, recording, audio/MIDI settings and Spotify services, plus an acknowledged bridge for UI presentation controls. Commands share the app's engine and persistence. Discovery, structured repairable errors, source/revision guards, jobs, batches and native timed ramps support automation. See the [CLI guide](research/cli-guide.md) and [control map](research/cli-control-map.md).
+The installer can install/update **pulsedeck-control**, **pulsedeck-library** and **djing-art** into `${CODEX_HOME:-~/.codex}/skills`. Existing DJ skills (including legacy names) are backed up outside skill discovery in `pulsedeck-skill-backups` before replacement; restart Codex to discover the installed skills. Uncheck the option for app-only installation. Dragging the app directly in Finder installs only the app.
 
-## DJ agent skills
+The signed app includes the CLI at `/Applications/PulseDeck.app/Contents/MacOS/pulsedeckctl` and self-contained skill packages in `Contents/Resources/dj-skills`; a source checkout is not required for agent control.
 
-The [seven repository-local DJ skills](.agents/skills/README.md) teach shell agents to inspect musical evidence, prepare sets/decks, transition, run sessions, record/export, and troubleshoot through `pulsedeckctl`. The index includes installation, invocation, generated-fixture trials and listening limits. MCP remains deferred.
+The bundled app icon follows the header's dot-matrix record mark: graphite dots with an orange center on a full-bleed silver surface. Its Imagegen master and prompt are in [src-tauri/icons](src-tauri/icons); regenerate bundle sizes with `python3 tools/make_icon.py` after installing npm dependencies.
 
-## Spotify
+## What the app does
 
-Settings → Spotify accepts your own public Spotify developer Client ID. Register `http://127.0.0.1:8765/callback` in the developer dashboard, add your account to the development allowlist, and sign in through the browser. The implementation uses PKCE, a local callback and macOS Keychain refresh-token storage. It loads playlists and liked songs and controls an available Spotify Connect device. The optional official Spotify widget has browser-dependent playback/preview limits.
+### Decks and mixer
 
-**Native Spotify playback is working through the experimental librespot adapter.** Settings → Spotify → **Sign in to native player** opens a separate streaming-only consent using librespot's upstream native registration; library/Connect credentials stay separate. A controlled request comparison proved that using the developer Web API identity caused HTTP 400 while the native identity succeeds. After native consent, full tracks of 2:06 and 6:17 loaded into the Rust decks, with advancing clocks/meters, cue return, tempo changes and crossfader left/center/right checked in the desktop app. The user confirmed audible playback; controlled transport tests used muted master output. Physical headphone routing and mixing quality remain unmeasured.
+- Two native audio decks with stacked, three-band waveforms, overview seeking, jog/scratch, tempo control, key lock and pitch shifting.
+- Beat-aware launches and Sync, editable beatgrid origin/BPM, hot cues, memory cues, loops and beat jumps.
+- Channel trim, three-band EQ, filters, faders, crossfader and master/headphone routing. Physical cue monitoring needs a separate audio output.
+- Stereo-linked output headroom and limiting, with gain-reduction and callback diagnostics.
+- Echo and reverb on independent main/cue send-return histories. Returns survive a closed fader, paused deck or replaced track, with bounded tails.
+- WAV recording for eligible local playback; streaming-service playback and its residual effect tails block recording.
+- Native DDJ-FLX4 MIDI/control integration and explicit audio/controller setup.
 
-Load A/B prepares full-track stereo PCM in RAM before native transport begins. Preparation is capped at256 MiB /about12m40s pertrack and120s; recording is disabled while these sources are loaded. No saved audio/export, vendor credential extraction or custom protected transport is implemented. See [adapter details](crates/spotify-playback/README.md) and [authentication diagnosis](research/spotify-authentication.md).
+### Library and analysis
 
+- Local folder import, searchable library, playlists, tags, metadata tools and rekordbox XML exchange.
+- Versioned analysis/cache with locally bundled Beat This! `final0` beat/downbeat inference, key estimates and waveform features. Analysis runs on workers rather than in the audio callback.
+- Beat events retain their detected timing, including tempo variation. User/imported cues remain separate; PulseDeck does not invent verified phrases, vocal labels or automatic arrangement sections.
+- Full-PCM audible start/end frame measurements at −60 dBFS, independent of musical cues. The planner uses these boundaries to reserve useful transition runway.
+- Integrated programme loudness and true peak measured with `ebur128`. Per-deck **Level** normalization targets −18 LUFS, with bounded boost and measured source peak headroom, independently of manual trim. It can be bypassed.
 
-Native load failures report credential-safe metadata, delivery, format, decoder or playback-key stages. Metadata/delivery failures and playback-key timeouts get one delayed retry within the preparation deadline, using the same authorized session and only before any PCM has arrived. Old drawer errors clear when a new deck preparation starts.
+Programme normalization does not make every breakdown/drop equally loud. Overlaps, EQ, effects and stretching can change final peaks; output protection remains active. Estimates and timing receipts do not establish listening quality or detector accuracy parity with commercial DJ software.
 
-## Develop and validate
+### Spotify
 
-Rust, Node/npm and the macOS Command Line Tools are required. Install Rust with rustup and use your standard Cargo installation. If a local toolchain exists under `.toolchain`, the wrapper uses it without changing your shell profile; local toolchains are not part of the repository.
+Settings has separate sign-ins for **library/Connect access** and **native player playback**. Library login alone does not make songs loadable into decks. The native player uses an experimental librespot adapter; source availability and provider behavior can change.
+
+Liked Songs and playlists can be fully indexed across pagination. Indexing stores membership/metadata; audio analysis is separate. Collection suggestions use the indexed analysed repertoire, not only the newest provider page. Explicit queued sources can be analysed during isolated preparation, subject to the carrier's runway.
+
+Native Spotify preparation keeps bounded full-track PCM in RAM for playback. Provider audio is not saved/exported as a library cache. Credentials use macOS Keychain and app-private configuration, never repository files.
+
+## Suggest and continuous mixing
+
+Open **Suggest** in the top navigation. It shows feasible successors and transitions calculated from the current decks, source/grid/control identities, tempo limits, harmonic/energy evidence and remaining audible material.
+
+Supported native recipes:
+
+| Technique | Shape |
+|---|---|
+| EQ blend | Staged layer/EQ transfer over a longer overlap |
+| Filter blend | Filter and fader transfer |
+| Short exchange | Four-bar controlled overlap |
+| Echo out | Eight-bar transfer with an independent echo return |
+| Reverb exit | Eight-bar transfer with an independent reverb return |
+
+Phrase and vocal evidence can be uncertain; the panel exposes warnings and review requirements. Additional techniques such as stems, vocal handoffs and tempo bridges remain unavailable where their evidence/execution guards are missing.
+
+### Successor queue
+
+Start a suitable playing opener, then expand **Successor queue** in Suggest. Choose an ordered list or a collection, energy direction, close tempo limits, allowed techniques and an optional duration. Review uncertainty/replacement permissions and start it once.
+
+The app owns successive loading, preparation, timing, clearance and recovery. It prepares the next source when a deck is released, bounds consecutive source skips and requests attention if no safe continuation is available. Pending ordered tracks can be reordered or removed using revision-checked edits.
+
+- **Queue accepted:** the app continues after an agent or CLI exits. A model does not need to monitor progress.
+- **Actionable outcome:** `mix.queue.notice` reports completion or attention; the UI shows a persistent notice and the final summary is retained.
+- **Stop:** cancels owned queue work and its endpoint; ordinary playback continues.
+- **Duration:** starts at queue acceptance, includes preparation/overlaps and stops playback at its deadline.
+- **Manual takeover:** yields ownership. The queue does not automatically override the user's controls or restart.
+- **Restart:** restores an interrupted summary without replaying playback.
+
+Unavailable audio or an unusable grid can prevent continuation. The app preserves a healthy carrier when it can; it cannot supply missing music indefinitely.
+
+## Agents and CLI
+
+Three skills separate [musical judgment](.agents/skills/djing-art/SKILL.md), [performance control](.agents/skills/pulsedeck-control/SKILL.md) and [library knowledge](.agents/skills/pulsedeck-library/SKILL.md). Their [continuous-set workflow](.agents/skills/pulsedeck-control/references/continuous-sets.md) starts one detached queue and ends the agent turn after acceptance. Healthy queues need no `--follow`, periodic reads or model-side timing loop.
+
+Build the CLI with `bash tools/rust-env.sh cargo build -p pulsedeck-cli`. Examples use `pd` as shorthand for `target/debug/pulsedeckctl`; the desktop app must be running.
 
 ```sh
-npm install
-npm --prefix frontend install
+# Bounded analysed opener shortlist; no repeated Spotify page fetches.
+pd call mix.openers --args '{"playlist":"spotify:liked","provider":"spotify","min_bpm":118,"max_bpm":126,"limit":8}' --json
+
+# After loading/playing the chosen opener, submit the continuous set once.
+pd mix queue start --playlist spotify:liked --provider spotify --energy-direction keep --max-stretch-percent 2 --duration-seconds 3600 --review-confirmed --request-id my-set-1 --json
+
+# Explicit status/stop when requested or an actionable outcome needs attention.
+pd mix queue status --queue-id QUEUE_ID --json
+pd mix queue stop --queue-id QUEUE_ID --json
+
+# Cheap discovery; request one full schema only when needed.
+pd commands list --prefix mix. --json
+pd commands describe mix.queue.start --json
+```
+
+`mix.options` defaults to a compact shortlist with evidence/warnings; `detail:true` exposes full passage/guard data. `commands list` returns concise names/descriptions; `--detail` opts into the full catalog. Request IDs make uncertain retries idempotent. Read-only field selection, event cursors and source/control revision guards are shared with the UI.
+
+Native events are available to background integrations. An event subscription alone does not automatically resume a Codex chat; do not simulate that integration by repeatedly waking a model to read an idle CLI. Interactive `--follow` remains available for people or host-owned background processes.
+
+## Develop
+
+Prerequisites: macOS with Xcode command-line tools, Node.js 22.6 or newer, Python 3 and a stable Rust toolchain. Python installs/verifies model files; playback and inference run natively in Rust. The repository's Rust wrapper supports its private `.toolchain` installation or an existing toolchain.
+
+```sh
+npm ci
+npm --prefix frontend ci
+python3 tools/ensure-beat-models.py
 bash tools/rust-env.sh npm run desktop
-bash tools/rust-env.sh npm run package
+```
+
+The model installer checks pinned sizes and SHA-256 hashes before replacement. Models are ignored by Git and are fetched before packaging; inference does not download assets during playback. See [model provenance and licenses](src-tauri/resources/beat-models/README.md).
+
+```sh
+# Optimized app and drag-to-Applications installer.
+bash tools/rust-env.sh npm run package:macos
+
+# Verify bundled identity, icon, model hashes and exclusion of runtime profiles.
+python3 tools/verify-release.py target/release/bundle/macos/PulseDeck.app
+```
+
+Build outputs live under `target/release/bundle/macos` and `target/release/bundle/dmg`. Local configuration, credentials, databases, audio, captures and validation artifacts are excluded by `.gitignore`.
+
+### Tests and validation
+
+```sh
 bash tools/rust-env.sh cargo test --workspace
 bash tools/rust-env.sh cargo clippy --workspace --all-targets -- -D warnings
 npm --prefix frontend test
-bash tools/rust-env.sh cargo run -p deck-engine --example native_smoke
-bash tools/rust-env.sh cargo run --release -p deck-engine --example beat_eval -- annotations.json
+npm --prefix frontend run build
+python3 tools/check-control-coverage.py
+python3 tools/validate-dj-skills.py
+python3 tools/test-dj-skill-packaging.py
 ```
 
-The beat evaluation scores the beat model against the DSP grid on tracks whose grid you have checked by hand: open GRID, set or confirm BPM and beat 1, press Apply grid, then export them with `bash tools/export_beat_annotations.sh > annotations.json`. Playlists named House, Hip-hop, EDM or Electronic group the results. Frontend tests need Node 22.6 or newer.
+The current regression run passed **473 Rust tests**, **73 frontend tests**, strict Clippy, control-catalog coverage and skill packaging checks (11 opt-in Rust tests ignored; the large-library timing gate excluded). Installer self-tests cover app copy/replacement, skill installation/update/backup, bundled font registration and failure preservation. A real native drag from the mounted DMG installed the app and all three skills into Applications/Codex; the installed app’s signature and bundled assets were verified.
 
-The native smoke test runs both decks silently through CoreAudio, records/decodes a WAV, and verifies transport continuity across audio stop/restart. Unit tests cover transport and routing, render-time allocations, track-load cancellation, pitch preparation, key estimation, FLX4 message parsing, XML/persistence and Spotify auth handling. These tests establish current behavior; they do not establish rekordbox performance or sound-quality parity.
+Opt-in real-library/audio tests require their documented inputs. The 100,000-row browser SQL timing test is sensitive to host load and is reported separately when excluded from a regression run. Real-song offline renders exercise transitions, recovery and silence detection; accelerated isolated queue tests establish functional integration, not wall-clock performance or subjective mixing quality.
 
-## Current limits and roadmap
+## Publish a GitHub release
 
-Tracks are decoded into RAM. Key lock/pitch preparation computes a whole-track WSOLA asset on a worker, with cancellation and a 512 MiB preparation budget. Changes can have preparation latency and briefly use varispeed; Linear resampling and simple DSP need further fidelity work. Analysis v11 runs the full MIT-licensed Beat This! final0 model locally with a BSD madmom-style temporal decoder, comparing whole-track 3/4/5/7-beat meter hypotheses over 55–300 BPM. It retains individual beat/downbeat timestamps and local tempo changes. Key candidates, spectral tempo alternatives and 4096 aligned peak/low/mid/high waveform bins remain available. Model scores are uncalibrated; independent beat/downbeat annotations and a paired rekordbox benchmark are still needed to establish accuracy parity. See [detector validation](research/beat-detector-validation.md) and [model provenance](src-tauri/resources/beat-models/README.md). Sections, automatic cues, next-track suggestions and the mix guide extend this rhythm analysis. Smart Fader/CFX are independent presets. Hardware latency, sleep/wake/device loss, long stress runs and a large-library benchmark remain pending.
+Update the app version consistently in `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` and the root npm package/lock. Push a matching `vVERSION` tag. The [release workflow](.github/workflows/release-macos.yml) checks version agreement, fetches hash-verified models, builds an Apple Silicon DMG, verifies the bundle and uses `softprops/action-gh-release@v3` to publish the installer and checksum file to GitHub Releases automatically. This follows [Flowbar’s release action](https://github.com/triptu/flowbar/blob/main/.github/workflows/build-dmg.yml), using its currently supported action version. Dispatching the workflow for an existing tag rebuilds and replaces its download assets. Build artifacts are retained for 30 days.
 
-Stems, proprietary USB/player export, Pro DJ Link, DVS, cloud sync, advanced video/lighting and complete Beat/Pad/Release FX parity are future roadmap work. This build is a functioning first implementation, not a completed replacement for every rekordbox feature.
+Only the workflow's scoped GitHub token is needed for publishing; no credentials belong in source. Apple Developer signing/notarization is not configured in this release workflow.
 
-- [Implementation status and validation](research/implementation-status.md)
-- [Full ordered roadmap](research/implementation-roadmap.md)
-- [Installed rekordbox architecture](research/installed-rekordbox-architecture.md)
-- [Architecture and parity plan](research/architecture-and-parity.md)
-- [Official FLX4 findings](research/flx4-official-findings.md)
-- [Controller resource findings](research/rekordbox-controller-resources.md)
-- [Helper findings](research/rekordbox-agent-findings.md)
-- [REA investigation coverage](research/investigation-status.md)
+## Current limits
 
-Research evidence stays separate from the original app implementation. The read-only hardware diagnostic can be run with `xcrun swift tools/probe_macos_audio_midi.swift`.
+- Tracks decode into RAM; very large sources and concurrent analysis require memory headroom.
+- Spotify deck playback is experimental and depends on native authorization and provider availability.
+- Physical headphone routing, hardware latency, device-loss/sleep stress and listening-quality comparisons need further validation.
+- Beat/downbeat/key estimates remain fallible. Phrase/vocal certainty and commercial-software parity are not claimed.
+- No general stems mixer, DVS, proprietary player/USB export, Pro DJ Link, cloud sync or complete commercial FX parity.
+- The downloadable release currently targets Apple Silicon; Intel builds are not published by this workflow.
 
-## Deck workspace and analysis cache
+## Architecture and evidence
 
-The header selects local or Spotify music. Two real three-band waveforms are stacked above the decks and center mixer; the sidebar is removed. **Open Spotify** at the bottom opens a compact bottom sheet with a draggable handle, snap heights, scrollable tracks and a Close footer. Track rows support Load A/B and drag onto a deck; dragging shrinks the sheet to expose the deck targets.
+- [Engine](crates/deck-engine/README.md) · [Analysis](crates/audio-analysis/README.md) · [Spotify adapter](crates/spotify-playback/README.md)
+- [Successor queue](research/successor-queue-2026-10-19.md) · [Audible boundaries, loudness and effects tails](research/queue-and-audio-2026-10-19.md)
+- [Single-call execution](research/single-call-moves-2026-10-19.md) · [Mixxx review](research/mixxx-architecture-and-improvements-2026-10-19.md)
+- [Implementation history](research/implementation-status.md) · [Roadmap](research/implementation-roadmap.md)
 
-Spotify song tables show cached BPM and Camelot key. **Analyze page** queues up to 50 tracks from the latest loaded page, skips current cached entries, reports progress/failures and supports cancellation. Album names open their tracks; **Analyze albums / playlists on selection** enables first-page background analysis when a collection is selected. Uncached deck loads automatically analyze and persist results. Manual BPM corrections are also cached. Results and 4096 band/peak envelopes live in a separate versioned SQLite table; provider audio remains bounded RAM for authorized playback and is not written to this cache. Pending deck loads interrupt the current batch source preparation and take priority; the page resumes afterward.
-
-The larger detailed waveforms show solid low/mid/high envelopes without a separate peak outline and keep their playheads fixed at center, including file boundaries: a new song starts in the right half. Zoom is linked in beats, markers use the native detected beat timeline and effective manual correction, and cue/loop flags remain visible. Each deck card contains its full-track preview. Automatic markers follow detected beats and downbeats. The grid editor can set bar one at the playhead or nudge its origin by 1 ms without moving playback or cues; this retains detected intervals and persists across reload and reanalysis. Explicit BPM/half/double overrides select a constant-tempo grid across the track. Musical downbeats and phrase boundaries still need verification. Synced Play queues the next native beat; ongoing sync follows local grid timing with bounded, smoothed rate correction. The CLI can queue a chosen future phrase timestamp with source guards. See [DJ CLI guide](research/cli-guide.md).
-
-Waveform playback uses a display-frame clock bounded by native transport updates. Immutable waveform metadata is fetched separately from lean transport/meters, so moving the playhead does not resend or rebuild waveform arrays. Hold the detailed waveform with the mouse to stop that deck temporarily; drag horizontally to hear forward/reverse PCM scrubbing, then release at the final position to resume its previous playing state. Scrubbing is audible while paused too, through the normal mixer/cue routing. Full previews remain click-to-seek.
-
-Spotify credentials restore once per app session from one shared Keychain bundle; playlist/deck operations use memory. Unchanged refresh tokens do not trigger Keychain writes, and rotated tokens update the existing authorized item without rereading its secret. The first upgrade migrates the two older credential entries and may ask for their access once.
-
-Audio output is independent of MIDI: MacBook speakers are the initial output and output/buffer/routing choices persist across relaunches. Connecting the FLX4 does not change the selected audio output.
-
-
-## Interface and controller browsing
-
-The performance view fills the window: a header carrying the library keys, the stacked waveform screen, then decks and mixer running to the bottom edge. The interface is styled as a field instrument: a quiet chassis, black screens with thin numerals and a red playhead, coloured EQ caps that match the waveform bands, and each jog drawn as a coloured record whose tick ring fills as the track plays. Settings → Appearance offers three finishes, Aluminium, Ivory and Graphite. Shared semantic tokens in `frontend/src/styles/tokens.css` style the decks, mixer, library tables, drawers, settings, analysis popovers and notifications. Finishes apply immediately, persist locally across restarts and preserve the three-band waveform and cue colours. Only library and settings content scroll.
-
-Turn the browse knob on the main view to focus the library footer. Press to open playlists, press again to enter songs, then press to return through playlists and the close control. Press the close control to return to the footer. Turning on playlists starts a fresh inward selection path. Shift/Back moves outward one level.
-
-The **next** key beside Spotify and Local answers "what should I play next?". It ranks local tracks and analysed Spotify tracks against the deck the crowd hears, by key (Camelot), tempo (including half and double time, within the other deck's tempo range) and energy, and offers them for the other deck with a short reason such as "8A→9A · +1.5% · energy up". Choose keep, raise or lower energy on the left; tracks already on a deck or played this session are left out. The browse knob reaches it like the other sources, and LOAD loads the selected suggestion. See [the scope](research/ai-features-scope.md).
-
-The **mix guide** in the waveform toolbar suggests when to start the waiting deck so the two songs' sections line up: a dashed START line and a countdown on the playing deck, a tinted stretch where both play, and a dotted line where the new drop lands, ideally as the old track ends. Arrows step through alternatives, and **cue B** moves the waiting deck's cue to the suggested start. You still do the mix; the guide only points out the moment.
-
-## Local configuration and secrets
-
-No environment credentials are required for normal operation. Configure the public Spotify Client ID in the app; OAuth grants remain in macOS Keychain. Access tokens stay in memory. The app does not load credentials from `.env`.
-
-A private `.env`, if needed for local development tooling, must be ignored by Git and have owner-only permissions (`chmod 600 .env`). `.env.example` contains comments only. Local application databases/settings, credentials, audio files, toolchains, build output and inspection captures are excluded from version control. Retained research evidence paths refer to private local captures, which are intentionally absent from this public repository.
-
-## License
-
-Original PulseDeck code is MIT licensed. Vendored CPAL retains its Apache-2.0 license; see [third-party notices](NOTICE.md).
-
-Full model assets are downloaded and checked by SHA-256 during desktop development/build setup (`python3 tools/ensure-beat-models.py`); the packaged app runs offline in Rust without a Python or TensorFlow runtime. Analysis executes on a worker with a private two-thread inference pool. Models and original audio are excluded from Git; versioned analysis stores event timestamps, never Spotify PCM.
-
-Broader Spotify validation exposed half/double interpretations in some sections and the default decoder’s unsupported 5/4 meter. Neural tempo-spread warnings use `bpm_ambiguous`; model scores alone do not certify a correct grid. Native playback resolves only provider-listed playable releases, retaining selected-source guards and availability restrictions; relinked releases refresh timing/envelopes rather than reusing another release’s automatic grid.
+Third-party provenance and licensing are recorded in [NOTICE.md](NOTICE.md), bundled model notices and vendored dependency license files.

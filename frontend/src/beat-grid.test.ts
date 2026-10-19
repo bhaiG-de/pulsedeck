@@ -7,7 +7,6 @@ import {
   visibleGridBeats,
   snapToGridBeat,
   gridBarBeat,
-  reportedBeatPosition,
   gridStatus,
 } from "./beat-grid.ts";
 import type { DeckSnapshot, TrackRecord } from "./types.ts";
@@ -82,19 +81,7 @@ test("manual source anchor, offset and BPM scaling mirror native event clock", (
         1e-9,
     );
 });
-test("native phase takes priority over uniform approximations and invalid grids abstain", () => {
-  assert.equal(
-    reportedBeatPosition({ ...deck, position_seconds: 2, beat_position: 3.42 }),
-    3.42,
-  );
-  assert.equal(
-    reportedBeatPosition({
-      ...deck,
-      beatgrid_valid: false,
-      beat_position: 3.42,
-    }),
-    null,
-  );
+test("invalid grids abstain from markers, snapping and bar labels", () => {
   const grid = deckBeatGrid({ ...deck, beatgrid_valid: false });
   assert.deepEqual(visibleGridBeats(grid, 0, 5, 5), []);
   assert.equal(snapToGridBeat(grid, 2.1, 5), 2.1);

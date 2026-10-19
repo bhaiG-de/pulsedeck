@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct TrackAnalysis {
+    #[serde(default)]
+    pub audio_measurements: Option<audio_analysis::AudioMeasurements>,
     pub id: String,
     pub path: String,
     pub title: String,
@@ -48,13 +50,14 @@ pub struct TrackAnalysis {
     /// `None` means the model has not run on this source yet.
     #[serde(default)]
     pub beat_model: Option<audio_analysis::BeatModelStage>,
-    /// Song sections cut on the track's grid; `None` until analysed or when
-    /// the grid has no known beat 1.
     #[serde(default)]
-    pub sections: Option<audio_analysis::SectionStage>,
-    /// Cues PulseDeck placed from the sections, so they stay distinguishable.
+    pub cue_points: Vec<audio_analysis::CuePoint>,
     #[serde(default)]
-    pub auto_cues: Option<audio_analysis::AutoCues>,
+    pub source_fingerprint: Option<String>,
+    #[serde(default)]
+    pub source_release: Option<String>,
+    #[serde(default)]
+    pub analysis_stages: audio_analysis::AnalysisStages,
 }
 fn recording_allowed_default() -> bool {
     true
@@ -112,6 +115,51 @@ pub enum LoopBoundary {
     Out,
 }
 
+/// Bounds for automatic Sync adaptation; explicit tempo/jog ownership is separate.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SyncRateLimits {
+    pub min_rate: f64,
+    pub max_rate: f64,
+    /// Playback-rate units per second (0.01 means one percentage point/second).
+    pub max_slew_per_second: f64,
+}
+impl SyncRateLimits {
+    pub fn validate(self) -> Result<(), String> {
+        if !self.min_rate.is_finite()
+            || !self.max_rate.is_finite()
+            || !(0.1..=2.0).contains(&self.min_rate)
+            || !(self.min_rate..=2.0).contains(&self.max_rate)
+            || !self.max_slew_per_second.is_finite()
+            || !(0.000_001..=2.0).contains(&self.max_slew_per_second)
+        {
+            return Err("Sync rate limits require 0.1 <= min_rate <= max_rate <= 2 and a positive max_slew_per_second <= 2".into());
+        }
+        Ok(())
+    }
+    pub fn contains(self, rate: f64) -> bool {
+        rate.is_finite() && rate >= self.min_rate - 1e-9 && rate <= self.max_rate + 1e-9
+    }
+}
+
+/// Convert an absolute playback target without changing the source beat grid.
+pub fn playback_tempo_percent(reference: Option<f64>, bpm: f64) -> Result<f64, &'static str> {
+    if !bpm.is_finite() || !(30.0..=300.0).contains(&bpm) {
+        return Err("Playback BPM must be 30..300");
+    }
+    let reference = reference
+        .filter(|b| b.is_finite() && *b > 0.)
+        .ok_or("Playback BPM requires a valid loaded beat-grid BPM")?;
+    let percent = (bpm / reference - 1.) * 100.;
+    if !(-90.0..=100.0).contains(&percent) {
+        return Err("Playback BPM requires a tempo outside -90..100 percent");
+    }
+    Ok(percent)
+}
+
+pub const CONTROL_TARGET_COUNT: usize = 23;
+pub const COMMAND_TARGET_COUNT: usize = CONTROL_TARGET_COUNT + 2;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ControlTarget {
@@ -126,8 +174,35 @@ pub enum ControlTarget {
     EqLow { deck: usize },
     EqMid { deck: usize },
     EqHigh { deck: usize },
+    TempoPercent { deck: usize },
+    Echo { deck: usize },
+    Reverb { deck: usize },
 }
 impl ControlTarget {
+    pub(crate) fn from_index(i: usize) -> Self {
+        match i {
+            0 => Self::Crossfader,
+            1 => Self::MasterGain,
+            2 => Self::CueGain,
+            3 => Self::CueMix,
+            4 => Self::SamplerGain,
+            17 | 18 => Self::TempoPercent { deck: i - 17 },
+            19 | 20 => Self::Echo { deck: i - 19 },
+            21 | 22 => Self::Reverb { deck: i - 21 },
+            _ => {
+                let deck = (i - 5) / 6;
+                match (i - 5) % 6 {
+                    0 => Self::ChannelFader { deck },
+                    1 => Self::DeckGain { deck },
+                    2 => Self::Filter { deck },
+                    3 => Self::EqLow { deck },
+                    4 => Self::EqMid { deck },
+                    _ => Self::EqHigh { deck },
+                }
+            }
+        }
+    }
+
     pub fn deck(self) -> Option<usize> {
         match self {
             Self::ChannelFader { deck }
@@ -135,7 +210,10 @@ impl ControlTarget {
             | Self::Filter { deck }
             | Self::EqLow { deck }
             | Self::EqMid { deck }
-            | Self::EqHigh { deck } => Some(deck),
+            | Self::EqHigh { deck }
+            | Self::TempoPercent { deck }
+            | Self::Echo { deck }
+            | Self::Reverb { deck } => Some(deck),
             _ => None,
         }
     }
@@ -152,13 +230,20 @@ impl ControlTarget {
             Self::EqLow { deck } => 8 + deck * 6,
             Self::EqMid { deck } => 9 + deck * 6,
             Self::EqHigh { deck } => 10 + deck * 6,
+            Self::TempoPercent { deck } => 17 + deck,
+            Self::Echo { deck } => 19 + deck,
+            Self::Reverb { deck } => 21 + deck,
         }
     }
     fn valid_value(self, value: f32) -> bool {
         value.is_finite()
             && match self {
+                Self::TempoPercent { .. } => (-90.0..=100.0).contains(&value),
                 Self::Crossfader | Self::Filter { .. } => (-1.0..=1.0).contains(&value),
-                Self::ChannelFader { .. } | Self::CueMix => (0.0..=1.0).contains(&value),
+                Self::Echo { .. }
+                | Self::Reverb { .. }
+                | Self::ChannelFader { .. }
+                | Self::CueMix => (0.0..=1.0).contains(&value),
                 _ => (0.0..=2.0).contains(&value),
             }
     }
@@ -166,6 +251,8 @@ impl ControlTarget {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DeckSnapshot {
+    #[serde(default)]
+    pub grid_revision: u64,
     pub track: Option<TrackAnalysis>,
     pub playing: bool,
     pub position_seconds: f64,
@@ -175,10 +262,29 @@ pub struct DeckSnapshot {
     #[serde(default)]
     pub position_revision: u64,
     pub playback_rate: f64,
+    pub actual_playback_rate: f64,
+    pub playback_bpm: Option<f64>,
+    pub local_bpm: Option<f64>,
+    pub actual_playback_bpm: Option<f64>,
+    pub target_playback_bpm: Option<f64>,
     pub tempo_percent: f64,
     pub gain: f32,
+    #[serde(default = "recording_allowed_default")]
+    pub normalization_enabled: bool,
+    #[serde(default)]
+    pub normalization_gain_db: f32,
+    #[serde(default)]
+    pub fx_tail_active: bool,
+    #[serde(default)]
+    pub fx_tail_peak: [f32; 2],
+    #[serde(default)]
+    pub restricted_tail_active: bool,
     pub channel_fader: f32,
     pub sync_enabled: bool,
+    #[serde(default)]
+    pub sync_rate_limits: Option<SyncRateLimits>,
+    #[serde(default)]
+    pub sync_rate_limited: bool,
     pub is_master: bool,
     pub eq_low: f32,
     pub eq_mid: f32,
@@ -220,8 +326,42 @@ pub struct DeckSnapshot {
     pub preparation_pending: bool,
 }
 
+/// Native output and continuous processor diagnostics. Peak protection is a
+/// sample-peak limiter with a conservative -1 dBFS ceiling, not a promise that
+/// pathological intersample peaks or upstream source clipping can be repaired.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct AudioQualitySnapshot {
+    pub headroom_db: f32,
+    pub output_latency_frames: u32,
+    pub master_input_peak: [f32; 2],
+    pub cue_input_peak: [f32; 2],
+    pub master_gain_reduction_db: f32,
+    pub cue_gain_reduction_db: f32,
+    pub master_limited_frames: u64,
+    pub cue_limited_frames: u64,
+    pub invalid_signal_frames: u64,
+    pub processor_resets: [u64; 2],
+    pub processor_blocks: [u64; 2],
+    pub callback_count: u64,
+    pub callback_max_ns: u64,
+    pub callback_deadline_exceeded: u64,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EngineSnapshot {
+    #[serde(default)]
+    pub control_revision: u64,
+    #[serde(default)]
+    pub deck_control_revisions: [u64; 2],
+    #[serde(default)]
+    #[serde(deserialize_with = "read_control_revisions")]
+    pub target_control_revisions: [u64; COMMAND_TARGET_COUNT],
+    #[serde(default)]
+    pub engine_epoch: u64,
+    #[serde(default)]
+    pub scheduled_batch: crate::scheduled::ScheduledBatchSnapshot,
+    #[serde(default)]
+    pub audio_quality: AudioQualitySnapshot,
     pub load_revisions: [u64; 2],
     pub sample_rate: u32,
     pub output_channels: u16,
@@ -238,13 +378,18 @@ pub struct EngineSnapshot {
     pub cue_mix: f32,
     pub sampler_gain: f32,
     pub sampler_positions_seconds: [Option<f64>; 16],
-    pub active_ramps: [bool; 17],
+    #[serde(deserialize_with = "read_active_ramps")]
+    pub active_ramps: [bool; CONTROL_TARGET_COUNT],
     pub decks: [DeckSnapshot; 2],
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum EngineCommand {
+    SetSyncRateLimits {
+        deck: usize,
+        limits: Option<SyncRateLimits>,
+    },
     Ramp {
         target: ControlTarget,
         value: f32,
@@ -395,6 +540,11 @@ pub enum EngineCommand {
         #[schemars(range(min = -90, max = 100))]
         percent: f64,
     },
+    SetPlaybackBpm {
+        deck: usize,
+        #[schemars(range(min = 30, max = 300))]
+        bpm: f64,
+    },
     Jog {
         deck: usize,
         delta_seconds: f64,
@@ -453,6 +603,10 @@ pub enum EngineCommand {
         deck: usize,
         enabled: bool,
     },
+    SetNormalization {
+        deck: usize,
+        enabled: bool,
+    },
     SetFx {
         deck: usize,
         #[schemars(range(min = 0, max = 1))]
@@ -494,12 +648,14 @@ impl EngineCommand {
             | SetLoop { deck, .. }
             | BeatJump { deck, .. }
             | SetTempo { deck, .. }
+            | SetPlaybackBpm { deck, .. }
             | Jog { deck, .. }
             | Sync { deck }
             | SetDeckGain { deck, .. }
             | SetEq { deck, .. }
             | SetFilter { deck, .. }
             | SetHeadphoneCue { deck, .. }
+            | SetNormalization { deck, .. }
             | SetFx { deck, .. }
             | SetBpm { deck, .. }
             | SetBeatgrid { deck, .. }
@@ -507,6 +663,7 @@ impl EngineCommand {
             | RestoreHotCues { deck, .. }
             | CuePress { deck, .. }
             | SetSync { deck, .. }
+            | SetSyncRateLimits { deck, .. }
             | SetMaster { deck }
             | SetChannelFader { deck, .. }
             | SetLoopEdit { deck, .. }
@@ -532,6 +689,10 @@ impl EngineCommand {
             return Err("Deck must be 0 or 1".into());
         }
         match self {
+            SetSyncRateLimits {
+                limits: Some(limits),
+                ..
+            } => limits.validate()?,
             PlayQuantized {
                 deck,
                 clock,
@@ -633,7 +794,9 @@ impl EngineCommand {
             {
                 return Err("Pitch must be -12..12 semitones".into())
             }
-            SetBpm { bpm, .. } if !bpm.is_finite() || !(30.0..=300.0).contains(bpm) => {
+            SetPlaybackBpm { bpm, .. } | SetBpm { bpm, .. }
+                if !bpm.is_finite() || !(30.0..=300.0).contains(bpm) =>
+            {
                 return Err("BPM must be 30..300".into())
             }
             SetChannelFader { value, .. } if !value.is_finite() || !(0.0..=1.0).contains(value) => {
@@ -678,4 +841,31 @@ impl EngineCommand {
         }
         Ok(())
     }
+}
+
+fn read_active_ramps<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<[bool; CONTROL_TARGET_COUNT], D::Error> {
+    let values = Vec::<bool>::deserialize(d)?;
+    if values.len() != 19 && values.len() != CONTROL_TARGET_COUNT {
+        return Err(serde::de::Error::custom("Invalid ramp target count"));
+    }
+    let mut out = [false; CONTROL_TARGET_COUNT];
+    out[..values.len()].copy_from_slice(&values);
+    Ok(out)
+}
+fn read_control_revisions<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<[u64; COMMAND_TARGET_COUNT], D::Error> {
+    let values = Vec::<u64>::deserialize(d)?;
+    let mut out = [0; COMMAND_TARGET_COUNT];
+    if values.len() == 21 {
+        out[..19].copy_from_slice(&values[..19]);
+        out[CONTROL_TARGET_COUNT..].copy_from_slice(&values[19..]);
+    } else if values.len() == COMMAND_TARGET_COUNT {
+        out.copy_from_slice(&values);
+    } else {
+        return Err(serde::de::Error::custom("Invalid command target count"));
+    }
+    Ok(out)
 }

@@ -9,8 +9,9 @@ use rustfft::{num_complex::Complex32, FftPlanner};
 use serde::{Deserialize, Serialize};
 
 /// Version of the stored beat-model stage. Bump when the model, its
-/// preprocessing, the grid fit or the sections cut in the same pass change in a
-/// way that should re-run analysis. 2: song sections.
+/// preprocessing or the grid fit changes in a way that needs fresh timing.
+/// Version 2 is retained so removing structural analysis does not invalidate
+/// compatible persisted neural timing. Beat/downbeat inference is unchanged.
 pub const BEAT_MODEL_VERSION: u32 = 3;
 
 const SR: u32 = 22_050;

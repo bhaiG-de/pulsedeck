@@ -24,8 +24,16 @@ Implemented:
 - Separate master and headphone buses, pre-channel-fader cue selection and cue/master
   mix, with explicit zero-based output-channel maps. Four physical output channels
   are needed for independent stereo headphones and master.
-- Worker-prepared WSOLA keylock and independent semitone pitch shift. Preparation
-  can be cancelled when the target changes. The original timeline stays authoritative.
+- Continuous Signalsmith Stretch keylock and independent semitone pitch shift.
+  Fixed native buffers process 64 output frames at a time; sync/tempo automation
+  changes processor state without rebuilding an entire track or switching to
+  pitch-changing original audio. Source clocks remain authoritative and declared
+  FFT latency is compensated by pre-rolling future decoded RAM.
+- 96-tap, interpolated polyphase windowed-sinc reads for deck/sample playback,
+  sample-rate conversion and reverse scratching, with precomputed anti-alias banks.
+- Six dB of bus headroom and independent stereo-linked master/headphone lookahead
+  protection. Protected output has a -1 dBFS sample ceiling and 128 frames of common
+  output delay (2.67 ms at 48 kHz). Float WAV receives the protected master tap.
 - Feedback echo, multitap reverb, eight original synthesized one-shot samples and
   off-thread sample-file loading.
 - Float32 stereo WAV recording from the limited master output. A four-second ring
@@ -44,17 +52,22 @@ must be implemented in a real provider before service tracks can be loaded.
 
 The DSP algorithms are independent implementations; EQ, effects, key analysis,
 beat detection and stretching have not been calibrated against rekordbox.
-Analysis version 2 documents its public DSP references and uncertainty in
-[`audio-analysis/README.md`](../audio-analysis/README.md). WSOLA
-prepares an entire decoded track in memory, so tempo/pitch changes have preparation
-latency and can temporarily use varispeed playback while `preparation_pending` is
-true. It is not an instantaneous streaming keylock algorithm, and polyphonic quality
-needs listening tests. Memory scales with track length and prepared copies; preparation rejects work that
-exceeds its 512 MiB temporary cache budget. Varispeed playback uses linear
-interpolation and needs calibrated band-limited resampling for fidelity parity. Native
-latency depends on the selected CoreAudio device and buffer size. The snapshot's
-historical `underruns` field counts CPAL stream/device errors, not measured hardware
-buffer underruns. Recording uses classic WAV and stops with an error before 4 GiB.
+Analysis references and uncertainty are documented in
+[`audio-analysis/README.md`](../audio-analysis/README.md). Native time/pitch DSP
+uses pinned MIT upstream headers with license notices in [`vendor/`](vendor/).
+Source PCM still resides in RAM, but there are no full-track prepared copies,
+cache-generation worker, or asynchronous tempo/pitch readiness delay.
+
+Protection is a sample-peak limiter with conservative margin; it does not promise
+lossless redlining, reconstruct already clipped sources, or guarantee pathological
+intersample peaks. Comparative polyphonic quality and attached-hardware listening
+remain measurements, not vendor-parity claims. EQ and effects remain independently
+implemented. The snapshot's historical `underruns` field counts CPAL stream/device
+errors, not hardware underruns. `audio_quality` separately reports pre-protection
+peaks, gain reduction, limited/invalid frame counts, processor blocks/resets,
+callback timing/deadline exceedances and added output delay. Existing master/cue
+peaks show protected output. Callback timing is a software deadline measurement.
+Recording uses classic float WAV and stops with an error before 4 GiB.
 A recording filename must be new to avoid silently overwriting an existing file.
 
 ## Validation
@@ -63,16 +76,27 @@ From the workspace root:
 
 ```sh
 bash tools/rust-env.sh cargo test -p deck-engine
+bash tools/check-audio-allocations.sh
+bash tools/rust-env.sh cargo test -p deck-engine benchmark_two_continuous_keylocked_decks -- --ignored --nocapture
 bash tools/rust-env.sh cargo clippy -p deck-engine --all-targets --no-deps -- -D warnings
 bash tools/rust-env.sh cargo run -p deck-engine --example native_smoke
 ```
 
 Tests exercise decoded WAV input, cue/loop/EOF timing, sync and rate math,
 headphone independence, source retirement, bounded callback allocation behavior,
-touch scratch, sampler output, tone-preserving stretch duration, cancellation,
+touch scratch, sampler output, changing-rate keylock, independent pitch, latency-compensated impulses,
+passband/alias rejection, linked limiting, protected output diagnostics,
 and recorded-WAV decoding. The repeatable native smoke runs both decks with the master muted, checks native
 clock progress and stop/restart continuity, records and decodes a valid silent WAV,
 and reports its CoreAudio device/configuration. It passed locally on MacBook Pro
 Speakers at 48 kHz, with a requested 256-frame buffer and zero reported stream errors.
 Controller round-trip behavior and comparative latency
 still require the actual DDJ-FLX4 and an independent audio capture.
+
+## Programme level and independent effects returns
+
+Deck loads apply the cached/full-PCM programme correction before EQ/FX, separately from the user trim. `set_normalization {deck,enabled}` smoothly bypasses/re-enables it; the mode persists across loads on that deck. Snapshots expose `normalization_enabled` and `normalization_gain_db`. Legacy sources receive current measurements during decoded-source preparation.
+
+Echo and reverb use fixed-capacity main and headphone send/return buses. The main sends follow both channel fader and crossfader; the headphone sends are pre-fader. Closing sends, pausing, replacing or unloading a source leaves existing return audio to decay, bounded to eight seconds after the final nonzero send. Returns remain under master gain and output protection. `fx_tail_active`, `fx_tail_peak` and `restricted_tail_active` expose main-return state; service-source tails retain recording restrictions after source replacement until expiry. No allocations or source dereferences are needed to sustain a retired source's return.
+
+Echo/Reverb are native ramp targets with guarded endpoints and recovery; existing target indices are preserved and old snapshot arrays are migrated on read. The assisted `echo_out` and `reverb_exit` recipes close their sends while clearing the dry carrier, leaving the bounded return independent of subsequent source preparation.

@@ -28,7 +28,11 @@
     "example_args": {},
     "input_schema": {
       "type": "object",
-      "properties": {},
+      "properties": {
+        "library": {
+          "type": "boolean"
+        }
+      },
       "additionalProperties": false,
       "required": []
     },
@@ -129,7 +133,7 @@
     "command": "deck.load",
     "example_args": {
       "deck": "A",
-      "track": "local:42"
+      "track": "spotify:track:5ImCVtO1gvcD1ttdG5SrQT"
     },
     "input_schema": {
       "type": "object",
@@ -163,6 +167,10 @@
         },
         "replace_playing": {
           "type": "boolean"
+        },
+        "detail": {
+          "type": "boolean",
+          "description": "Include full analysis arrays in the ready receipt. Default returns compact identity, analysis summary and load guards."
         }
       },
       "additionalProperties": false,
@@ -170,8 +178,8 @@
         "deck"
       ]
     },
-    "description": "deck load",
-    "example_cli": "pulsedeckctl call deck.load --args '{\"deck\":\"A\",\"track\":\"local:42\"}' --json"
+    "description": "Load one source with track (local:ID or spotify:track:ID), uri (Spotify) or path (local). Waits for readiness; detail:true includes full analysis.",
+    "example_cli": "pulsedeckctl call deck.load --args '{\"deck\":\"A\",\"track\":\"spotify:track:5ImCVtO1gvcD1ttdG5SrQT\"}' --json"
   },
   {
     "command": "deck.demo",
@@ -366,14 +374,30 @@
           "items": {
             "type": "string"
           }
+        },
+        "dialog": {
+          "type": "boolean"
+        },
+        "folder": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "files",
+            "folder"
+          ]
+        },
+        "summary": {
+          "type": "boolean",
+          "description": "Return only track IDs; avoids returning cached analysis for bulk imports",
+          "default": false
         }
       },
       "additionalProperties": false,
-      "required": [
-        "paths"
-      ]
+      "required": []
     },
-    "description": "library import",
+    "description": "Register files/folders from metadata without audio analysis. Set summary=true for bounded IDs-only bulk receipts; full records remain available by default. Missing analysis completes on deck loading before playback.",
     "example_cli": "pulsedeckctl call library.import --args '{\"paths\":[\"/music/song.flac\"]}' --json"
   },
   {
@@ -415,6 +439,51 @@
         },
         "waveform": {
           "type": "boolean"
+        },
+        "bpm_min": {
+          "type": "number",
+          "minimum": 0
+        },
+        "bpm_max": {
+          "type": "number",
+          "minimum": 0
+        },
+        "filters": {
+          "type": "object",
+          "properties": {
+            "my_tags": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              },
+              "maxItems": 512
+            },
+            "tag_mode": {
+              "type": "string",
+              "enum": [
+                "and",
+                "or"
+              ]
+            },
+            "rating_min": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 5
+            },
+            "rating_max": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 5
+            },
+            "colors": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 64
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false,
@@ -479,12 +548,18 @@
       "properties": {
         "path": {
           "type": "string"
+        },
+        "dialog": {
+          "type": "boolean"
+        },
+        "summary": {
+          "type": "boolean",
+          "default": false,
+          "description": "Return stable ID receipts without cached waveforms/analysis."
         }
       },
       "additionalProperties": false,
-      "required": [
-        "path"
-      ]
+      "required": []
     },
     "description": "library import_xml",
     "example_cli": "pulsedeckctl call library.import_xml --args '{\"path\":\"/music/library.xml\"}' --json"
@@ -502,12 +577,13 @@
         },
         "overwrite": {
           "type": "boolean"
+        },
+        "dialog": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false,
-      "required": [
-        "path"
-      ]
+      "required": []
     },
     "description": "library export_xml",
     "example_cli": "pulsedeckctl call library.export_xml --args '{\"path\":\"/tmp/export.xml\"}' --json"
@@ -713,6 +789,15 @@
           "minimum": 0
         },
         "cues": {
+          "type": "object"
+        },
+        "point": {
+          "type": "object"
+        },
+        "delete_id": {
+          "type": "string"
+        },
+        "bind": {
           "type": "object"
         }
       },
@@ -945,6 +1030,9 @@
           "items": {
             "type": "integer"
           }
+        },
+        "selected_track_id": {
+          "type": "integer"
         }
       },
       "additionalProperties": false,
@@ -1035,12 +1123,14 @@
         },
         "path": {
           "type": "string"
+        },
+        "dialog": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false,
       "required": [
-        "slot",
-        "path"
+        "slot"
       ]
     },
     "description": "sampler load",
@@ -1071,12 +1161,13 @@
         },
         "overwrite": {
           "type": "boolean"
+        },
+        "dialog": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false,
-      "required": [
-        "path"
-      ]
+      "required": []
     },
     "description": "recording start",
     "example_cli": "pulsedeckctl call recording.start --args '{\"path\":\"/tmp/mix.wav\"}' --json"
@@ -1455,12 +1546,34 @@
         "since": {
           "type": "integer",
           "minimum": 0
+        },
+        "wait_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 60000
+        },
+        "job_id": {
+          "type": "string"
+        },
+        "operation_id": {
+          "type": "string"
+        },
+        "queue_id": {
+          "type": "string"
+        },
+        "types": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {
+            "type": "string"
+          }
         }
       },
       "additionalProperties": false,
       "required": []
     },
-    "description": "events get",
+    "description": "Read or wait for events after a cursor. wait_ms sleeps until a matching event, gap or timeout; optional job_id filters queue events. operation_id filters move lifecycle feedback.",
     "example_cli": "pulsedeckctl call events.get --args '{\"since\":0}' --json"
   },
   {
@@ -1477,11 +1590,22 @@
       "properties": {
         "steps": {
           "type": "array",
-          "minItems": 1,
+          "minItems": 0,
           "maxItems": 256,
           "items": {
             "type": "object"
           }
+        },
+        "schedule": {
+          "type": "object",
+          "description": "Native scheduled mode: operation_id,clock,completion_event,recovery; omitted source/position/grid/engine/control guards and arm_before_event are captured atomically by the server. open:true enables bounded append/invalidate/seal with expiry_seconds; steps have stable action_id and at_event."
+        },
+        "open": {
+          "type": "boolean",
+          "description": "Keep an immediate software-command batch open for later append/update/removal. No handover document, expiry or final fader policy."
+        },
+        "operation_id": {
+          "type": "string"
         }
       },
       "additionalProperties": false,
@@ -1489,25 +1613,66 @@
         "steps"
       ]
     },
-    "description": "batch validate",
+    "description": "Validate or arm a source guarded native scheduled batch, or execute an immediate sequential batch A step may instead have commands:[{command,args},...] (2..64 renderer-only members) and one when condition: the group registers and updates atomically, launches all distinct control targets on one audio frame, preserves independent ramp durations, and completes after every member. when.after a group waits for its final member completion.",
     "example_cli": "pulsedeckctl call batch.validate --args '{\"steps\":[{\"command\":\"state.get\"}]}' --json"
   },
   {
     "command": "batch.run",
     "example_args": {
-      "steps": [
-        {
-          "command": "deck.load",
-          "args": {
-            "deck": "A",
-            "demo": true
+      "open": true,
+      "operation_id": "session-1",
+      "steps": []
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "steps": {
+          "type": "array",
+          "minItems": 0,
+          "maxItems": 256,
+          "items": {
+            "type": "object"
           }
         },
+        "schedule": {
+          "type": "object",
+          "description": "Native scheduled mode: operation_id,clock,completion_event,recovery; omitted source/position/grid/engine/control guards and arm_before_event are captured atomically by the server. open:true enables bounded append/invalidate/seal with expiry_seconds; steps have stable action_id and at_event."
+        },
+        "open": {
+          "type": "boolean",
+          "description": "Keep an immediate software-command batch open for later append/update/removal. No handover document, expiry or final fader policy."
+        },
+        "operation_id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "steps"
+      ]
+    },
+    "description": "Start a software-command batch. open:true keeps it mutable and idle until appended commands arrive. Commands execute through the existing unified interface; native when conditions own timing. Optional schedule retains legacy explicit native plans. A step may instead have commands:[{command,args},...] (2..64 renderer-only members) and one when condition: the group registers and updates atomically, launches all distinct control targets on one audio frame, preserves independent ramp durations, and completes after every member. when.after a group waits for its final member completion.",
+    "example_cli": "pulsedeckctl call batch.run --args '{\"open\":true,\"operation_id\":\"session-1\",\"steps\":[]}' --json"
+  },
+  {
+    "command": "batch.append",
+    "example_args": {
+      "id": "job-id",
+      "patch_id": "add-1",
+      "expected_revision": 1,
+      "steps": [
         {
+          "action_id": "play-b",
           "command": "engine.command",
           "args": {
             "type": "play",
-            "deck": "A"
+            "deck": "B"
+          },
+          "when": {
+            "type": "after_beats",
+            "clock": "A",
+            "beats": 16,
+            "quantize": 4
           }
         }
       ]
@@ -1515,6 +1680,18 @@
     "input_schema": {
       "type": "object",
       "properties": {
+        "id": {
+          "type": "string"
+        },
+        "patch_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
         "steps": {
           "type": "array",
           "minItems": 1,
@@ -1522,22 +1699,126 @@
           "items": {
             "type": "object"
           }
+        },
+        "invalidate_action_ids": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "string"
+          },
+          "description": "Atomically invalidate pending actions and append replacements in the same CAS transaction."
+        },
+        "replacements": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Optional invalidated action ID to appended replacement ID map. Pending dependents atomically follow the replacement; started dependents and cycles reject the entire patch."
         }
       },
-      "additionalProperties": false,
       "required": [
+        "id",
+        "patch_id",
+        "expected_revision",
         "steps"
+      ],
+      "additionalProperties": false
+    },
+    "description": "Register software commands immediately. Each step is a canonical Request plus action_id and optional when; when.after names a readiness/executed dependency. Timing supports now, at_event, at_seconds, after_beats and after_seconds. invalidate_action_ids atomically replaces pending commands; no musical policy or handover document. A step may instead have commands:[{command,args},...] (2..64 renderer-only members) and one when condition: the group registers and updates atomically, launches all distinct control targets on one audio frame, preserves independent ramp durations, and completes after every member. when.after a group waits for its final member completion. replacements optionally retargets pending dependents from invalidated IDs to appended replacement IDs atomically; started dependents and cycles reject the patch. All steps register in one revision only after the entire append validates; a rejected append registers none of its steps. Dependencies may name another step in the same append, including a later step. Reusing an accepted action ID never replaces its original work.",
+    "example_cli": "pulsedeckctl call batch.append --args '{\"id\":\"job-id\",\"patch_id\":\"add-1\",\"expected_revision\":1,\"steps\":[{\"action_id\":\"play-b\",\"command\":\"engine.command\",\"args\":{\"type\":\"play\",\"deck\":\"B\"},\"when\":{\"type\":\"after_beats\",\"clock\":\"A\",\"beats\":16,\"quantize\":4}}]}' --json"
+  },
+  {
+    "command": "batch.invalidate",
+    "example_args": {
+      "id": "job-id",
+      "patch_id": "invalidate-1",
+      "expected_revision": 1,
+      "action_ids": [
+        "start-b"
       ]
     },
-    "description": "batch run",
-    "example_cli": "pulsedeckctl call batch.run --args '{\"steps\":[{\"command\":\"deck.load\",\"args\":{\"deck\":\"A\",\"demo\":true}},{\"command\":\"engine.command\",\"args\":{\"type\":\"play\",\"deck\":\"A\"}}]}' --json"
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "patch_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "action_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "patch_id",
+        "expected_revision",
+        "action_ids"
+      ],
+      "additionalProperties": false
+    },
+    "description": "Invalidate pending actions atomically without replaying or erasing applied actions. Invalidate complete same-event/dependency groups.",
+    "example_cli": "pulsedeckctl call batch.invalidate --args '{\"id\":\"job-id\",\"patch_id\":\"invalidate-1\",\"expected_revision\":1,\"action_ids\":[\"start-b\"]}' --json"
+  },
+  {
+    "command": "batch.seal",
+    "example_args": {
+      "id": "job-id",
+      "patch_id": "seal-1",
+      "expected_revision": 1
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "patch_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "completion_event": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "patch_id",
+        "expected_revision"
+      ],
+      "additionalProperties": false
+    },
+    "description": "Optionally close a software-command job after queued work drains. Session stop uses jobs.cancel to cancel only its owned pending commands. Explicit legacy scheduled plans may supply completion_event.",
+    "example_cli": "pulsedeckctl call batch.seal --args '{\"id\":\"job-id\",\"patch_id\":\"seal-1\",\"expected_revision\":1}' --json"
   },
   {
     "command": "jobs.list",
     "example_args": {},
     "input_schema": {
       "type": "object",
-      "properties": {},
+      "properties": {
+        "detail": {
+          "type": "boolean",
+          "description": "Include original plan and mutation history; default compact action receipts and next due."
+        }
+      },
       "additionalProperties": false,
       "required": []
     },
@@ -1554,6 +1835,10 @@
       "properties": {
         "id": {
           "type": "string"
+        },
+        "detail": {
+          "type": "boolean",
+          "description": "Include original plan and mutation history; default compact action receipts and next due."
         }
       },
       "additionalProperties": false,
@@ -1574,6 +1859,13 @@
       "properties": {
         "id": {
           "type": "string"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "yield",
+            "stabilize"
+          ]
         }
       },
       "additionalProperties": false,
@@ -1601,11 +1893,25 @@
     "example_args": {},
     "input_schema": {
       "type": "object",
-      "properties": {},
+      "properties": {
+        "prefix": {
+          "type": "string"
+        },
+        "names_only": {
+          "type": "boolean"
+        },
+        "detail": {
+          "type": "boolean",
+          "description": "Include full schemas, engine catalog and UI capabilities; default is concise discovery."
+        },
+        "search": {
+          "type": "string"
+        }
+      },
       "additionalProperties": false,
       "required": []
     },
-    "description": "commands list",
+    "description": "List concise command names/descriptions; filter by prefix/search. Full schemas require detail:true; use commands.describe for one method.",
     "example_cli": "pulsedeckctl call commands.list --args '{}' --json"
   },
   {
@@ -1613,7 +1919,21 @@
     "example_args": {},
     "input_schema": {
       "type": "object",
-      "properties": {},
+      "properties": {
+        "prefix": {
+          "type": "string"
+        },
+        "names_only": {
+          "type": "boolean"
+        },
+        "detail": {
+          "type": "boolean",
+          "description": "Include full schemas, engine catalog and UI capabilities; default is concise discovery."
+        },
+        "search": {
+          "type": "string"
+        }
+      },
       "additionalProperties": false,
       "required": []
     },
@@ -1630,6 +1950,10 @@
       "properties": {
         "name": {
           "type": "string"
+        },
+        "action": {
+          "type": "string",
+          "description": "For engine.command, return only this typed native action schema and example."
         }
       },
       "additionalProperties": false,
@@ -1815,59 +2139,6 @@
     "example_cli": "pulsedeckctl library track tags local:1 --tags '[\"Afro house\",\"chill vibe\"]' --json"
   },
   {
-    "command": "analysis.settings.get",
-    "example_args": {},
-    "input_schema": {
-      "type": "object",
-      "properties": {},
-      "additionalProperties": false,
-      "required": []
-    },
-    "description": "Read section and automatic cue settings",
-    "example_cli": "pulsedeckctl call analysis.settings.get --args '{}' --json"
-  },
-  {
-    "command": "analysis.settings.set",
-    "example_args": {
-      "settings": {
-        "beat_model_spotify": true,
-        "auto_hot_cues": true,
-        "auto_memory_cues": true
-      }
-    },
-    "input_schema": {
-      "type": "object",
-      "properties": {
-        "settings": {
-          "type": "object",
-          "properties": {
-            "beat_model_spotify": {
-              "type": "boolean"
-            },
-            "auto_hot_cues": {
-              "type": "boolean"
-            },
-            "auto_memory_cues": {
-              "type": "boolean"
-            }
-          },
-          "additionalProperties": false,
-          "required": [
-            "beat_model_spotify",
-            "auto_hot_cues",
-            "auto_memory_cues"
-          ]
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "settings"
-      ]
-    },
-    "description": "Set section and automatic cue settings",
-    "example_cli": "pulsedeckctl call analysis.settings.set --args '{\"settings\":{\"beat_model_spotify\":true,\"auto_hot_cues\":true,\"auto_memory_cues\":true}}' --json"
-  },
-  {
     "command": "library.analysis.update",
     "example_args": {},
     "input_schema": {
@@ -1876,8 +2147,8 @@
       "additionalProperties": false,
       "required": []
     },
-    "description": "Update local song sections from Beat This! timing",
-    "example_cli": "pulsedeckctl call library.analysis.update --args '{}' --json"
+    "description": "Explicitly analyze missing local beat, key and waveform data",
+    "example_cli": "pulsedeckctl library analysis update --no-wait --json"
   },
   {
     "command": "library.analysis.cancel",
@@ -1888,49 +2159,8 @@
       "additionalProperties": false,
       "required": []
     },
-    "description": "Cancel library section analysis",
-    "example_cli": "pulsedeckctl call library.analysis.cancel --args '{}' --json"
-  },
-  {
-    "command": "deck.sections.vocabulary",
-    "example_args": {
-      "deck": "A",
-      "vocabulary": "dance"
-    },
-    "input_schema": {
-      "type": "object",
-      "properties": {
-        "deck": {
-          "type": [
-            "integer",
-            "string"
-          ],
-          "enum": [
-            "A",
-            "B",
-            0,
-            1
-          ]
-        },
-        "vocabulary": {
-          "type": [
-            "string",
-            "null"
-          ],
-          "enum": [
-            "dance",
-            "hip_hop",
-            null
-          ]
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "deck"
-      ]
-    },
-    "description": "Choose section labels; null restores detection",
-    "example_cli": "pulsedeckctl call deck.sections.vocabulary --args '{\"deck\":\"A\",\"vocabulary\":\"dance\"}' --json"
+    "description": "Cancel the current local import or library analysis",
+    "example_cli": "pulsedeckctl library analysis cancel --json"
   },
   {
     "command": "library.suggest_next",
@@ -1955,17 +2185,50 @@
         "energy_direction": {
           "type": "string",
           "enum": [
-            "up",
             "keep",
-            "down"
+            "raise",
+            "lower"
+          ],
+          "aliases": {
+            "up": "raise",
+            "down": "lower"
+          }
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "provider": {
+          "type": "string",
+          "enum": [
+            "spotify",
+            "local"
           ]
+        },
+        "playlist": {
+          "type": "string"
+        },
+        "max_stretch_percent": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 6
+        },
+        "allow_half_double": {
+          "type": "boolean"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30
         }
       },
       "additionalProperties": false,
       "required": []
     },
     "description": "Rank compatible next tracks against the audible deck",
-    "example_cli": "pulsedeckctl call library.suggest_next --args '{\"energy_direction\":\"keep\"}' --json"
+    "example_cli": "pulsedeckctl library suggest --energy keep --json"
   },
   {
     "command": "library.history.clear",
@@ -1977,6 +2240,697 @@
       "required": []
     },
     "description": "Clear the session played-track history",
-    "example_cli": "pulsedeckctl call library.history.clear --args '{}' --json"
+    "example_cli": "pulsedeckctl library history clear --json"
+  },
+  {
+    "command": "library.details",
+    "example_args": {
+      "id": 42
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": [
+            "integer",
+            "string"
+          ]
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "additionalProperties": false
+    },
+    "description": "Read selected-track metadata, rating, color and categorized My Tags without audio analysis.",
+    "example_cli": "pulsedeckctl call library.details --args '{\"id\":42}' --json"
+  },
+  {
+    "command": "library.edit_details",
+    "example_args": {
+      "id": 42,
+      "patch": {
+        "revision": 0,
+        "fields": {
+          "Genre": "Afro House"
+        },
+        "rating": 4,
+        "color": "#FF0000",
+        "my_tags": []
+      }
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": [
+            "integer",
+            "string"
+          ]
+        },
+        "patch": {
+          "type": "object",
+          "properties": {
+            "revision": {
+              "type": "integer"
+            },
+            "fields": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "rating": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 5
+            },
+            "color": {
+              "type": "string"
+            },
+            "my_tags": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              },
+              "maxItems": 512
+            }
+          },
+          "required": [
+            "revision",
+            "fields",
+            "rating",
+            "color",
+            "my_tags"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "id",
+        "patch"
+      ],
+      "additionalProperties": false
+    },
+    "description": "Save a revision-checked library metadata patch and My Tag assignments. Preserves audio, embedded originals, analysis and cues.",
+    "example_cli": "pulsedeckctl call library.edit_details --args '{\"id\":42,\"patch\":{\"revision\":0,\"fields\":{\"Genre\":\"Afro House\"},\"rating\":4,\"color\":\"#FF0000\",\"my_tags\":[]}}' --json"
+  },
+  {
+    "command": "library.tag_categories",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "description": "List ordered My Tag categories, tags and assignment counts.",
+    "example_cli": "pulsedeckctl call library.tag_categories --args '{}' --json"
+  },
+  {
+    "command": "library.edit_taxonomy",
+    "example_args": {
+      "kind": "category",
+      "name": "Energy"
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "category",
+            "tag"
+          ]
+        },
+        "id": {
+          "type": "integer"
+        },
+        "category": {
+          "type": "integer"
+        },
+        "name": {
+          "type": "string"
+        },
+        "position": {
+          "type": "integer"
+        },
+        "delete": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "description": "Create, rename, reorder or delete a My Tag category/tag. Existing application labels remain separate.",
+    "example_cli": "pulsedeckctl call library.edit_taxonomy --args '{\"kind\":\"category\",\"name\":\"Energy\"}' --json"
+  },
+  {
+    "command": "library.write_metadata",
+    "example_args": {
+      "id": 42,
+      "revision": 1
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": [
+            "integer",
+            "string"
+          ]
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "id",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    "description": "Explicitly write saved text edits to a local file using atomic replacement and an exact backup. Rejects malformed source tags. No audio analysis. Ratings/colors/My Tags remain in library and XML.",
+    "example_cli": "pulsedeckctl call library.write_metadata --args '{\"id\":42,\"revision\":1}' --json"
+  },
+  {
+    "command": "mix.openers",
+    "example_args": {
+      "playlist": "spotify:liked",
+      "provider": "spotify",
+      "min_bpm": 118,
+      "max_bpm": 126,
+      "limit": 8
+    },
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "playlist": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string",
+          "enum": [
+            "local",
+            "spotify"
+          ]
+        },
+        "search": {
+          "type": "string"
+        },
+        "min_bpm": {
+          "type": "number",
+          "minimum": 30,
+          "maximum": 300
+        },
+        "max_bpm": {
+          "type": "number",
+          "minimum": 30,
+          "maximum": 300
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20
+        }
+      }
+    },
+    "description": "Read compact analysed opener candidates from the indexed scope, without provider pagination, analysis or deck loading. Three-minute minimum duration. Coverage indicates whether indexing is needed.",
+    "example_cli": "pulsedeckctl call mix.openers --args '{\"playlist\":\"spotify:liked\",\"provider\":\"spotify\",\"search\":\"Lane 8\"}' --json"
+  },
+  {
+    "command": "mix.options",
+    "example_args": {
+      "energy_direction": "keep"
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "deck": {
+          "type": [
+            "integer",
+            "string"
+          ],
+          "enum": [
+            "A",
+            "B",
+            0,
+            1
+          ]
+        },
+        "energy_direction": {
+          "type": "string",
+          "enum": [
+            "keep",
+            "raise",
+            "lower"
+          ],
+          "aliases": {
+            "up": "raise",
+            "down": "lower"
+          }
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "provider": {
+          "type": "string",
+          "enum": [
+            "spotify",
+            "local"
+          ]
+        },
+        "playlist": {
+          "type": "string"
+        },
+        "max_stretch_percent": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 6
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30
+        },
+        "techniques": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "eq_blend",
+              "filter_blend",
+              "short_exchange",
+              "echo_out",
+              "reverb_exit"
+            ]
+          }
+        },
+        "detail": {
+          "type": "boolean",
+          "description": "Full passage/guard details and coverage members. Default returns five compact options with evidence and warnings."
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "description": "Read ranked track, passage, technique and timing options from current decks; no playback or analysis side effects",
+    "example_cli": "pulsedeckctl call mix.options --args '{\"energy_direction\":\"keep\"}' --json"
+  },
+  {
+    "command": "mix.execute",
+    "example_args": {
+      "option_id": "OPTION_ID",
+      "review_confirmed": true
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "option_id": {
+          "type": "string"
+        },
+        "review_confirmed": {
+          "type": "boolean"
+        },
+        "replace_prepared": {
+          "type": "boolean"
+        },
+        "allow_analysis": {
+          "type": "boolean"
+        },
+        "allow_fallback": {
+          "type": "boolean",
+          "description": "Default true: allow a validated short exchange using the same source and entry if preparation misses the original window."
+        }
+      },
+      "required": [
+        "option_id"
+      ],
+      "additionalProperties": false
+    },
+    "description": "Accept one owned move: prepare, revalidate or use a short-exchange fallback, and arm the complete native transition. Continues after client disconnect; follow mix.updated events by operation_id.",
+    "example_cli": "pulsedeckctl mix execute --option-id OPTION_ID --review-confirmed --follow --json"
+  },
+  {
+    "command": "mix.prepare",
+    "example_args": {
+      "option_id": "OPTION_ID"
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "option_id": {
+          "type": "string"
+        },
+        "review_confirmed": {
+          "type": "boolean"
+        },
+        "replace_prepared": {
+          "type": "boolean"
+        },
+        "allow_analysis": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "option_id"
+      ],
+      "additionalProperties": false
+    },
+    "description": "Prepare and revalidate a selected next-move option on an isolated available deck",
+    "example_cli": "pulsedeckctl call mix.prepare --args '{\"option_id\":\"OPTION_ID\"}' --json"
+  },
+  {
+    "command": "mix.arm",
+    "example_args": {
+      "prepared_id": "PREPARED_ID",
+      "review_confirmed": true
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "prepared_id": {
+          "type": "string"
+        },
+        "review_confirmed": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "prepared_id"
+      ],
+      "additionalProperties": false
+    },
+    "description": "Atomically arm the prepared guarded native transition",
+    "example_cli": "pulsedeckctl call mix.arm --args '{\"prepared_id\":\"PREPARED_ID\",\"review_confirmed\":true}' --json"
+  },
+  {
+    "command": "mix.status",
+    "example_args": {
+      "operation_id": "OPERATION_ID"
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "operation_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "operation_id"
+      ],
+      "additionalProperties": false
+    },
+    "description": "Status the selected owned transition operation",
+    "example_cli": "pulsedeckctl call mix.status --args '{\"operation_id\":\"OPERATION_ID\"}' --json"
+  },
+  {
+    "command": "mix.cancel",
+    "example_args": {
+      "operation_id": "OPERATION_ID"
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "operation_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "operation_id"
+      ],
+      "additionalProperties": false
+    },
+    "description": "Cancel the selected owned transition operation",
+    "example_cli": "pulsedeckctl call mix.cancel --args '{\"operation_id\":\"OPERATION_ID\"}' --json"
+  },
+  {
+    "command": "mix.index_scope",
+    "example_args": {
+      "scope": "spotify:liked"
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "scope": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "scope"
+      ],
+      "additionalProperties": false
+    },
+    "description": "Explicitly paginate and persist complete Spotify collection metadata without audio analysis",
+    "example_cli": "pulsedeckctl call mix.index_scope --args '{\"scope\":\"spotify:liked\"}' --json"
+  },
+  {
+    "command": "mix.index_scope.cancel",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "description": "Cancel active collection indexing at the next page boundary",
+    "example_cli": "pulsedeckctl call mix.index_scope.cancel --args '{}' --json"
+  },
+  {
+    "command": "mix.queue.start",
+    "example_args": {
+      "provider": "local",
+      "energy_direction": "keep",
+      "duration_seconds": 3600,
+      "review_confirmed": true
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "playlist": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string",
+          "enum": [
+            "local",
+            "spotify"
+          ]
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "maxItems": 128
+        },
+        "energy_direction": {
+          "type": "string",
+          "enum": [
+            "keep",
+            "raise",
+            "lower"
+          ]
+        },
+        "max_stretch_percent": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 6
+        },
+        "techniques": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "review_confirmed": {
+          "type": "boolean"
+        },
+        "replace_prepared": {
+          "type": "boolean"
+        },
+        "duration_seconds": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 86400
+        },
+        "max_skips": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        }
+      },
+      "required": [
+        "review_confirmed"
+      ],
+      "additionalProperties": false
+    },
+    "description": "Start an app-owned ordered-source or scoped-collection successor queue using the shared native move executor. Default returns an app-owned handoff immediately; agents end their turn on acceptance. Optional --follow is for interactive terminals. Actionable outcomes emit mix.queue.notice; progress never needs model polling.",
+    "example_cli": "pulsedeckctl call mix.queue.start --args '{\"provider\":\"local\",\"energy_direction\":\"keep\",\"duration_seconds\":3600,\"review_confirmed\":true}' --json"
+  },
+  {
+    "command": "mix.queue.status",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "queue_id": {
+          "type": "string"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "description": "Read successor queue policy, order, availability, lifecycle and failure reasons.",
+    "example_cli": "pulsedeckctl call mix.queue.status --args '{}' --json"
+  },
+  {
+    "command": "mix.queue.edit",
+    "example_args": {
+      "queue_id": "QUEUE_ID",
+      "expected_revision": 1,
+      "sources": [
+        "local:42"
+      ]
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "queue_id": {
+          "type": "string"
+        },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 128
+        }
+      },
+      "required": [
+        "queue_id",
+        "expected_revision",
+        "sources"
+      ],
+      "additionalProperties": false
+    },
+    "description": "Atomically replace only pending ordered sources; active/preparing moves are preserved.",
+    "example_cli": "pulsedeckctl call mix.queue.edit --args '{\"queue_id\":\"QUEUE_ID\",\"expected_revision\":1,\"sources\":[\"local:42\"]}' --json"
+  },
+  {
+    "command": "mix.queue.stop",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "queue_id": {
+          "type": "string"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "description": "Stop this queue, its pending preparation/native move and its duration endpoint; ordinary playback remains.",
+    "example_cli": "pulsedeckctl call mix.queue.stop --args '{}' --json"
+  },
+  {
+    "command": "mix.session.start",
+    "example_args": {
+      "prepared_id": "PREPARED_ID",
+      "duration_seconds": 3600
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "prepared_id": {
+          "type": "string"
+        },
+        "duration_seconds": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 86400
+        }
+      },
+      "required": [
+        "prepared_id",
+        "duration_seconds"
+      ],
+      "additionalProperties": false
+    },
+    "description": "Own an assisted-set endpoint independent of per-track source clocks; requires a prepared pair",
+    "example_cli": "pulsedeckctl call mix.session.start --args '{\"prepared_id\":\"PREPARED_ID\",\"duration_seconds\":3600}' --json"
+  },
+  {
+    "command": "mix.session.status",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "description": "Read session endpoint lifetime, completion and interruption",
+    "example_cli": "pulsedeckctl call mix.session.status --args '{}' --json"
+  },
+  {
+    "command": "mix.session.stop",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "description": "Cancel the owned session endpoint and pending owned transition; keep playback running",
+    "example_cli": "pulsedeckctl call mix.session.stop --args '{}' --json"
+  },
+  {
+    "command": "mix.preview",
+    "example_args": {
+      "prepared_id": "PREPARED_ID",
+      "enabled": true
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "prepared_id": {
+          "type": "string"
+        },
+        "enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "prepared_id",
+        "enabled"
+      ],
+      "additionalProperties": false
+    },
+    "description": "Audition the prepared incoming passage on headphone cue behind a closed master channel; stop resets and revalidates the planned entry",
+    "example_cli": "pulsedeckctl call mix.preview --args '{\"prepared_id\":\"PREPARED_ID\",\"enabled\":true}' --json"
   }
 ]

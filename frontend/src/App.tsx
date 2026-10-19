@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
   Circle,
   Square,
@@ -30,8 +38,18 @@ import {
   SkipForward,
   Repeat2,
 } from "lucide-react";
-import { isDesktop, native, control } from "./api";
+import { isDesktop, control } from "./api";
+import {
+  transportTimings,
+  metadataTimings,
+  performanceSnapshot,
+} from "./performance";
 import TrackTags from "./TrackTags";
+import LibraryTools, { type LibraryFilters } from "./LibraryTools";
+import TrackArtwork from "./TrackArtwork";
+import VirtualTrackRows from "./VirtualTrackRows";
+import { useLocalLibrary } from "./useLocalLibrary";
+import TempoSlider from "./TempoSlider";
 import { useControl } from "./control-bridge";
 import {
   controlString,
@@ -44,24 +62,19 @@ import {
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import {
   AppState,
-  AnalysisSettings,
   AudioDeviceInfo,
-  Vocabulary,
   DeckSnapshot,
   EngineSnapshot,
   MidiState,
   Playlist,
   TrackRecord,
   RecordingStatus,
-  emptyEngine,
 } from "./types";
 import Waveform from "./Waveform";
 import AnalysisInfo from "./AnalysisInfo";
 import TrackDrawer from "./TrackDrawer";
-import { beatPhaseDelta } from "./mixing-view";
 import {
   deckBeatGrid,
-  reportedBeatPosition,
   snapToGridBeat,
   gridStatus,
   gridBeatPosition,
@@ -69,16 +82,16 @@ import {
 } from "./beat-grid";
 import {
   withTrackMetadata,
+  engineStore,
+  stabilizeTrack,
+  retainUnchanged,
   type EngineTransport,
   type EngineMetadata,
 } from "./engine-state";
-import { BAND_COLORS, HOT_CUE_COLORS, displaySections } from "./waveform-data";
+import { BAND_COLORS, HOT_CUE_COLORS, displayCuePoints } from "./waveform-data";
 import SpotifyPanel, { type SpotifyTrack } from "./SpotifyPanel";
 import SpotifyLogo from "./SpotifyLogo";
-import NextPanel from "./NextPanel";
-import { TransitionReadout, useTransitionGuide } from "./TransitionGuide";
-import type { WaveformGuide } from "./transition";
-import type { Suggestion } from "./suggestions";
+import SuggestPanel from "./SuggestPanel";
 import {
   THEMES,
   applyTheme,
@@ -194,7 +207,16 @@ function Knob({
     </label>
   );
 }
-function Meter({ value = 0 }: { value?: number }) {
+function Meter({ deckId }: { deckId: number }) {
+  const value = useSyncExternalStore(
+    engineStore.subscribeTransport,
+    () =>
+      Math.ceil(
+        Math.max(
+          ...(engineStore.getTransport().decks[deckId]?.peak || [0, 0]),
+        ) * 18,
+      ) / 18,
+  );
   return (
     <div className="meter" aria-label={`Level ${Math.round(value * 100)}%`}>
       {Array.from({ length: 18 }, (_, i) => (
@@ -206,6 +228,177 @@ function Meter({ value = 0 }: { value?: number }) {
     </div>
   );
 }
+function PerformanceDiagnostics() {
+  const [snapshot, setSnapshot] = useState(performanceSnapshot);
+  useEffect(() => {
+    const timer = setInterval(() => setSnapshot(performanceSnapshot()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  useControl(
+    "performance",
+    {},
+    { ...snapshot, store: engineStore.diagnostics },
+  );
+  return null;
+}
+function OutputProtection() {
+  const summary = useSyncExternalStore(engineStore.subscribeTransport, () => {
+    const q = engineStore.getTransport().audio_quality as
+      | {
+          headroom_db?: number;
+          master_gain_reduction_db?: number;
+          cue_gain_reduction_db?: number;
+          master_input_peak?: number[];
+          cue_input_peak?: number[];
+        }
+      | undefined;
+    return q
+      ? JSON.stringify([
+          q.headroom_db ?? 0,
+          Math.round((q.master_gain_reduction_db ?? 0) * 10) / 10,
+          Math.round((q.cue_gain_reduction_db ?? 0) * 10) / 10,
+        ])
+      : "[]";
+  });
+  const [headroom, master, cue] = JSON.parse(summary) as number[];
+  if (!headroom) return null;
+  return (
+    <div
+      className={`output-protection ${master > 0.1 || cue > 0.1 ? "limiting" : ""}`}
+      title="Stereo-linked output protection. Lower trim when gain reduction persists. The meters show protected output; source clipping cannot be repaired."
+    >
+      <span>HEADROOM {headroom} dB</span>
+      <span>
+        LIMIT {master.toFixed(1)} dB · CUE {cue.toFixed(1)} dB
+      </span>
+    </div>
+  );
+}
+function livePosition(id: number) {
+  const deck = engineStore.getTransport().decks[id];
+  return val(deck?.position_seconds, val(deck?.position));
+}
+function LivePosition({ id }: { id: number }) {
+  const seconds = useSyncExternalStore(engineStore.subscribeTransport, () =>
+    Math.floor(livePosition(id)),
+  );
+  return <>{fmt(seconds)}</>;
+}
+function ActualBpm({ id }: { id: number }) {
+  const text = useSyncExternalStore(engineStore.subscribeTransport, () => {
+    const bpm = engineStore.getTransport().decks[id]?.actual_playback_bpm;
+    return bpm != null && Number.isFinite(bpm) ? bpm.toFixed(1) : "—";
+  });
+  return (
+    <span title="Estimated current musical tempo, including Sync and pitch bend">
+      ACTUAL {text} BPM
+    </span>
+  );
+}
+function DeckTime({ id, duration }: { id: number; duration: number }) {
+  const seconds = useSyncExternalStore(engineStore.subscribeTransport, () =>
+    Math.floor(livePosition(id)),
+  );
+  return (
+    <div className="time-readout">
+      <strong>{fmt(seconds)}</strong>
+      <span>−{fmt(duration - seconds)} remaining</span>
+    </div>
+  );
+}
+function PlatterNeedle({ id, duration }: { id: number; duration: number }) {
+  const needle = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    const element = needle.current!,
+      jog = element.closest<HTMLElement>(".jog");
+    // The compositor interpolates rotation between authoritative native updates.
+    const rotation = element.animate(
+      [{ transform: "rotate(0deg)" }, { transform: "rotate(360deg)" }],
+      { duration: 4000, iterations: Infinity },
+    );
+    rotation.pause();
+    let identity = "",
+      progress = -1,
+      stale: ReturnType<typeof setTimeout>;
+    const update = () => {
+      const engine = engineStore.getTransport(),
+        deck = engine.decks[id];
+      const rate =
+        deck.actual_playback_rate ??
+        deck.playback_rate ??
+        1 + (deck.tempo_percent ?? 0) / 100;
+      const playing = !!deck.playing && !deck.jog_touch;
+      const latency =
+        (engine.audio_quality as { output_latency_frames?: number } | undefined)
+          ?.output_latency_frames ?? 0;
+      const elapsed = playing
+        ? Math.min(
+            120,
+            Math.max(0, performance.now() - engineStore.receivedAt()),
+          ) / 1000
+        : 0;
+      const position = Math.max(
+        0,
+        Math.min(
+          duration,
+          livePosition(id) +
+            (elapsed -
+              (playing ? latency / (engine.sample_rate || 48000) : 0)) *
+              rate,
+        ),
+      );
+      const next = `${deck.track?.path}@${engine.load_revisions?.[id]}@${deck.position_revision}`;
+      if (!playing) rotation.pause();
+      if (
+        next !== identity ||
+        rotation.playState !== "running" ||
+        Math.abs(Number(rotation.currentTime) - position * 1000) > 40
+      )
+        rotation.currentTime = position * 1000;
+      identity = next;
+      rotation.playbackRate = rate;
+      if (playing && rotation.playState !== "running") rotation.play();
+      const tick =
+        duration > 0 ? Math.min(60, Math.floor((position / duration) * 60)) : 0;
+      if (tick !== progress) {
+        progress = tick;
+        jog?.style.setProperty("--progress", String(tick / 60));
+      }
+      clearTimeout(stale);
+      if (playing) stale = setTimeout(() => rotation.pause(), 120);
+    };
+    const unsubscribe = engineStore.subscribeTransport(update);
+    update();
+    return () => {
+      unsubscribe();
+      clearTimeout(stale);
+      rotation.cancel();
+    };
+  }, [id, duration]);
+  return <i ref={needle} />;
+}
+type LoadingTrack = {
+  source: string;
+  title: string;
+  artist?: string;
+  cancellable: boolean;
+};
+
+function LoadingWaveform({ title }: { title: string }) {
+  return (
+    <div className="loading-waveform" aria-hidden="true">
+      <div className="loading-waveform-bars">
+        {Array.from({ length: 48 }, (_, i) => (
+          <i key={i} style={{ height: `${18 + ((i * 17) % 61)}%` }} />
+        ))}
+      </div>
+      <span>
+        <LoaderCircle size={14} className="spin" /> Loading {title}…
+      </span>
+    </div>
+  );
+}
+
 function DeckWaveform({
   id,
   deck,
@@ -215,19 +408,17 @@ function DeckWaveform({
   snapSeek,
   waveformCommand,
   snapshotTime,
-  guides,
-  guideCountdown,
+  loading,
 }: {
   id: number;
   deck: DeckSnapshot;
   library: TrackRecord[];
-  command: (c: Command) => void;
-  waveformCommand: (c: Command) => Promise<void>;
+  command: (c: Command, revision?: number) => void;
+  waveformCommand: (c: Command, revision?: number) => Promise<void>;
   snapshotTime: number;
   visibleBeats: number;
   snapSeek: boolean;
-  guides?: WaveformGuide[];
-  guideCountdown?: { text: string; color: string } | null;
+  loading?: LoadingTrack | null;
 }) {
   const track =
     deck.track ||
@@ -239,9 +430,9 @@ function DeckWaveform({
   const position = val(deck.position_seconds, val(deck.position));
   const baseBpm = val(deck.bpm, val(track?.bpm, val(deck.original_bpm)));
   const gridOffset = val(deck.beatgrid_offset_seconds);
-  const sections = useMemo(
-    () => displaySections(track?.sections, duration),
-    [track?.sections, duration],
+  const cueMarkers = useMemo(
+    () => displayCuePoints(track?.cue_points, duration),
+    [track?.cue_points, duration],
   );
   const beatGrid = useMemo(
     () => deckBeatGrid(deck, track),
@@ -257,9 +448,24 @@ function DeckWaveform({
     ],
   );
   const heldPosition = useRef<number | null>(null);
-  const currentSource = useRef(track?.path);
-  currentSource.current = track?.path;
+  const loadRevision = engineStore.getTransport().load_revisions?.[id];
+  const sourceToken = `${track?.path ?? ""}@${loadRevision}`;
+  const currentSource = useRef(sourceToken);
+  currentSource.current = sourceToken;
+  const guardedWaveform = (c: Command) => waveformCommand(c, loadRevision);
   const color = id === 0 ? "#f5d90a" : "#86cfee";
+  if (loading)
+    return (
+      <section
+        className="stacked-wave-row"
+        aria-busy="true"
+        aria-label={`Deck ${id === 0 ? "A" : "B"} waveform loading`}
+        style={{ "--deck-color": color } as React.CSSProperties}
+      >
+        <span className="scrolling-deck-label">{id === 0 ? "A" : "B"}</span>
+        <LoadingWaveform title={loading.title} />
+      </section>
+    );
   return (
     <section
       className="stacked-wave-row"
@@ -270,15 +476,14 @@ function DeckWaveform({
       <Waveform
         samples={track?.waveform || deck.waveform || []}
         bands={track?.waveform_bands}
+        deckId={id}
         position={position}
         duration={duration}
         bpm={baseBpm}
         spanBeats={visibleBeats}
         color={color}
         hotcues={deck.hot_cues || []}
-        sections={sections}
-        guides={guides}
-        guideCountdown={guideCountdown}
+        cueMarkers={cueMarkers}
         memoryCues={deck.memory_cues || []}
         cuePoint={deck.cue_seconds}
         loopStart={deck.loop_start_seconds}
@@ -289,38 +494,42 @@ function DeckWaveform({
         beatgridValid={!!deck.beatgrid_valid}
         beatgridDownbeat={!!deck.beatgrid_downbeat}
         onSeek={(seconds) =>
-          command({
-            type: "seek",
-            deck: id,
-            seconds:
-              snapSeek && deck.beatgrid_valid
-                ? snapToGridBeat(beatGrid, seconds, duration)
-                : seconds,
-          })
+          command(
+            {
+              type: "seek",
+              deck: id,
+              seconds:
+                snapSeek && deck.beatgrid_valid
+                  ? snapToGridBeat(beatGrid, seconds, duration)
+                  : seconds,
+            },
+            loadRevision,
+          )
         }
         playing={!!deck.playing}
         playbackRate={val(
-          deck.playback_rate,
+          deck.actual_playback_rate ?? deck.playback_rate,
           1 + val(deck.tempo_percent) / 100,
         )}
         jogTouch={!!deck.jog_touch}
         positionRevision={deck.position_revision}
         sourceId={track?.path}
+        loadRevision={loadRevision}
         snapshotTime={snapshotTime}
         onScrubStart={async (grabbed) => {
           heldPosition.current = grabbed;
-          await waveformCommand({ type: "jog_touch", deck: id, touched: true });
-          if (currentSource.current === track?.path)
-            await waveformCommand({ type: "seek", deck: id, seconds: grabbed });
+          await guardedWaveform({ type: "jog_touch", deck: id, touched: true });
+          if (currentSource.current === sourceToken)
+            await guardedWaveform({ type: "seek", deck: id, seconds: grabbed });
         }}
         onScrub={async (delta, elapsedMs) => {
-          if (currentSource.current !== track?.path) return;
+          if (currentSource.current !== sourceToken) return;
           const target = Math.max(
             0,
             Math.min(duration, (heldPosition.current ?? position) + delta),
           );
           heldPosition.current = target;
-          await waveformCommand({
+          await guardedWaveform({
             type: "scrub_to",
             deck: id,
             seconds: target,
@@ -330,9 +539,10 @@ function DeckWaveform({
         onScrubEnd={async () => {
           const target = heldPosition.current;
           heldPosition.current = null;
-          if (target != null && currentSource.current === track?.path) {
+          if (currentSource.current !== sourceToken) return;
+          if (target != null && currentSource.current === sourceToken) {
             try {
-              await waveformCommand({
+              await guardedWaveform({
                 type: "scrub_end",
                 deck: id,
                 seconds: target,
@@ -342,7 +552,7 @@ function DeckWaveform({
               // Failed commit must still release a held platter.
             }
           }
-          await waveformCommand({
+          await guardedWaveform({
             type: "jog_touch",
             deck: id,
             touched: false,
@@ -352,54 +562,15 @@ function DeckWaveform({
     </section>
   );
 }
-function WaveformAlignment({ decks }: { decks: DeckSnapshot[] }) {
-  const phases = decks.map(reportedBeatPosition);
-  const delta = beatPhaseDelta(phases[0] ?? null, phases[1] ?? null);
-  const bpms = decks.map(
-    (d) => val(d.bpm, val(d.track?.bpm)) * (1 + val(d.tempo_percent) / 100),
-  );
-  return (
-    <div
-      className="waveform-alignment"
-      title="Beat phase reported by the native deck clock, including detected tempo changes and manual grid corrections. Verify musical downbeat alignment."
-    >
-      <span>BEAT ALIGN</span>
-      <div className="phase-gauge">
-        <i className="phase-center" />
-        <i
-          className={`phase-dot ${delta !== null && Math.abs(delta) < 0.025 ? "aligned" : ""}`}
-          style={{
-            left: `${50 + (delta ?? 0) * 80}%`,
-            visibility: delta === null ? "hidden" : "visible",
-          }}
-        />
-      </div>
-      <strong>
-        {delta === null
-          ? "—"
-          : `${delta >= 0 ? "+" : ""}${delta.toFixed(2)} beat`}
-      </strong>
-      <span className="tempo-difference">
-        {decks.every((d) => !!d.track && val(d.bpm, val(d.track.bpm)) > 0)
-          ? `Δ ${(bpms[1] - bpms[0]).toFixed(2)} BPM`
-          : "Load both decks"}
-        {decks.every((d) => !!d.track) && !decks.every((d) => d.beatgrid_valid)
-          ? " · Grid unknown"
-          : ""}
-      </span>
-    </div>
-  );
-}
 function Deck({
   id,
-  deck,
+  deck: initialDeck,
   library,
   command,
-  waveformCommand,
+  waveformCommand: rawWaveformCommand,
   load,
   demo,
   reanalyze,
-  setVocabulary,
   loadSpotify,
   visibleBeats,
   snapSeek,
@@ -407,17 +578,18 @@ function Deck({
   hardwareRange,
   hardwarePadMode,
   onTempoRange,
-  guides,
+  loading,
+  loadError,
+  cancelLoad,
 }: {
   id: number;
   deck: DeckSnapshot;
   library: TrackRecord[];
-  command: (c: Command) => void;
-  waveformCommand: (c: Command) => Promise<void>;
+  command: (c: Command, revision?: number) => void;
+  waveformCommand: (c: Command, revision?: number) => Promise<void>;
   load: (deck: number, path: string) => void;
   demo: (deck: number) => void;
-  reanalyze: (deck: number) => Promise<void>;
-  setVocabulary: (deck: number, vocabulary: Vocabulary | null) => Promise<void>;
+  reanalyze: (deck: number, revision?: number) => Promise<void>;
   loadSpotify: (deck: number, track: SpotifyTrack) => Promise<void>;
   visibleBeats: number;
   snapSeek: boolean;
@@ -425,8 +597,15 @@ function Deck({
   hardwareRange?: number;
   hardwarePadMode?: string;
   onTempoRange: (deck: number, range: number) => void;
-  guides?: WaveformGuide[];
+  loading?: LoadingTrack | null;
+  loadError?: string | null;
+  cancelLoad: (deck: number) => void;
 }) {
+  const controls = useSyncExternalStore(engineStore.subscribeControls, () =>
+    engineStore.getDeckView(id),
+  );
+  const deck =
+    controls?.track?.path === initialDeck.track?.path ? controls : initialDeck;
   const track =
     deck.track ||
     library.find((t) => t.id === deck.track_id || t.path === deck.track_path);
@@ -451,11 +630,11 @@ function Deck({
     ],
   );
   const tempo = val(deck.tempo_percent);
-  const bpm = baseBpm * (1 + tempo / 100);
+  const bpm = val(deck.target_playback_bpm, baseBpm * (1 + tempo / 100));
   const hotcues = deck.hot_cues || Array(8).fill(null);
-  const sections = useMemo(
-    () => displaySections(track?.sections, duration),
-    [track?.sections, duration],
+  const cueMarkers = useMemo(
+    () => displayCuePoints(track?.cue_points, duration),
+    [track?.cue_points, duration],
   );
   const [editGrid, setEditGrid] = useState(false);
   const [gridBpm, setGridBpm] = useState("120");
@@ -477,8 +656,14 @@ function Deck({
   const [menu, setMenu] = useState(false);
   const [scratch, setScratch] = useState(false);
   const [dropTarget, setDropTarget] = useState(false);
-  const currentJogSource = useRef(track?.path);
-  currentJogSource.current = track?.path;
+  const loadRevision = engineStore.getTransport().load_revisions?.[id];
+  const waveformCommand = useCallback(
+    (c: Command, revision = loadRevision) => rawWaveformCommand(c, revision),
+    [rawWaveformCommand, loadRevision],
+  );
+  const sourceToken = `${track?.path ?? ""}@${loadRevision}`;
+  const currentJogSource = useRef<string | undefined>(sourceToken);
+  currentJogSource.current = loading ? undefined : sourceToken;
   const jogGesture = useRef<{
     source: string | undefined;
     target: number;
@@ -488,21 +673,11 @@ function Deck({
   } | null>(null);
   const jogFrame = useRef<number | null>(null);
   const jogQueue = useRef(Promise.resolve());
-  const enqueueJog = (
-    c: Command,
-    source: string | undefined,
-    release = false,
-  ) => {
+  const enqueueJog = (c: Command, source: string | undefined) => {
     jogQueue.current = jogQueue.current
       .then(async () => {
         if (currentJogSource.current === source)
-          await waveformCommand({ ...c, deck: id });
-        else if (release)
-          await waveformCommand({
-            type: "jog_touch",
-            deck: id,
-            touched: false,
-          });
+          await waveformCommand({ ...c, deck: id }, loadRevision);
       })
       .catch(() => {});
   };
@@ -529,7 +704,6 @@ function Deck({
       enqueueJog(
         { type: "scrub_end", seconds: gesture.target },
         gesture.source,
-        true,
       );
   };
   useEffect(
@@ -541,16 +715,19 @@ function Deck({
         setScratch(false);
         jogQueue.current = jogQueue.current
           .then(() =>
-            waveformCommand({ type: "jog_touch", deck: id, touched: false }),
+            waveformCommand(
+              { type: "jog_touch", deck: id, touched: false },
+              loadRevision,
+            ),
           )
           .catch(() => {});
       }
     },
-    [track?.path, id, waveformCommand],
+    [track?.path, loadRevision, loading?.source, id, waveformCommand],
   );
   const color = id === 0 ? "#f5d90a" : "#86cfee";
   const send = (type: string, data: Command = {}) =>
-    command({ type, deck: id, ...data });
+    command({ type, deck: id, ...data }, loadRevision);
   useControl(
     `deck-${id === 0 ? "A" : "B"}`,
     {
@@ -588,7 +765,8 @@ function Deck({
       "grid-apply": async () => {
         const bpm = controlNumber(+gridBpm, 30, 300);
         const offset = controlNumber(+gridOffset, 0, duration);
-        if (Math.abs(bpm - baseBpm) > 0.01) await waveformCommand({ type: "set_bpm", deck: id, bpm });
+        if (Math.abs(bpm - baseBpm) > 0.01)
+          await waveformCommand({ type: "set_bpm", deck: id, bpm });
         await waveformCommand({
           type: "set_beatgrid",
           deck: id,
@@ -600,9 +778,9 @@ function Deck({
         await waveformCommand({
           type: "set_beatgrid",
           deck: id,
-          offset_seconds: position,
+          offset_seconds: livePosition(id),
         });
-        setGridOffset(position.toFixed(3));
+        setGridOffset(livePosition(id).toFixed(3));
       },
       "jog-cancel": finishJog,
     },
@@ -613,8 +791,44 @@ function Deck({
       grid_editor: editGrid,
       grid_draft: { bpm: gridBpm, offset: gridOffset },
       scratch,
+      loading: loading ?? null,
     },
   );
+  if (loading)
+    return (
+      <section
+        className={`deck deck-${id} deck-loading`}
+        aria-busy="true"
+        aria-label={`Deck ${id === 0 ? "A" : "B"} loading`}
+        style={{ "--deck-color": color } as React.CSSProperties}
+      >
+        <div className="deck-heading">
+          <span className="deck-badge">{id === 0 ? "A" : "B"}</span>
+          <div className="track-heading">
+            <strong>{loading.title}</strong>
+            <span>{loading.artist || "Loading track…"}</span>
+          </div>
+          {loading.cancellable && (
+            <button className="subtle" onClick={() => cancelLoad(id)}>
+              Cancel
+            </button>
+          )}
+        </div>
+        <div className="deck-track-preview">
+          <LoadingWaveform title={loading.title} />
+        </div>
+        <div className="deck-loading-body" role="status">
+          <div className="loading-disc">
+            <Disc3 size={72} strokeWidth={1} />
+          </div>
+          <span>
+            <LoaderCircle size={16} className="spin" /> Loading deck{" "}
+            {id === 0 ? "A" : "B"}…
+          </span>
+          <small>Waveform and controls will appear when ready</small>
+        </div>
+      </section>
+    );
   return (
     <section
       className={`deck deck-${id} ${dropTarget ? "drop-target" : ""}`}
@@ -696,10 +910,18 @@ function Deck({
           )}
         </div>
       </div>
+      {loadError && (
+        <div className="deck-load-error" role="alert">
+          {loadError}
+        </div>
+      )}
       <div className="deck-info">
-        <div className="tempo-readout">
+        <div
+          className="tempo-readout"
+          title="Requested BPM at the last tempo adjustment. Actual BPM can change with the music; Sync keeps the decks aligned."
+        >
           <strong>{bpm ? bpm.toFixed(2) : "—"}</strong>
-          <span>BPM</span>
+          <span>BPM TARGET</span>
           <em>
             {tempo >= 0 ? "+" : ""}
             {tempo.toFixed(2)}%{" "}
@@ -714,6 +936,7 @@ function Deck({
             >
               GRID
             </button>
+            <ActualBpm id={id} />
           </em>
         </div>
         <div className="key-readout">
@@ -724,10 +947,7 @@ function Deck({
           </strong>
           <span>KEY</span>
         </div>
-        <div className="time-readout">
-          <strong>{fmt(position)}</strong>
-          <span>−{fmt(duration - position)} remaining</span>
-        </div>
+        <DeckTime id={id} duration={duration} />
       </div>
       {editGrid && (
         <form
@@ -794,7 +1014,18 @@ function Deck({
                 title={`Move beat 1 one beat ${step < 0 ? "earlier" : "later"}`}
                 onClick={() =>
                   setGridOffset(
-                    Math.max(0, Math.min(duration, gridBeatTime(beatGrid, Math.round(gridBeatPosition(beatGrid, +gridOffset) ?? 0) + step) ?? +gridOffset + step * 60 / +gridBpm)).toFixed(3),
+                    Math.max(
+                      0,
+                      Math.min(
+                        duration,
+                        gridBeatTime(
+                          beatGrid,
+                          Math.round(
+                            gridBeatPosition(beatGrid, +gridOffset) ?? 0,
+                          ) + step,
+                        ) ?? +gridOffset + (step * 60) / +gridBpm,
+                      ),
+                    ).toFixed(3),
                   )
                 }
               >
@@ -815,6 +1046,7 @@ function Deck({
         <Waveform
           samples={track?.waveform || deck.waveform || []}
           bands={track?.waveform_bands}
+          deckId={id}
           position={position}
           duration={duration}
           bpm={baseBpm}
@@ -823,16 +1055,16 @@ function Deck({
           overview
           playing={!!deck.playing}
           playbackRate={val(
-            deck.playback_rate,
+            deck.actual_playback_rate ?? deck.playback_rate,
             1 + val(deck.tempo_percent) / 100,
           )}
           jogTouch={!!deck.jog_touch}
           positionRevision={deck.position_revision}
           sourceId={track?.path}
+          loadRevision={loadRevision}
           snapshotTime={snapshotTime}
           hotcues={hotcues}
-          sections={sections}
-          guides={guides}
+          cueMarkers={cueMarkers}
           memoryCues={deck.memory_cues || []}
           cuePoint={deck.cue_seconds}
           loopStart={deck.loop_start_seconds}
@@ -855,10 +1087,12 @@ function Deck({
           {track ? (
             <AnalysisInfo
               controlTarget={`analysis-${id === 0 ? "A" : "B"}`}
-              key={`${track.id}-${track.path}`}
+              key={`${track.id}-${track.path}-${loadRevision}`}
               track={track}
-              onReanalyze={() => reanalyze(id)}
-              onVocabulary={(vocabulary) => setVocabulary(id, vocabulary)}
+              deck={deck}
+              deckId={id}
+              expectedLoadRevision={loadRevision}
+              onReanalyze={() => reanalyze(id, loadRevision)}
               baseBpm={baseBpm}
               onChooseBpm={(bpm) => {
                 setGridBpm(bpm.toFixed(2));
@@ -886,24 +1120,19 @@ function Deck({
       <div className="deck-controls">
         <div
           className={`jog ${deck.playing ? "is-playing" : ""}`}
-          style={
-            {
-              "--progress": duration > 0 ? Math.min(1, position / duration) : 0,
-            } as React.CSSProperties
-          }
           onPointerDown={(e) => {
             if (!title || e.button !== 0) return;
             e.preventDefault();
             e.currentTarget.setPointerCapture(e.pointerId);
             jogGesture.current = {
-              source: track?.path,
-              target: position,
+              source: sourceToken,
+              target: livePosition(id),
               x: e.clientX,
               lastAt: performance.now(),
               pending: false,
             };
             setScratch(true);
-            enqueueJog({ type: "jog_touch", touched: true }, track?.path);
+            enqueueJog({ type: "jog_touch", touched: true }, sourceToken);
           }}
           onPointerMove={(e) => {
             const gesture = jogGesture.current;
@@ -922,6 +1151,10 @@ function Deck({
             );
             gesture.x = e.clientX;
             gesture.pending = true;
+            const rotation = e.currentTarget
+              .querySelector(".jog-surface > i")
+              ?.getAnimations()[0];
+            if (rotation) rotation.currentTime = gesture.target * 1000;
             if (jogFrame.current === null)
               jogFrame.current = requestAnimationFrame(() => {
                 jogFrame.current = null;
@@ -949,7 +1182,10 @@ function Deck({
           }}
         >
           <div className={`jog-surface ${scratch ? "touching" : ""}`}>
-            <div className="jog-center">
+            <div
+              className="jog-center"
+              title="Requested BPM at the last tempo adjustment. Actual BPM can change with the music; Sync keeps the decks aligned."
+            >
               <strong>{bpm ? bpm.toFixed(2) : "—"}</strong>
               <span>BPM</span>
               <small>
@@ -958,15 +1194,20 @@ function Deck({
                   : `${tempo >= 0 ? "+" : ""}${tempo.toFixed(2)}%`}
               </small>
             </div>
-            <i style={{ transform: `rotate(${(position * 90) % 360}deg)` }} />
+            <PlatterNeedle id={id} duration={duration} />
           </div>
         </div>
         <div className="deck-keys">
           <div className="transport-column">
             <div className="sync-row">
               <button
-                disabled={!title}
+                disabled={!title || (!!deck.is_master && !deck.sync_enabled)}
                 className={`mini ${deck.sync_enabled ? "sync-on" : ""}`}
+                title={
+                  deck.is_master
+                    ? "Choose the other playing deck as master before enabling follower Sync"
+                    : "Follow the master deck's tempo and beat phase"
+                }
                 onClick={() =>
                   send("set_sync", { enabled: !deck.sync_enabled })
                 }
@@ -985,7 +1226,7 @@ function Deck({
               <button
                 title="Hold to preview from cue point"
                 className="cue"
-                disabled={!title}
+                disabled={!title || deck.preparation_pending}
                 onPointerDown={(e) => {
                   e.currentTarget.setPointerCapture(e.pointerId);
                   send("cue_press", { pressed: true });
@@ -1007,12 +1248,26 @@ function Deck({
               </button>
               <button
                 className={`play ${deck.playing || deck.launch_pending ? "active" : ""}`}
-                aria-label={deck.launch_pending ? "Cancel queued launch" : deck.playing ? "Pause" : "Play"}
-                title={deck.launch_pending ? "Queued for the next master beat; click to cancel" : "Play / pause"}
-                disabled={!title}
+                aria-label={
+                  deck.launch_pending
+                    ? "Cancel queued launch"
+                    : deck.playing
+                      ? "Pause"
+                      : "Play"
+                }
+                title={
+                  deck.launch_pending
+                    ? "Queued for the next master beat; click to cancel"
+                    : "Play / pause"
+                }
+                disabled={!title || deck.preparation_pending}
                 onClick={() => send("toggle_play")}
               >
-                {deck.launch_pending ? "QUEUED" : deck.playing ? (
+                {deck.preparation_pending ? (
+                  <LoaderCircle size={20} className="spin" />
+                ) : deck.launch_pending ? (
+                  "QUEUED"
+                ) : deck.playing ? (
                   <Pause size={20} fill="currentColor" />
                 ) : (
                   <Play size={20} fill="currentColor" />
@@ -1024,7 +1279,7 @@ function Deck({
               disabled={!title}
               onClick={() => send("set_cue")}
             >
-              SET CUE AT {fmt(position)}
+              SET CUE AT <LivePosition id={id} />
             </button>
             <div className="beat-jump">
               <span>BEAT JUMP</span>
@@ -1074,33 +1329,30 @@ function Deck({
           </div>
         </div>
         <div className="tempo-slider">
-          <Range
-            label="TEMPO"
-            min={Math.max(-90, Math.min(-range, tempo))}
-            max={Math.max(range, tempo)}
-            step={0.01}
+          <TempoSlider
+            key={sourceToken}
+            range={range}
             value={tempo}
-            onChange={(percent) => send("set_tempo", { percent })}
-            vertical
-          />
-          <button
-            className="range-pill"
-            title="Tempo range · Shift + SYNC on FLX4 cycles this range"
-            onClick={() => {
-              const next =
-                range === 6 ? 10 : range === 10 ? 16 : range === 16 ? 100 : 6;
-              setRange(next);
-              onTempoRange(id, next);
-            }}
+            write={(percent) =>
+              waveformCommand(
+                { type: "set_tempo", deck: id, percent },
+                loadRevision,
+              )
+            }
           >
-            {range === 100 ? "WIDE" : `±${range}%`}
-          </button>
-          <button
-            className="tempo-reset"
-            onClick={() => send("set_tempo", { percent: 0 })}
-          >
-            RESET
-          </button>
+            <button
+              className="range-pill"
+              title="Tempo range · Shift + SYNC on FLX4 cycles this range"
+              onClick={() => {
+                const next =
+                  range === 6 ? 10 : range === 10 ? 16 : range === 16 ? 100 : 6;
+                setRange(next);
+                onTempoRange(id, next);
+              }}
+            >
+              {range === 100 ? "WIDE" : `±${range}%`}
+            </button>
+          </TempoSlider>
         </div>
       </div>
       {hardwarePadMode && (
@@ -1230,6 +1482,23 @@ function Deck({
         </div>
         <div className="pitch-tools tray">
           <button
+            disabled={!title}
+            className={
+              deck.normalization_enabled !== false
+                ? "keylock enabled"
+                : "keylock"
+            }
+            title={`Programme loudness normalization toward -18 LUFS; measured source true peak capped at -1 dBTP. Applied ${(deck.normalization_gain_db ?? 0).toFixed(1)} dB, separate from trim.`}
+            aria-pressed={deck.normalization_enabled !== false}
+            onClick={() =>
+              send("set_normalization", {
+                enabled: deck.normalization_enabled === false,
+              })
+            }
+          >
+            LEVEL {(deck.normalization_gain_db ?? 0).toFixed(1)} dB
+          </button>
+          <button
             disabled={!title || deck.preparation_pending}
             className={deck.keylock ? "keylock enabled" : "keylock"}
             title="Preserve pitch when changing tempo"
@@ -1257,14 +1526,20 @@ function Deck({
   );
 }
 function Mixer({
-  engine,
+  engine: initialEngine,
   command,
   controllerSurface,
 }: {
   engine: EngineSnapshot;
-  command: (c: Command) => void;
+  command: (c: Command, revision?: number) => void;
   controllerSurface?: ControllerSurface;
 }) {
+  const controls = useSyncExternalStore(
+    engineStore.subscribeControls,
+    engineStore.getControls,
+  );
+  const engine =
+    controls.running === initialEngine.running ? controls : initialEngine;
   const [fxType, setFxType] = useState<"echo" | "reverb">("echo");
   useControl(
     "mixer",
@@ -1387,7 +1662,7 @@ function Mixer({
                   }
                   vertical
                 />
-                <Meter value={Math.max(...(deck.peak || [0, 0]))} />
+                <Meter deckId={i} />
               </div>
             </div>
           ))}
@@ -1416,6 +1691,7 @@ function Mixer({
             onChange={(mix) => command({ type: "set_cue_mix", mix })}
           />
         </div>
+        <OutputProtection />
         <div className="fx-row">
           <button
             className="fx-selector"
@@ -1469,6 +1745,7 @@ function Mixer({
   );
 }
 export default function App() {
+  engineStore.diagnostics.app_renders++;
   const [theme, setTheme] = useState<ThemeId>(readTheme);
   useEffect(() => {
     applyTheme(theme);
@@ -1479,9 +1756,16 @@ export default function App() {
   const [sourceJobs, setSourceJobs] = useState<
     NonNullable<AppState["spotify_decks"]>
   >([]);
+  const [pendingLoads, setPendingLoads] = useState<(LoadingTrack | null)[]>([
+    null,
+    null,
+  ]);
   const [librarySource, setLibrarySource] = useState<
     "local" | "spotify" | "next"
   >("local");
+  const [spotifyCollectionHost, setSpotifyCollectionHost] =
+    useState<HTMLDivElement | null>(null);
+  const activateSpotify = useCallback(() => setLibrarySource("spotify"), []);
   const [drawerOpen, updateDrawerOpen] = useState(false);
   const drawerOpenRef = useRef(false);
   const [browserNavigation, updateBrowserNavigation] =
@@ -1505,20 +1789,6 @@ export default function App() {
   );
   const [visibleBeats, setVisibleBeats] = useState(32);
   const [snapSeek, setSnapSeek] = useState(false);
-  const [mixGuide, setMixGuide] = useState(() => {
-    try {
-      return localStorage.getItem("pulsedeck.mixGuide") !== "off";
-    } catch {
-      return true;
-    }
-  });
-  useEffect(() => {
-    try {
-      localStorage.setItem("pulsedeck.mixGuide", mixGuide ? "on" : "off");
-    } catch {
-      /* The guide still works; only the choice is not remembered. */
-    }
-  }, [mixGuide]);
   const [showSampler, setShowSampler] = useState(false);
   const [appMenu, setAppMenu] = useState(false);
   const appMenuRef = useRef<HTMLDivElement>(null);
@@ -1550,14 +1820,28 @@ export default function App() {
     "Sample 16",
   ]);
   const [analysis, setAnalysis] = useState<AppState["analysis"]>();
-  const [analysisSettings, setAnalysisSettings] = useState<AnalysisSettings>();
-  const [engine, setEngine] = useState<EngineSnapshot>(emptyEngine);
-  const [snapshotTime, setSnapshotTime] = useState(0);
+  const engine = useSyncExternalStore(
+    engineStore.subscribeStructural,
+    engineStore.getStructural,
+  );
+  const snapshotTime = engineStore.receivedAt();
+  const metadataLoads = useRef<number[] | undefined>(undefined);
   const trackMetadata = useRef<(TrackRecord | null)[]>([null, null]);
   const metadataRevision = useRef(-1);
+  const metadataHydrated = useRef(false);
 
-  const transition = useTransitionGuide(engine, mixGuide);
-  const [library, setLibrary] = useState<TrackRecord[]>([]);
+  const deckLoading = engine.decks.map(
+    (_, deck) =>
+      pendingLoads[deck] ||
+      (sourceJobs[deck]?.preparing
+        ? {
+            source: sourceJobs[deck].uri || "",
+            title: "Spotify track",
+            cancellable: true,
+          }
+        : null),
+  );
+
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [devices, setDevices] = useState<AudioDeviceInfo[]>([]);
   const [midi, setMidi] = useState<MidiState>({});
@@ -1589,7 +1873,7 @@ export default function App() {
         });
       },
     ).then(register);
-    native<ControllerSurface>("get_controller_surface")
+    control<ControllerSurface>("controller.state")
       .then((surface) => {
         if (!disposed) setControllerSurface(surface);
       })
@@ -1600,6 +1884,50 @@ export default function App() {
     };
   }, []);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [queueNotice, setQueueNotice] = useState<{
+    queue_id: string;
+    state: string;
+    reason?: string;
+    decision_required?: boolean;
+  } | null>(null);
+  useEffect(() => {
+    if (!isDesktop) return;
+    let disposed = false;
+    let stop: (() => void) | undefined;
+    const save = (payload: {
+      queue_id: string;
+      state: string;
+      reason?: string;
+      decision_required?: boolean;
+    }) => {
+      if (!disposed) setQueueNotice(payload);
+    };
+    listen<{
+      queue_id: string;
+      state: string;
+      reason?: string;
+      decision_required?: boolean;
+    }>("mix-queue-notice", ({ payload }) => save(payload))
+      .then(async (unlisten) => {
+        if (disposed) {
+          unlisten();
+          return;
+        }
+        stop = unlisten;
+        const q = await control<{
+          queue_id: string;
+          state: string;
+          reason?: string;
+          decision_required?: boolean;
+        }>("mix.queue.status", {});
+        if (q.decision_required) save(q);
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+      stop?.();
+    };
+  }, []);
   const [busy, setBusy] = useState(false);
   const [search, setSearch] = useState("");
   const [selection, updateSelection] = useState<string | number | null>(null);
@@ -1674,6 +2002,20 @@ export default function App() {
       error: true,
     });
   }, []);
+  const [libraryFilters, setLibraryFilters] = useState<LibraryFilters>({});
+  const localLibrary = useLocalLibrary(
+    search,
+    sort,
+    playlist,
+    fail,
+    libraryFilters,
+  );
+  const {
+    tracks: library,
+    setTracks: setLibrary,
+    reload: reloadLibrary,
+    loadMore: loadMoreLibrary,
+  } = localLibrary;
   const announce = useCallback((text: string) => {
     setNotice({ text });
     clearTimeout(noticeTimer.current);
@@ -1696,19 +2038,36 @@ export default function App() {
   const refresh = useCallback(async () => {
     if (!isDesktop) return;
     try {
-      const s = await native<AppState>("get_app_state");
-      trackMetadata.current = s.engine.decks.map((d) => d.track ?? null);
-      metadataRevision.current = -1;
-      setSnapshotTime(performance.now());
-      setEngine(s.engine);
-      setLibrary(s.library);
+      const s = await control<AppState>("app.state", { library: false });
+      const latest = engineStore.getTransport();
+      if (
+        !metadataHydrated.current &&
+        (!latest.load_revisions ||
+          s.engine.load_revisions?.every(
+            (r, i) => r === latest.load_revisions?.[i],
+          ))
+      ) {
+        trackMetadata.current = s.engine.decks.map((d, i) =>
+          stabilizeTrack(trackMetadata.current[i], d.track ?? null),
+        );
+        metadataLoads.current = s.engine.load_revisions;
+        metadataHydrated.current = true;
+        engineStore.publish(
+          withTrackMetadata(
+            latest.load_revisions ? latest : s.engine,
+            trackMetadata.current,
+            metadataLoads.current,
+          ),
+          engineStore.receivedAt() || performance.now(),
+        );
+      }
+      reloadLibrary();
       setPlaylists(s.playlists);
       setDevices(s.audio_devices);
       setMidi(s.midi);
       setSmartModes(s.smart_modes);
       setSourceJobs(s.spotify_decks || []);
       setAnalysis(s.analysis);
-      setAnalysisSettings(s.analysis_settings);
       hydrateAudio(s.audio_status);
       setDevice(
         (d) =>
@@ -1721,43 +2080,77 @@ export default function App() {
     } catch (e) {
       fail(e);
     }
-  }, [fail, hydrateAudio]);
+  }, [fail, hydrateAudio, reloadLibrary]);
   useEffect(() => {
     refresh();
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
+    let metadataPending = false;
+    const fetchMetadata = async () => {
+      if (metadataPending) return;
+      metadataPending = true;
+      try {
+        const started = performance.now();
+        const metadata = await control<EngineMetadata>("engine.metadata");
+        metadataTimings.record(performance.now() - started);
+        if (cancelled) return;
+        trackMetadata.current = metadata.tracks.map((t, i) =>
+          stabilizeTrack(trackMetadata.current[i], t),
+        );
+        metadataLoads.current = metadata.load_revisions;
+        metadataRevision.current = metadata.revision;
+        metadataHydrated.current = true;
+        if (metadata.samples)
+          setSampleNames(
+            metadata.samples.map((t, i) => t?.title || `Sample ${i + 1}`),
+          );
+        // Metadata arrives separately; attach it only to the matching source epoch.
+        engineStore.publish(
+          withTrackMetadata(
+            engineStore.getTransport(),
+            trackMetadata.current,
+            metadataLoads.current,
+          ),
+          engineStore.receivedAt(),
+        );
+      } catch (error) {
+        if (!cancelled) fail(error);
+      } finally {
+        metadataPending = false;
+      }
+    };
     const poll = async () => {
+      const started = performance.now();
+      let delay = 33;
       try {
         if (isDesktop && !document.hidden) {
-          const s = await native<EngineTransport>("get_engine_transport");
-          const receivedAt = performance.now();
-          if (s.metadata_revision !== metadataRevision.current) {
-            const metadata = await native<EngineMetadata>(
-              "get_engine_metadata",
-            );
-            if (cancelled) return;
-            trackMetadata.current = metadata.tracks;
-            if (metadata.samples)
-              setSampleNames(
-                metadata.samples.map(
-                  (sample, i) => sample?.title || `Sample ${i + 1}`,
-                ),
-              );
-            metadataRevision.current = metadata.revision;
-          }
-          if (!cancelled) {
-            setSnapshotTime(receivedAt);
-            setEngine(withTrackMetadata(s.engine, trackMetadata.current));
-          }
+          const s = await control<EngineTransport>("engine.transport");
+          transportTimings.record(performance.now() - started);
+          if (cancelled) return;
+          engineStore.publish(
+            withTrackMetadata(s, trackMetadata.current, metadataLoads.current),
+            performance.now(),
+          );
+          // A large metadata delivery never holds up clock delivery.
+          if (
+            typeof s.metadata_revision === "number"
+              ? s.metadata_revision !== metadataRevision.current
+              : metadataRevision.current < 0 ||
+                !s.load_revisions?.every(
+                  (r, i) => r === metadataLoads.current?.[i],
+                )
+          )
+            void fetchMetadata();
         }
-      } catch (e) {
-        if (!cancelled) {
-          fail(e);
-          timer = setTimeout(poll, 1000);
-        }
-        return;
+      } catch (error) {
+        if (!cancelled) fail(error);
+        delay = 1000;
       }
-      if (!cancelled) timer = setTimeout(poll, 33);
+      if (!cancelled)
+        timer = setTimeout(
+          poll,
+          Math.max(0, delay - (performance.now() - started)),
+        );
     };
     poll();
     return () => {
@@ -1769,7 +2162,7 @@ export default function App() {
     if (!isDesktop) return;
     let disposed = false;
     const timer = setInterval(() => {
-      native<
+      control<
         Pick<
           AppState,
           | "midi"
@@ -1779,15 +2172,17 @@ export default function App() {
           | "audio_status"
           | "audio_devices"
         >
-      >("get_activity_state")
+      >("app.activity")
         .then((activity) => {
           if (disposed) return;
-          setMidi(activity.midi);
-          setAnalysis(activity.analysis);
-          setSmartModes(activity.smart_modes);
-          setSourceJobs(activity.spotify_decks || []);
+          setMidi((old) => retainUnchanged(old, activity.midi));
+          setAnalysis((old) => retainUnchanged(old, activity.analysis));
+          setSmartModes((old) => retainUnchanged(old, activity.smart_modes));
+          setSourceJobs((old) =>
+            retainUnchanged(old, activity.spotify_decks || []),
+          );
           hydrateAudio(activity.audio_status);
-          setDevices(activity.audio_devices);
+          setDevices((old) => retainUnchanged(old, activity.audio_devices));
         })
         .catch(fail);
     }, 1500);
@@ -1796,9 +2191,16 @@ export default function App() {
       clearInterval(timer);
     };
   }, [fail]);
+  useEffect(() => {
+    if (analysis && (analysis.active || analysis.completed > 0)) void refresh();
+  }, [analysis?.active, analysis?.completed, refresh]);
   const waveformCommand = useCallback(
-    (c: Command) =>
-      native<void>("engine_command", { command: c }).catch((error) => {
+    (c: Command, revision?: number) =>
+      control<void>(
+        "engine.command",
+        { command: c },
+        { expected_load_revision: revision },
+      ).catch((error) => {
         fail(error);
         throw error;
       }),
@@ -1808,9 +2210,50 @@ export default function App() {
     if (!isDesktop) return;
     let disposed = false;
     let stop: UnlistenFn | undefined;
-    listen("library-updated", () => {
-      void refresh();
-    })
+    const pendingKinds = new Set<string>();
+    let fetching = false;
+    const fetchChanges = async () => {
+      if (fetching) return;
+      fetching = true;
+      try {
+        while (!disposed && pendingKinds.size) {
+          const kinds = new Set(pendingKinds);
+          pendingKinds.clear();
+          // Cue revisions are delivered through engine.metadata; refreshing the
+          // entire app here would throw away immutable waveform tiles.
+          if (
+            kinds.has("library") ||
+            kinds.has("analysis") ||
+            kinds.has("details")
+          ) {
+            if (!disposed) reloadLibrary();
+          } else if (kinds.has("metadata") && !disposed) {
+            reloadLibrary(true);
+          }
+          if (kinds.has("playlists") || kinds.has("library")) {
+            const next = await control<Playlist[]>("playlist.list");
+            if (!disposed) setPlaylists(next);
+          }
+        }
+      } catch (error) {
+        if (!disposed) fail(error);
+      } finally {
+        fetching = false;
+      }
+    };
+    listen<{ kind?: string; command?: string }>(
+      "library-updated",
+      ({ payload }) => {
+        if (payload?.kind === "cues") metadataRevision.current = -1;
+        const details = [
+          "library.edit_details",
+          "library.edit_taxonomy",
+          "library.write_metadata",
+        ].includes(payload?.command || "");
+        pendingKinds.add(details ? "details" : payload?.kind || "library");
+        void fetchChanges();
+      },
+    )
       .then((unlisten) => {
         if (disposed) unlisten();
         else stop = unlisten;
@@ -1822,21 +2265,40 @@ export default function App() {
     };
   }, [refresh, fail]);
   const command = useCallback(
-    (c: Command) => {
-      native("engine_command", { command: c }).catch(fail);
+    (c: Command, revision?: number) => {
+      const deck = typeof c.deck === "number" ? c.deck : undefined;
+      control(
+        "engine.command",
+        { command: c },
+        {
+          expected_load_revision:
+            revision ??
+            (deck === undefined
+              ? undefined
+              : engineStore.getTransport().load_revisions?.[deck]),
+        },
+      ).catch(fail);
     },
     [fail],
   );
   const setControllerTempoRange = useCallback(
     (deck: number, range: number) => {
       if (isDesktop)
-        native("set_controller_tempo_range", { deck, range }).catch(fail);
+        control("controller.tempo_range", { deck, range }).catch(fail);
     },
     [fail],
   );
   const loadSpotify = useCallback(
     async (deck: number, track: Pick<SpotifyTrack, "uri" | "title">) => {
       const request = ++deckLoadRequest.current[deck];
+      setDrawerOpen(false);
+      setPendingLoads((old) =>
+        old.map((item, i) =>
+          i === deck
+            ? { source: track.uri, title: track.title, cancellable: true }
+            : item,
+        ),
+      );
       setSourceJobs((old) =>
         [0, 1].map((i) =>
           i === deck
@@ -1845,7 +2307,7 @@ export default function App() {
         ),
       );
       try {
-        await native("load_spotify_track", { deck, uri: track.uri });
+        await control("deck.load", { deck, uri: track.uri });
         if (deckLoadRequest.current[deck] !== request) return;
         await refresh();
         announce(`Loaded ${track.title} on deck ${deck === 0 ? "A" : "B"}`);
@@ -1853,103 +2315,166 @@ export default function App() {
         if (deckLoadRequest.current[deck] !== request) return;
         await refresh();
         throw error;
+      } finally {
+        if (deckLoadRequest.current[deck] === request)
+          setPendingLoads((old) =>
+            old.map((item, i) => (i === deck ? null : item)),
+          );
       }
     },
-    [refresh, announce],
+    [refresh, announce, setDrawerOpen],
   );
-  const importTracks = useCallback(async () => {
-    setBusy(true);
-    try {
-      const paths = await native<string[]>("choose_tracks");
-      if (paths.length) {
-        const tracks = await native<TrackRecord[]>("import_tracks", { paths });
-        await refresh();
-        announce(
-          `Imported ${tracks.length} track${tracks.length === 1 ? "" : "s"}${tracks.length < paths.length ? `; ${paths.length - tracks.length} file(s) failed — see Library settings` : ""}`,
+  const cancelLoad = useCallback(
+    async (deck: number) => {
+      const request = ++deckLoadRequest.current[deck];
+      try {
+        await control("deck.load.cancel", { deck });
+        if (deckLoadRequest.current[deck] !== request) return;
+        setPendingLoads((old) =>
+          old.map((item, i) => (i === deck ? null : item)),
         );
+        await refresh();
+      } catch (error) {
+        if (deckLoadRequest.current[deck] === request) {
+          setPendingLoads((old) =>
+            old.map((item, i) => (i === deck ? null : item)),
+          );
+          await refresh();
+          fail(error);
+        }
       }
-    } catch (e) {
-      fail(e);
-    } finally {
-      setBusy(false);
-    }
-  }, [refresh, announce, fail]);
+    },
+    [refresh, fail],
+  );
+  const startImport = useCallback(
+    async (kind: "files" | "folder") => {
+      if (analysis?.active || busy) return;
+      setBusy(true);
+      try {
+        const tracks = await control<{ id: number }[]>("library.import", {
+          dialog: true,
+          kind,
+          summary: true,
+        });
+        if (tracks.length) {
+          await refresh();
+          announce(
+            `Imported ${tracks.length} track${tracks.length === 1 ? "" : "s"}`,
+          );
+        }
+      } catch (e) {
+        fail(e);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [analysis?.active, busy, refresh, announce, fail],
+  );
+  const importTracks = useCallback(() => startImport("files"), [startImport]);
+  const importFolder = useCallback(() => startImport("folder"), [startImport]);
   const load = useCallback(
     async (deck: number, path: string) => {
+      const request = ++deckLoadRequest.current[deck];
+      const track = library.find(
+        (t) => t.path === path || `local:${t.id}` === path,
+      );
+      setDrawerOpen(false);
+      setPendingLoads((old) =>
+        old.map((item, i) =>
+          i === deck
+            ? {
+                source: path,
+                title: track?.title || path.split(/[\\/]/).pop() || "Track",
+                artist: track?.artist ?? undefined,
+                cancellable: false,
+              }
+            : item,
+        ),
+      );
       try {
-        await native("load_track", { deck, path });
+        await control("deck.load", { deck, path });
+        if (deckLoadRequest.current[deck] !== request) return;
         await refresh();
         announce(`Track loaded to deck ${deck === 0 ? "A" : "B"}`);
       } catch (e) {
+        if (deckLoadRequest.current[deck] !== request) return;
+        await refresh();
         fail(e);
+      } finally {
+        if (deckLoadRequest.current[deck] === request)
+          setPendingLoads((old) =>
+            old.map((item, i) => (i === deck ? null : item)),
+          );
       }
     },
-    [refresh, announce, fail],
+    [refresh, announce, fail, library, setDrawerOpen],
   );
   const demo = useCallback(
     async (deck: number) => {
+      const request = ++deckLoadRequest.current[deck];
+      setDrawerOpen(false);
+      setPendingLoads((old) =>
+        old.map((item, i) =>
+          i === deck
+            ? {
+                source: `demo:${deck}`,
+                title: "Generated test tone",
+                cancellable: false,
+              }
+            : item,
+        ),
+      );
       try {
-        await native("load_demo", { deck });
+        await control("deck.demo", { deck });
+        if (deckLoadRequest.current[deck] !== request) return;
         await refresh();
         announce("Generated test tone loaded");
       } catch (e) {
+        if (deckLoadRequest.current[deck] !== request) return;
         fail(e);
+      } finally {
+        if (deckLoadRequest.current[deck] === request)
+          setPendingLoads((old) =>
+            old.map((item, i) => (i === deck ? null : item)),
+          );
       }
     },
-    [refresh, announce, fail],
+    [refresh, announce, fail, setDrawerOpen],
   );
   const reanalyze = useCallback(
-    async (deck: number) => {
-      await native("reanalyze_loaded_track", { deck });
+    async (deck: number, revision?: number) => {
+      await control(
+        "deck.analyze",
+        { deck },
+        {
+          expected_load_revision:
+            revision ?? engineStore.getTransport().load_revisions?.[deck],
+        },
+      );
       await refresh();
       announce("Beat, key and waveform analysis updated");
     },
     [refresh, announce],
   );
-  const setVocabulary = useCallback(
-    async (deck: number, vocabulary: Vocabulary | null) => {
-      await native("set_section_vocabulary", { deck, vocabulary });
-      announce(
-        vocabulary === null
-          ? "Section labels follow the detected style"
-          : `Section labels set to ${vocabulary === "dance" ? "dance" : "hip-hop"}`,
-      );
-    },
-    [announce],
-  );
-  const saveAnalysisSettings = useCallback(
-    (change: Partial<AnalysisSettings>) =>
-      native<AnalysisSettings>("set_analysis_settings", {
-        settings: {
-          beat_model_spotify: true,
-          auto_hot_cues: true,
-          auto_memory_cues: true,
-          ...analysisSettings,
-          ...change,
-        },
-      })
-        .then(setAnalysisSettings)
-        .catch(fail),
-    [analysisSettings, fail],
-  );
   const recordingActive = !!(recording.recording || recording.active);
   useEffect(() => {
     if (!isDesktop) return;
-    native<RecordingStatus>("get_recording_status")
+    control<RecordingStatus>("recording.status")
       .then(setRecording)
       .catch(() => {});
     if (!recordingActive) return;
     const timer = setInterval(async () => {
       try {
-        setRecording(await native<RecordingStatus>("get_recording_status"));
+        setRecording(await control<RecordingStatus>("recording.status"));
       } catch {}
     }, 1000);
     return () => clearInterval(timer);
   }, [recordingActive]);
   async function toggleRecording() {
     try {
-      const status = await native<RecordingStatus | null>(
-        recordingActive ? "stop_recording" : "start_recording",
+      const status = await control<RecordingStatus | null>(
+        recordingActive ? "recording.stop" : "recording.start",
+        recordingActive ? {} : { dialog: true },
       );
       if (status) {
         setRecording(status);
@@ -1969,36 +2494,26 @@ export default function App() {
       fail(e);
     }
   }
-  const visible = useMemo(() => {
-    const p = playlists.find((p) => p.id === playlist);
-    const q = search.toLowerCase();
-    return library
-      .filter(
-        (t) =>
-          (!p || p.track_ids.includes(t.id)) &&
-          `${t.title} ${t.artist || ""} ${t.bpm || ""} ${t.key || ""} ${(t.tags || []).join(" ")}`
-            .toLowerCase()
-            .includes(q),
-      )
-      .sort((a, b) =>
-        sort === "title"
-          ? a.title.localeCompare(b.title)
-          : sort === "bpm"
-            ? val(a.bpm) - val(b.bpm)
-            : val(a.duration_seconds) - val(b.duration_seconds),
-      );
-  }, [library, playlists, playlist, search, sort]);
+  const visible = library;
+  const controllerContext = useRef<TrackRecord[] | null>(null);
+  const syncControllerSelection = useCallback(
+    async (id: string | number, tracks: TrackRecord[]) => {
+      if (controllerContext.current !== tracks) {
+        await control("controller.context", {
+          track_ids: tracks.map((t) => t.id),
+          selected_track_id: id,
+        });
+        controllerContext.current = tracks;
+      } else await control("controller.selection", { track_id: id });
+    },
+    [],
+  );
   useEffect(() => {
     if (!isDesktop) return;
     let canceled = false;
     let unlisten: UnlistenFn | undefined;
     listen<number>("controller_selection", (event) => {
       setSelection(event.payload);
-      requestAnimationFrame(() =>
-        document
-          .querySelector(`[data-track-id="${event.payload}"]`)
-          ?.scrollIntoView({ block: "nearest" }),
-      );
     })
       .then((fn) => {
         if (canceled) fn();
@@ -2031,8 +2546,14 @@ export default function App() {
       navigate("rotate");
       if (!wasHome)
         setLibrarySource((source) => {
-          const sources = ["spotify", "local", "next"] as const;
-          return sources[browseIndex(sources, source, action.delta)];
+          const sources = ["local", "next"] as const;
+          return sources[
+            browseIndex(
+              sources,
+              source === "next" ? "next" : "local",
+              action.delta,
+            )
+          ];
         });
       return;
     }
@@ -2085,7 +2606,10 @@ export default function App() {
         isInstantDouble(previous, action.deck, now)
       ) {
         deckLoadRequest.current[action.deck]++;
-        await native("instant_double", { deck: action.deck });
+        setPendingLoads((old) =>
+          old.map((item, i) => (i === action.deck ? null : item)),
+        );
+        await control("deck.instant_double", { deck: action.deck });
         await refresh();
         announce(`Instant double on deck ${action.deck === 0 ? "A" : "B"}`);
         return;
@@ -2096,6 +2620,33 @@ export default function App() {
         );
         return;
       }
+    }
+    if (
+      action.type === "browse" &&
+      browserNavigationRef.current.layer === "playlists" &&
+      librarySource !== "next"
+    ) {
+      const buttons = Array.from(
+        document.querySelectorAll<HTMLButtonElement>(
+          ".unified-library > aside [data-local-collection], .unified-library > aside [data-browser-id]",
+        ),
+      );
+      const selected =
+        document.activeElement instanceof HTMLButtonElement &&
+        buttons.includes(document.activeElement)
+          ? document.activeElement
+          : buttons.find((b) =>
+              librarySource === "local"
+                ? b.dataset.localCollection === String(playlist ?? "all")
+                : b.getAttribute("aria-pressed") === "true",
+            );
+      const index = browseIndex(buttons, selected, action.delta);
+      if (index >= 0) {
+        buttons[index].click();
+        buttons[index].focus({ preventScroll: true });
+        buttons[index].scrollIntoView({ block: "nearest" });
+      }
+      return;
     }
     if (librarySource === "next") {
       await nextBrowser.current?.handle(action);
@@ -2122,11 +2673,20 @@ export default function App() {
           setSelection(null);
         }
       } else {
-        const ids = visible.map((track) => track.id);
+        let currentTracks = visible;
+        const currentIndex = visible.findIndex(
+          (track) => track.id === selectedLocalRow.current,
+        );
+        if (
+          localLibrary.hasMore &&
+          currentIndex + action.delta >= visible.length - 5
+        )
+          currentTracks = await loadMoreLibrary();
+        const ids = currentTracks.map((track) => track.id);
         const index = browseIndex(ids, selectedLocalRow.current, action.delta);
         if (index >= 0) {
           setSelection(ids[index]);
-          await native("set_controller_selection", { track_id: ids[index] });
+          await syncControllerSelection(ids[index], currentTracks);
         }
       }
     } else if (action.type === "load") {
@@ -2239,27 +2799,6 @@ export default function App() {
     };
   }, [fail]);
   useEffect(() => {
-    if (librarySource !== "local" || !drawerOpen || localCollectionFocus)
-      return;
-    const row = document.querySelector<HTMLElement>(
-      `[data-track-id="${selection}"]`,
-    );
-    scrollBrowserSelection(row);
-    if (browserNavigation.layer === "tracks")
-      (
-        row ??
-        document.querySelector<HTMLElement>(
-          '[data-browser-pane="local-tracks"]',
-        )
-      )?.focus({ preventScroll: true });
-  }, [
-    selection,
-    drawerOpen,
-    librarySource,
-    localCollectionFocus,
-    browserNavigation.layer,
-  ]);
-  useEffect(() => {
     if (librarySource === "local" && drawerOpen && localCollectionFocus)
       scrollBrowserSelection(
         document.querySelector(
@@ -2276,15 +2815,24 @@ export default function App() {
     (id: string | number) => {
       setSelection(id);
       setLocalCollectionFocus(false);
-      native("set_controller_selection", { track_id: id }).catch(fail);
+      void syncControllerSelection(id, visible).catch(fail);
     },
-    [fail],
+    [fail, visible, syncControllerSelection],
   );
   useEffect(() => {
+    let current = true;
+    controllerContext.current = null;
     if (isDesktop)
-      native("set_controller_browse_context", {
+      control("controller.context", {
         track_ids: visible.map((t) => t.id),
-      }).catch(fail);
+      })
+        .then(() => {
+          if (current) controllerContext.current = visible;
+        })
+        .catch(fail);
+    return () => {
+      current = false;
+    };
   }, [visible, fail]);
   const saveTags = useCallback(async (id: string | number, tags: string[]) => {
     const updated = await control<TrackRecord>("library.set_tags", {
@@ -2295,10 +2843,19 @@ export default function App() {
       tracks.map((t) => (t.id === id ? { ...t, tags: updated.tags } : t)),
     );
   }, []);
-  const trackRows = useMemo(
-    () =>
-      visible.map((track, i) => (
+  const localTracksPane = useRef<HTMLDivElement>(null);
+  const localTrackKey = useCallback(
+    (index: number) => visible[index].id,
+    [visible],
+  );
+  const renderTrackRow = useCallback(
+    (i: number, measure: (node: HTMLTableRowElement | null) => void) => {
+      const track = visible[i];
+      return (
         <tr
+          ref={measure}
+          data-index={i}
+          aria-rowindex={i + 2}
           data-track-id={track.id}
           data-browser-id={String(track.id)}
           tabIndex={-1}
@@ -2316,9 +2873,19 @@ export default function App() {
           <td className="track-number">{String(i + 1).padStart(2, "0")}</td>
           <td>
             <div className="track-cell">
-              <div className="track-art">
-                <Music2 size={17} />
-              </div>
+              <TrackArtwork localId={track.id} />
+              {track.rating || track.color ? (
+                <span
+                  className="track-classification"
+                  aria-label={`${track.rating || 0} stars${track.color ? `, color ${track.color}` : ""}`}
+                >
+                  <span
+                    className="track-color"
+                    style={{ background: track.color || "transparent" }}
+                  />
+                  {track.rating ? "★".repeat(track.rating) : ""}
+                </span>
+              ) : null}
               <div>
                 <strong>{track.title}</strong>
                 <span>
@@ -2366,8 +2933,9 @@ export default function App() {
             />
           </td>
         </tr>
-      )),
-    [visible, selection, load, selectTrack, saveTags],
+      );
+    },
+    [visible, selection, load, selectTrack, saveTags, engine.decks[0]?.playing],
   );
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
@@ -2410,16 +2978,16 @@ export default function App() {
       }
       if (e.code === "KeyI" && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
-        importTracks();
+        importFolder();
       }
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [command, settings, importTracks, librarySource, fail]);
+  }, [command, settings, importFolder, librarySource, fail]);
   async function refreshPorts() {
     try {
-      const ports = await native<{ inputs: string[]; outputs: string[] }>(
-        "list_midi_ports",
+      const ports = await control<{ inputs: string[]; outputs: string[] }>(
+        "midi.ports",
       );
       setMidiInputs(ports.inputs);
       setMidiOutputs(ports.outputs);
@@ -2432,7 +3000,7 @@ export default function App() {
   async function openSettings() {
     setSettings(true);
     const results = await Promise.allSettled([
-      native<AudioDeviceInfo[]>("list_audio_devices").then(setDevices),
+      control<AudioDeviceInfo[]>("audio.devices").then(setDevices),
       refreshPorts(),
     ]);
     for (const result of results)
@@ -2443,7 +3011,7 @@ export default function App() {
     audioChangePending.current = true;
     setAudioChanging(true);
     try {
-      await native("start_audio", {
+      await control("audio.start", {
         device_name: device || null,
         buffer_frames: buffer,
         routing: {
@@ -2466,9 +3034,7 @@ export default function App() {
     "app",
     {
       theme: (v) =>
-        setTheme(
-          controlEnum(v, ["aluminium", "ivory", "graphite"]),
-        ),
+        setTheme(controlEnum(v, ["aluminium", "ivory", "graphite"])),
       source: (v) => setLibrarySource(controlEnum(v, ["local", "spotify"])),
       browser: (v) => setDrawerOpen(controlBoolean(v)),
       "browser-toggle": () => setDrawerOpen((v) => !v),
@@ -2483,7 +3049,7 @@ export default function App() {
         if (!track) throw new Error("Track is not in the visible browser");
         setSelection(track.id);
         setLocalCollectionFocus(false);
-        await native("set_controller_selection", { track_id: track.id });
+        await syncControllerSelection(track.id, visible);
       },
       collection: (v) => {
         if (v === null || v === "all") {
@@ -2527,7 +3093,7 @@ export default function App() {
       "playlist-form": (v) => setNewPlaylist(controlBoolean(v)),
       "playlist-name": (v) => setPlaylistName(controlString(v)),
       "playlist-submit": async () => {
-        await native("create_playlist", { name: playlistName });
+        await control("playlist.create", { name: playlistName });
         setNewPlaylist(false);
         setPlaylistName("");
         await refresh();
@@ -2572,7 +3138,7 @@ export default function App() {
         if (d.cue_route !== undefined) setCueRoute(controlBoolean(d.cue_route));
       },
       "audio-apply": async () => {
-        await native("start_audio", {
+        await control("audio.start", {
           device_name: device || null,
           buffer_frames: buffer,
           routing: {
@@ -2594,7 +3160,7 @@ export default function App() {
       },
       "midi-apply": async () => {
         setMidi(
-          await native("connect_midi", {
+          await control("midi.connect", {
             input_name: midiInput,
             output_name: midiOutput || null,
           }),
@@ -2602,7 +3168,7 @@ export default function App() {
       },
       "ports-refresh": refreshPorts,
       refresh,
-      "import-dialog": importTracks,
+      "import-dialog": importFolder,
       "recording-dialog": toggleRecording,
     },
     {
@@ -2636,8 +3202,11 @@ export default function App() {
       midi_draft: { input: midiInput, output: midiOutput },
     },
   );
+  const importActive = analysis?.active ?? false;
+  const importCurrentFile = analysis?.current_path?.split(/[\\/]/).pop();
   return (
     <div className="app-shell">
+      <PerformanceDiagnostics />
       <header className="topbar" data-tauri-drag-region>
         <div className="brand" data-tauri-drag-region>
           <svg
@@ -2673,12 +3242,20 @@ export default function App() {
               <Circle size={8} fill="currentColor" /> REC
             </button>
           )}
-          {busy && (
-            <span className="import-progress" role="status">
+          {(busy || importActive) && (
+            <span
+              className="import-progress"
+              role="status"
+              title={
+                importCurrentFile
+                  ? `${analysis?.analyzing ? "Analyzing" : "Importing"} ${importCurrentFile}`
+                  : undefined
+              }
+            >
               <LoaderCircle size={11} className="spin" />
-              {analysis?.active
-                ? `${analysis.completed}/${analysis.total}`
-                : "importing"}
+              {importActive
+                ? `${analysis?.analyzing ? "Analyzing" : "Importing"} ${analysis!.completed}/${analysis!.total}`
+                : "Choosing music…"}
             </span>
           )}
           <div
@@ -2687,44 +3264,30 @@ export default function App() {
             onKeyDownCapture={browserNavigationKey}
           >
             <button
-              data-browser-source="spotify"
-              aria-pressed={drawerOpen && librarySource === "spotify"}
-              title={
-                drawerOpen && librarySource === "spotify"
-                  ? "Hide Spotify"
-                  : "Open Spotify"
+              data-browser-source={
+                librarySource === "next" ? "local" : librarySource
               }
-              className={`${drawerOpen && librarySource === "spotify" ? "active" : ""} ${browserNavigation.layer === "footer" && librarySource === "spotify" ? "controller-focused" : ""}`}
+              aria-pressed={drawerOpen && librarySource !== "next"}
+              title={
+                drawerOpen && librarySource !== "next"
+                  ? "Hide Library"
+                  : "Open Library"
+              }
+              className={`${drawerOpen && librarySource !== "next" ? "active" : ""} ${browserNavigation.layer === "footer" && librarySource !== "next" ? "controller-focused" : ""}`}
               onClick={() => {
-                setLibrarySource("spotify");
-                setDrawerOpen(!(drawerOpen && librarySource === "spotify"));
+                if (librarySource === "next") setLibrarySource("local");
+                setDrawerOpen(!(drawerOpen && librarySource !== "next"));
               }}
             >
-              <Radio size={13} /> Spotify
-            </button>
-            <button
-              data-browser-source="local"
-              aria-pressed={drawerOpen && librarySource === "local"}
-              title={
-                drawerOpen && librarySource === "local"
-                  ? "Hide local tracks"
-                  : "Open local tracks"
-              }
-              className={`${drawerOpen && librarySource === "local" ? "active" : ""} ${browserNavigation.layer === "footer" && librarySource === "local" ? "controller-focused" : ""}`}
-              onClick={() => {
-                setLibrarySource("local");
-                setDrawerOpen(!(drawerOpen && librarySource === "local"));
-              }}
-            >
-              <Library size={13} /> Local <span>{library.length}</span>
+              <Library size={13} /> Library
             </button>
             <button
               data-browser-source="next"
               aria-pressed={drawerOpen && librarySource === "next"}
               title={
                 drawerOpen && librarySource === "next"
-                  ? "Hide next-track suggestions"
-                  : "What should I play next?"
+                  ? "Hide next-move suggestions"
+                  : "Suggest the next move"
               }
               className={`${drawerOpen && librarySource === "next" ? "active" : ""} ${browserNavigation.layer === "footer" && librarySource === "next" ? "controller-focused" : ""}`}
               onClick={() => {
@@ -2732,7 +3295,7 @@ export default function App() {
                 setDrawerOpen(!(drawerOpen && librarySource === "next"));
               }}
             >
-              <SkipForward size={13} /> Next
+              <SkipForward size={13} /> Suggest
             </button>
           </div>
           <div
@@ -2805,7 +3368,7 @@ export default function App() {
                       (d) => d.track?.recording_allowed === false,
                     )
                       ? "Recording is unavailable while a Spotify source is loaded"
-                      : "Record the native deck and sampler mix as WAV"
+                      : "Record the control deck and sampler mix as WAV"
                   }
                   onClick={() => {
                     toggleRecording();
@@ -2834,16 +3397,27 @@ export default function App() {
                 </button>
                 <button
                   role="menuitem"
-                  disabled={busy}
+                  disabled={busy || !!analysis?.active}
+                  onClick={() => {
+                    setAppMenu(false);
+                    void importFolder();
+                  }}
+                >
+                  <FolderPlus size={13} />
+                  {busy || analysis?.active
+                    ? `${analysis?.analyzing ? "Analyzing" : "Importing"}${analysis?.active ? ` ${analysis.completed}/${analysis.total}` : "…"}`
+                    : "Import folder…"}
+                </button>
+                <button
+                  role="menuitem"
+                  disabled={busy || !!analysis?.active}
                   onClick={() => {
                     setAppMenu(false);
                     void importTracks();
                   }}
                 >
                   <Plus size={13} />
-                  {busy
-                    ? `Analyzing${analysis?.active ? ` ${analysis.completed}/${analysis.total}` : "…"}`
-                    : "Import tracks…"}
+                  Import files…
                 </button>
                 <button
                   role="menuitem"
@@ -2890,17 +3464,6 @@ export default function App() {
                   RST
                 </button>
               </div>
-              <WaveformAlignment decks={engine.decks} />
-              <TransitionReadout
-                state={transition}
-                enabled={mixGuide}
-                onToggle={() => setMixGuide((on) => !on)}
-                onCue={(deck, seconds) => {
-                  command({ type: "set_cue_point", deck, seconds });
-                  if (!engine.decks[deck]?.playing)
-                    command({ type: "seek", deck, seconds });
-                }}
-              />
               <button
                 className={`snap-seek ${snapSeek ? "enabled" : ""}`}
                 title="Snap waveform seeks to the nearest beat"
@@ -2911,6 +3474,7 @@ export default function App() {
             </div>
             <DeckWaveform
               id={0}
+              loading={deckLoading[0]}
               deck={engine.decks[0] || {}}
               library={library}
               command={command}
@@ -2918,11 +3482,10 @@ export default function App() {
               snapSeek={snapSeek}
               waveformCommand={waveformCommand}
               snapshotTime={snapshotTime}
-              guides={transition.guides[0]}
-              guideCountdown={transition.countdowns[0]}
             />
             <DeckWaveform
               id={1}
+              loading={deckLoading[1]}
               deck={engine.decks[1] || {}}
               library={library}
               command={command}
@@ -2930,15 +3493,15 @@ export default function App() {
               snapSeek={snapSeek}
               waveformCommand={waveformCommand}
               snapshotTime={snapshotTime}
-              guides={transition.guides[1]}
-              guideCountdown={transition.countdowns[1]}
             />
           </section>
           {
             <div className="performance-area">
               <Deck
                 id={0}
-                guides={transition.guides[0]}
+                loading={deckLoading[0]}
+                loadError={sourceJobs[0]?.error}
+                cancelLoad={cancelLoad}
                 hardwareRange={controllerSurface?.tempo_ranges[0]}
                 onTempoRange={setControllerTempoRange}
                 hardwarePadMode={
@@ -2954,7 +3517,6 @@ export default function App() {
                 load={load}
                 demo={demo}
                 reanalyze={reanalyze}
-                setVocabulary={setVocabulary}
                 loadSpotify={(deck, track) =>
                   loadSpotify(deck, track).catch(fail)
                 }
@@ -2968,7 +3530,9 @@ export default function App() {
               />
               <Deck
                 id={1}
-                guides={transition.guides[1]}
+                loading={deckLoading[1]}
+                loadError={sourceJobs[1]?.error}
+                cancelLoad={cancelLoad}
                 hardwareRange={controllerSurface?.tempo_ranges[1]}
                 onTempoRange={setControllerTempoRange}
                 hardwarePadMode={
@@ -2984,7 +3548,6 @@ export default function App() {
                 load={load}
                 demo={demo}
                 reanalyze={reanalyze}
-                setVocabulary={setVocabulary}
                 loadSpotify={(deck, track) =>
                   loadSpotify(deck, track).catch(fail)
                 }
@@ -3032,9 +3595,9 @@ export default function App() {
                           title="Load an audio sample"
                           onClick={async () => {
                             try {
-                              const sample = await native<unknown>(
-                                "choose_sample",
-                                { slot },
+                              const sample = await control<unknown>(
+                                "sampler.load",
+                                { slot, dialog: true },
                               );
                               if (sample) {
                                 const name =
@@ -3081,284 +3644,353 @@ export default function App() {
           browserNavigation.layer === "tracks"
         }
         onNavigationKey={browserNavigationKey}
-        title={
-          librarySource === "spotify"
-            ? "Spotify"
-            : librarySource === "next"
-              ? "Next"
-              : "Local tracks"
-        }
+        title={librarySource === "next" ? "Suggest" : "Library"}
         icon={
-          librarySource === "spotify" ? (
-            <SpotifyLogo />
-          ) : librarySource === "next" ? (
+          librarySource === "next" ? (
             <SkipForward size={17} aria-hidden="true" />
           ) : (
             <Library size={17} aria-hidden="true" />
           )
         }
       >
-        {librarySource === "spotify" ? (
-          <>
-            {sourceJobs.map((job, deck) =>
-              job.preparing ? (
-                <div className="spotify-boundary" key={deck} role="status">
-                  Preparing deck {deck === 0 ? "A" : "B"} in memory…{" "}
-                  <button
-                    onClick={() =>
-                      native("cancel_spotify_load", { deck })
-                        .then(refresh)
-                        .catch(fail)
-                    }
-                  >
-                    Cancel
-                  </button>
-                </div>
-              ) : job.error ? (
-                <div className="spotify-error" key={deck} role="alert">
-                  Deck {deck === 0 ? "A" : "B"}: {job.error}
-                </div>
-              ) : null,
-            )}
-            <SpotifyPanel
-              compact
-              onLoadDeck={loadSpotify}
-              deckJobs={sourceJobs}
-              registerControllerBrowser={registerSpotifyBrowser}
-              controllerLayer={browserNavigation.layer}
-              onBrowserPaneChange={navigate}
-            />
-          </>
-        ) : librarySource === "next" ? (
-          <NextPanel
+        {librarySource === "next" ? (
+          <SuggestPanel
             engine={engine}
             active={drawerOpen}
             libraryRevision={library}
             controllerLayer={browserNavigation.layer}
             registerControllerBrowser={registerNextBrowser}
             onBrowserPaneChange={navigate}
-            onLoad={(deck: number, s: Suggestion) =>
-              s.spotify
-                ? loadSpotify(deck, { uri: s.source, title: s.title }).catch(
-                    fail,
-                  )
-                : load(deck, s.source)
-            }
             onError={fail}
           />
         ) : (
-          <section className="library-panel">
-            <div className="library-toolbar">
-              <div>
-                <h2>
-                  {playlists.find((p) => p.id === playlist)?.name ||
-                    "Your collection"}
-                </h2>
-                <span>
-                  {visible.length} tracks
-                  {library.length > 0
-                    ? ` · ${fmt(library.reduce((n, t) => n + val(t.duration_seconds), 0))} total`
-                    : ""}
-                </span>
-              </div>
-              <div className="library-actions">
-                <button
-                  onClick={() => setNewPlaylist(!newPlaylist)}
-                  aria-label="Create playlist"
-                >
-                  <Plus size={14} /> Playlist
-                </button>
-
-                <label className="search">
-                  <Search size={15} />
-                  <input
-                    placeholder="Search tracks, artist, BPM, tags…"
-                    aria-label="Search library"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                  />
-                  <kbd>⌘ I</kbd>
-                </label>
-                <select
-                  aria-label="Sort tracks"
-                  value={sort}
-                  onChange={(e) => setSort(e.target.value as typeof sort)}
-                >
-                  <option value="title">Title ↑</option>
-                  <option value="bpm">BPM ↑</option>
-                  <option value="duration">Duration ↑</option>
-                </select>
-              </div>
-            </div>
-            <div className="controller-browser-split">
-              <aside
-                className={`controller-playlists-pane ${localCollectionFocus && browserNavigation.layer !== "close" ? "pane-active" : ""}`}
-                aria-label="Local playlists"
-              >
-                <div className="browser-pane-heading">PLAYLISTS</div>
-                {[{ id: null, name: "All tracks" }, ...playlists].map(
-                  (collection) => (
-                    <button
-                      key={collection.id ?? "all"}
-                      data-local-collection={collection.id ?? "all"}
-                      className={
-                        playlist === collection.id ? "controller-selected" : ""
-                      }
-                      onClick={() => {
-                        setPlaylist(collection.id);
-                        setSelection(null);
-                        setLocalCollectionFocus(true);
-                      }}
-                    >
-                      {collection.name}
-                    </button>
-                  ),
-                )}
-              </aside>
-              <div
-                className={`controller-tracks-pane ${!localCollectionFocus && browserNavigation.layer !== "close" ? "pane-active" : ""}`}
-                data-browser-pane="local-tracks"
-                tabIndex={-1}
-                onPointerDown={() => setLocalCollectionFocus(false)}
-              >
-                <div className="browser-pane-heading">
-                  TRACKS <small>Press BROWSE to return to playlists</small>
-                </div>
-                {newPlaylist && (
-                  <form
-                    className="drawer-playlist-form"
-                    onSubmit={async (e) => {
-                      e.preventDefault();
-                      try {
-                        await native("create_playlist", {
-                          name: playlistName.trim(),
-                        });
-                        setNewPlaylist(false);
-                        setPlaylistName("");
-                        await refresh();
-                      } catch (e) {
-                        fail(e);
-                      }
+          <div className="unified-library" data-source={librarySource}>
+            <aside
+              className={`controller-playlists-pane ${localCollectionFocus && browserNavigation.layer !== "close" ? "pane-active" : ""}`}
+              aria-label="Library collections"
+            >
+              <div className="browser-pane-heading">LOCAL</div>
+              {[{ id: null, name: "All tracks" }, ...playlists].map(
+                (collection) => (
+                  <button
+                    key={collection.id ?? "all"}
+                    data-local-collection={collection.id ?? "all"}
+                    className={
+                      librarySource === "local" && playlist === collection.id
+                        ? "controller-selected"
+                        : ""
+                    }
+                    onClick={() => {
+                      setLibrarySource("local");
+                      setPlaylist(collection.id);
+                      setSelection(null);
+                      setLocalCollectionFocus(true);
                     }}
                   >
-                    <input
-                      autoFocus
-                      aria-label="Playlist name"
-                      placeholder="Playlist name"
-                      value={playlistName}
-                      onChange={(e) => setPlaylistName(e.target.value)}
-                    />
-                    <button disabled={!playlistName.trim()}>
-                      <Check size={14} /> Create
-                    </button>
-                  </form>
-                )}
-                <div className="track-table-wrapper">
-                  <table className="track-table local-track-table">
-                    <thead>
-                      <tr>
-                        <th className="track-number">#</th>
-                        <th>TITLE / ARTIST</th>
-                        <th>BPM</th>
-                        <th>KEY</th>
-                        <th>TIME</th>
-                        <th>DECK</th>
-                        <th>Tags</th>
-                      </tr>
-                    </thead>
-                    <tbody>{trackRows}</tbody>
-                  </table>
-                  {!visible.length && (
-                    <div className="empty-library">
-                      <div className="empty-icon">
-                        <Music2 size={26} />
-                      </div>
-                      <h3>
-                        {search
-                          ? "No matching tracks"
-                          : "A fresh start for your next set"}
-                      </h3>
-                      <p>
-                        {search
-                          ? "Try a different title, artist, BPM or tag."
-                          : "Import local audio, then drag a track onto either deck."}
-                      </p>
-                      {!search && (
-                        <button
-                          className="import-button"
-                          onClick={importTracks}
-                          disabled={busy}
-                        >
-                          <FolderPlus size={15} />
-                          Import your music
-                        </button>
-                      )}
+                    {collection.name}
+                  </button>
+                ),
+              )}
+              <div className="browser-pane-heading">SPOTIFY</div>
+              <button
+                className="spotify-library-home"
+                onClick={activateSpotify}
+              >
+                <Radio size={13} /> Spotify overview
+              </button>
+              <div
+                className="spotify-collection-host"
+                ref={setSpotifyCollectionHost}
+              />
+            </aside>
+            <div className="library-content">
+              <div
+                className="library-source-view"
+                hidden={librarySource !== "spotify"}
+              >
+                <SpotifyPanel
+                  compact
+                  collectionHost={spotifyCollectionHost}
+                  onActivate={activateSpotify}
+                  onLoadDeck={loadSpotify}
+                  deckJobs={sourceJobs}
+                  registerControllerBrowser={registerSpotifyBrowser}
+                  controllerLayer={
+                    librarySource === "spotify"
+                      ? browserNavigation.layer
+                      : "home"
+                  }
+                  onBrowserPaneChange={navigate}
+                />
+              </div>
+              <div
+                className="library-source-view"
+                hidden={librarySource !== "local"}
+              >
+                <section className="library-panel">
+                  <div className="library-toolbar">
+                    <div>
+                      <h2>
+                        {playlists.find((p) => p.id === playlist)?.name ||
+                          "Your collection"}
+                      </h2>
                       <span>
-                        {isDesktop
-                          ? "WAV · AIFF · MP3 · FLAC · AAC · OGG"
-                          : "Desktop preview · native audio is available in the app"}
+                        {localLibrary.total} tracks
+                        {library.length > 0
+                          ? ` · ${fmt(localLibrary.duration)} total`
+                          : ""}
                       </span>
                     </div>
-                  )}
-                </div>
-                <div className="library-footer">
-                  <span>
-                    {selected
-                      ? selected.title
-                      : "Select a track to inspect or load"}
-                  </span>
-                  <div>
-                    {selected && (
-                      <>
-                        <select
-                          aria-label="Add selected track to playlist"
-                          value=""
-                          onChange={async (e) => {
+                    <div className="library-actions">
+                      <button
+                        onClick={() => setNewPlaylist(!newPlaylist)}
+                        aria-label="Create playlist"
+                      >
+                        <Plus size={14} /> Playlist
+                      </button>
+
+                      <label className="search">
+                        <Search size={15} />
+                        <input
+                          placeholder="Search tracks, artist, BPM, tags…"
+                          aria-label="Search library"
+                          value={search}
+                          onChange={(e) => setSearch(e.target.value)}
+                        />
+                        <kbd>⌘ I</kbd>
+                      </label>
+                      <select
+                        aria-label="Sort tracks"
+                        value={sort}
+                        onChange={(e) => setSort(e.target.value as typeof sort)}
+                      >
+                        <option value="title">Title ↑</option>
+                        <option value="bpm">BPM ↑</option>
+                        <option value="duration">Duration ↑</option>
+                      </select>
+                    </div>
+                  </div>
+                  <LibraryTools
+                    selectedId={selected?.id ?? null}
+                    filters={libraryFilters}
+                    onFilters={setLibraryFilters}
+                    onSaved={reloadLibrary}
+                  />
+                  <div className="controller-browser-split">
+                    <div
+                      className={`controller-tracks-pane ${!localCollectionFocus && browserNavigation.layer !== "close" ? "pane-active" : ""}`}
+                      data-browser-pane="local-tracks"
+                      ref={localTracksPane}
+                      tabIndex={-1}
+                      onPointerDown={() => setLocalCollectionFocus(false)}
+                    >
+                      <div className="browser-pane-heading">
+                        TRACKS{" "}
+                        <small>Press BROWSE to return to playlists</small>
+                      </div>
+                      {newPlaylist && (
+                        <form
+                          className="drawer-playlist-form"
+                          onSubmit={async (e) => {
+                            e.preventDefault();
                             try {
-                              await native("add_to_playlist", {
-                                playlist_id: Number(e.target.value),
-                                track_id: selected.id,
+                              await control("playlist.create", {
+                                name: playlistName.trim(),
                               });
-                              await refresh();
-                              announce("Track added to playlist");
-                            } catch (err) {
-                              fail(err);
-                            }
-                          }}
-                        >
-                          <option value="">Add to playlist…</option>
-                          {playlists.map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.name}
-                            </option>
-                          ))}
-                        </select>
-                        <button
-                          onClick={async () => {
-                            try {
-                              await native("delete_track", { id: selected.id });
-                              setSelection(null);
+                              setNewPlaylist(false);
+                              setPlaylistName("");
                               await refresh();
                             } catch (e) {
                               fail(e);
                             }
                           }}
                         >
-                          Remove from collection
-                        </button>
-                      </>
-                    )}
-                    <span>
-                      <ArrowLeftRight size={12} />
-                      Drag to deck
-                    </span>
+                          <input
+                            autoFocus
+                            aria-label="Playlist name"
+                            placeholder="Playlist name"
+                            value={playlistName}
+                            onChange={(e) => setPlaylistName(e.target.value)}
+                          />
+                          <button disabled={!playlistName.trim()}>
+                            <Check size={14} /> Create
+                          </button>
+                        </form>
+                      )}
+                      <div className="track-table-wrapper">
+                        <table
+                          role="table"
+                          className="track-table local-track-table"
+                        >
+                          <thead>
+                            <tr role="row">
+                              <th role="columnheader" className="track-number">
+                                #
+                              </th>
+                              <th role="columnheader">TITLE / ARTIST</th>
+                              <th role="columnheader">BPM</th>
+                              <th role="columnheader">KEY</th>
+                              <th role="columnheader">TIME</th>
+                              <th role="columnheader">DECK</th>
+                              <th role="columnheader">Tags</th>
+                            </tr>
+                          </thead>
+                          <VirtualTrackRows
+                            count={visible.length}
+                            getKey={localTrackKey}
+                            scrollRef={localTracksPane}
+                            selectedIndex={visible.findIndex(
+                              (t) => t.id === selection,
+                            )}
+                            focusSelection={
+                              drawerOpen &&
+                              !localCollectionFocus &&
+                              browserNavigation.layer === "tracks"
+                            }
+                            queryKey={localLibrary.queryKey}
+                            hasMore={localLibrary.hasMore}
+                            loading={localLibrary.loading}
+                            onMore={loadMoreLibrary}
+                          >
+                            {renderTrackRow}
+                          </VirtualTrackRows>
+                        </table>
+                        {!visible.length && !localLibrary.loading && (
+                          <div className="empty-library">
+                            <div className="empty-icon">
+                              <Music2 size={26} />
+                            </div>
+                            <h3>
+                              {search
+                                ? "No matching tracks"
+                                : importActive
+                                  ? `${analysis?.analyzing ? "Analyzing" : "Importing"} ${analysis!.completed} of ${analysis!.total} tracks`
+                                  : "A fresh start for your next set"}
+                            </h3>
+                            <p>
+                              {search
+                                ? "Try a different title, artist, BPM or tag."
+                                : importActive
+                                  ? importCurrentFile
+                                    ? `${analysis?.analyzing ? "Analyzing" : "Importing"} ${importCurrentFile}`
+                                    : "Preparing your music library…"
+                                  : "Import local audio, then drag a track onto either deck."}
+                            </p>
+                            {!search && !importActive && (
+                              <button
+                                className="import-button"
+                                onClick={importFolder}
+                                disabled={busy || importActive}
+                              >
+                                <FolderPlus size={15} />
+                                Import a music folder
+                              </button>
+                            )}
+                            <span>
+                              {isDesktop
+                                ? "WAV · AIFF · MP3 · FLAC · AAC · OGG"
+                                : "Desktop preview · control audio is available in the app"}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                      <div className="library-footer">
+                        <span>
+                          {selected
+                            ? selected.title
+                            : "Select a track to inspect or load"}
+                        </span>
+                        <div>
+                          {selected && (
+                            <>
+                              <select
+                                aria-label="Add selected track to playlist"
+                                value=""
+                                onChange={async (e) => {
+                                  try {
+                                    await control("playlist.add", {
+                                      playlist: Number(e.target.value),
+                                      track: selected.id,
+                                    });
+                                    await refresh();
+                                    announce("Track added to playlist");
+                                  } catch (err) {
+                                    fail(err);
+                                  }
+                                }}
+                              >
+                                <option value="">Add to playlist…</option>
+                                {playlists.map((p) => (
+                                  <option key={p.id} value={p.id}>
+                                    {p.name}
+                                  </option>
+                                ))}
+                              </select>
+                              <button
+                                onClick={async () => {
+                                  try {
+                                    await control("library.remove", {
+                                      id: selected.id,
+                                    });
+                                    setSelection(null);
+                                    await refresh();
+                                  } catch (e) {
+                                    fail(e);
+                                  }
+                                }}
+                              >
+                                Remove from collection
+                              </button>
+                            </>
+                          )}
+                          <span>
+                            <ArrowLeftRight size={12} />
+                            Drag to deck
+                          </span>
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                </div>
+                </section>
               </div>
             </div>
-          </section>
+          </div>
         )}
       </TrackDrawer>
+      {queueNotice && (
+        <div
+          className="queue-outcome"
+          role={queueNotice.decision_required ? "alert" : "status"}
+        >
+          <strong>
+            {queueNotice.decision_required
+              ? "Mix needs attention"
+              : "Mix finished"}
+          </strong>
+          <span>
+            {queueNotice.state.replaceAll("_", " ")}
+            {queueNotice.reason
+              ? ` · ${queueNotice.reason.replaceAll("_", " ")}`
+              : ""}
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              setLibrarySource("next");
+              setDrawerOpen(true);
+            }}
+          >
+            Open Suggest
+          </button>
+          <button
+            type="button"
+            aria-label="Dismiss mix outcome"
+            onClick={() => setQueueNotice(null)}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
       {notice && (
         <div
           className={`toast ${notice.error ? "error" : ""}`}
@@ -3651,7 +4283,7 @@ export default function App() {
                           checked={smartModes.fader}
                           onChange={async (e) => {
                             try {
-                              await native("set_smart_modes", {
+                              await control("mixer.smart_modes", {
                                 fader: e.target.checked,
                                 cfx: smartModes.cfx,
                               });
@@ -3672,7 +4304,7 @@ export default function App() {
                           checked={smartModes.cfx}
                           onChange={async (e) => {
                             try {
-                              await native("set_smart_modes", {
+                              await control("mixer.smart_modes", {
                                 fader: smartModes.fader,
                                 cfx: e.target.checked,
                               });
@@ -3694,7 +4326,7 @@ export default function App() {
                       className="secondary"
                       onClick={async () => {
                         try {
-                          setDevices(await native("list_audio_devices"));
+                          setDevices(await control("audio.devices"));
                         } catch (e) {
                           fail(e);
                         }
@@ -3712,7 +4344,7 @@ export default function App() {
                             audioChangePending.current = true;
                             setAudioChanging(true);
                             try {
-                              await native("stop_audio");
+                              await control("audio.stop");
                               await refresh();
                             } catch (e) {
                               fail(e);
@@ -3810,8 +4442,8 @@ export default function App() {
                       disabled={!midiInput && !midi.connected}
                       onClick={async () => {
                         try {
-                          await native(
-                            midi.connected ? "disconnect_midi" : "connect_midi",
+                          await control(
+                            midi.connected ? "midi.disconnect" : "midi.connect",
                             midi.connected
                               ? undefined
                               : {
@@ -3842,23 +4474,24 @@ export default function App() {
                     <div>
                       <h3>Beat analysis</h3>
                       <p>
-                        A beat model finds every beat and beat 1 of each bar, in
-                        the background, so grid lines match the music.
+                        Imports add files and folders immediately. Beat, key and
+                        waveform analysis runs in the background when you load a
+                        track onto a deck, and is saved for next time.
                       </p>
                     </div>
                   </div>
                   <div className="migration-card">
                     <h4>Update library analysis</h4>
                     <p>
-                      Add song sections to older analyses. Existing Beat This!
-                      timing is reused; missing analysis is computed in the
-                      background. Manual BPM and grid edits are kept.
+                      Update beat, key and waveform analysis. Existing Beat
+                      This! timing is reused; missing analysis is computed in
+                      the background. Manual BPM and grid edits are kept.
                     </p>
                     {analysis?.active ? (
                       <button
                         className="secondary"
                         onClick={() =>
-                          native("cancel_library_analysis").catch(fail)
+                          control("library.analysis.cancel").catch(fail)
                         }
                       >
                         Cancel ({analysis.completed}/{analysis.total})
@@ -3869,8 +4502,8 @@ export default function App() {
                         disabled={busy}
                         onClick={async () => {
                           try {
-                            const updated = await native<TrackRecord[]>(
-                              "update_library_analysis",
+                            const updated = await control<TrackRecord[]>(
+                              "library.analysis.update",
                             );
                             await refresh();
                             announce(
@@ -3886,57 +4519,6 @@ export default function App() {
                         Update library analysis
                       </button>
                     )}
-                  </div>
-                  <div className="migration-card">
-                    <h4>Spotify tracks</h4>
-                    <p>
-                      Add song sections when Spotify tracks load or when you
-                      analyze a page. Beat and downbeat detection continues
-                      through the existing Beat This! implementation.
-                    </p>
-                    <label className="checkbox">
-                      <input
-                        type="checkbox"
-                        checked={analysisSettings?.beat_model_spotify ?? true}
-                        onChange={(e) =>
-                          saveAnalysisSettings({
-                            beat_model_spotify: e.target.checked,
-                          })
-                        }
-                      />
-                      Also analyze song sections on Spotify tracks
-                    </label>
-                  </div>
-                  <div className="migration-card">
-                    <h4>Automatic cues</h4>
-                    <p>
-                      Fill empty hot cue pads and memory cues from song
-                      sections. Cues you set, move or delete are never changed.
-                    </p>
-                    <label className="checkbox">
-                      <input
-                        type="checkbox"
-                        checked={analysisSettings?.auto_hot_cues ?? true}
-                        onChange={(e) =>
-                          saveAnalysisSettings({
-                            auto_hot_cues: e.target.checked,
-                          })
-                        }
-                      />
-                      Fill empty hot cue pads
-                    </label>
-                    <label className="checkbox">
-                      <input
-                        type="checkbox"
-                        checked={analysisSettings?.auto_memory_cues ?? true}
-                        onChange={(e) =>
-                          saveAnalysisSettings({
-                            auto_memory_cues: e.target.checked,
-                          })
-                        }
-                      />
-                      Mark every section with a memory cue
-                    </label>
                   </div>
                   <div className="settings-section-title">
                     <Library size={18} />
@@ -3958,9 +4540,14 @@ export default function App() {
                       onClick={async () => {
                         setBusy(true);
                         try {
-                          await native("import_rekordbox_xml");
-                          await refresh();
-                          announce("XML collection imported");
+                          const imported = await control<{ id: number }[]>(
+                            "library.import_xml",
+                            { dialog: true, summary: true },
+                          );
+                          if (imported.length) {
+                            await refresh();
+                            announce("XML collection imported");
+                          }
                         } catch (e) {
                           fail(e);
                         } finally {
@@ -3982,8 +4569,11 @@ export default function App() {
                       className="secondary"
                       onClick={async () => {
                         try {
-                          await native("export_rekordbox_xml");
-                          announce("Library export finished");
+                          const exported = await control<{
+                            path: string | null;
+                          }>("library.export_xml", { dialog: true });
+                          if (exported.path)
+                            announce("Library export finished");
                         } catch (e) {
                           fail(e);
                         }
@@ -4014,7 +4604,7 @@ export default function App() {
                     <div>
                       <h3>Build capabilities</h3>
                       <p>
-                        This is the first native two-deck performance
+                        This is the first control two-deck performance
                         implementation.
                       </p>
                     </div>

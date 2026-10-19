@@ -1,0 +1,8 @@
+Generated with the built-in Imagegen tool, 19 October 2026.
+Reference: PulseDeck header's 21-dot record mark (3,5,5,5,3 rows, orange center).
+Prompt: Create a production macOS PulseDeck app icon. Preserve twenty-one equally sized circular dots on an evenly spaced 5-by-5 grid with four corners omitted. Graphite dots and warm-orange center on a centered satin aluminium rounded-square tile, transparent outside. Restrained machined edges and soft lighting; crisp at small sizes. Front view, no text, no waveform, no equalizer, no extra objects or watermark.
+Master: pulsedeck-master.png. Bundle sizes generated with the installed Tauri icon CLI.
+
+User revision, 2026-10-19: remove the padding around the logo; the full generated image is the logo.
+Built-in Imagegen edit: full-bleed satin silver square; no transparent margin, rounded tile, inset plate, border or exterior shadow. Preserve 21 graphite recesses in rows 3,5,5,5,3, vivid orange center; enlarge formation to roughly 76% width. macOS supplies its icon mask.
+Source: exec-ee746295-dd5e-4aff-8c07-14408ced87d3.png

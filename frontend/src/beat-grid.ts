@@ -117,15 +117,6 @@ export function gridBeatTime(grid: BeatGrid, beat: number): number | null {
           grid.scale
     : grid.offset + (beat * 60) / grid.bpm;
 }
-export function reportedBeatPosition(deck: DeckSnapshot): number | null {
-  if (!deck.beatgrid_valid) return null;
-  if (deck.beat_position != null && Number.isFinite(deck.beat_position))
-    return deck.beat_position;
-  return gridBeatPosition(
-    deckBeatGrid(deck),
-    finite(deck.position_seconds, finite(deck.position, 0)),
-  );
-}
 function downbeatIndex(grid: BeatGrid, index: number): boolean {
   if (!grid.hasDownbeats) return false;
   if (grid.manual || !grid.beats) return (index - grid.anchor) % grid.meter === 0;

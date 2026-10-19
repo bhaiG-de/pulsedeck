@@ -23,8 +23,19 @@ struct DeckAtoms {
     position: AtomicU64,
     jog_touch: AtomicBool,
     position_revision: AtomicU64,
+    grid_revision: AtomicU64,
     rate: AtomicU64,
     tempo: AtomicU64,
+    actual_rate: AtomicU64,
+    playback_bpm: AtomicU64,
+    local_bpm: AtomicU64,
+    actual_playback_bpm: AtomicU64,
+    target_playback_bpm: AtomicU64,
+    fx_tail_active: AtomicBool,
+    restricted_tail_active: AtomicBool,
+    fx_tail_peak: [AtomicU32; 2],
+    normalization_enabled: AtomicBool,
+    normalization_db: AtomicU32,
     gain: AtomicU32,
     fader: AtomicU32,
     eq: [AtomicU32; 3],
@@ -50,6 +61,10 @@ struct DeckAtoms {
     beat_position: AtomicU64,
     launch_at: AtomicU64,
     sync: AtomicBool,
+    sync_min_rate: AtomicU64,
+    sync_max_rate: AtomicU64,
+    sync_max_slew: AtomicU64,
+    sync_rate_limited: AtomicBool,
     master: AtomicBool,
     pitch: AtomicU64,
     keylock: AtomicBool,
@@ -62,8 +77,19 @@ impl DeckAtoms {
             position: double(0.0),
             jog_touch: AtomicBool::new(false),
             position_revision: AtomicU64::new(0),
+            grid_revision: AtomicU64::new(0),
             rate: double(1.0),
             tempo: double(0.0),
+            actual_rate: double(1.0),
+            playback_bpm: double(f64::NAN),
+            local_bpm: double(f64::NAN),
+            actual_playback_bpm: double(f64::NAN),
+            target_playback_bpm: double(f64::NAN),
+            fx_tail_active: AtomicBool::new(false),
+            restricted_tail_active: AtomicBool::new(false),
+            fx_tail_peak: [float(0.), float(0.)],
+            normalization_enabled: AtomicBool::new(true),
+            normalization_db: float(0.),
             gain: float(1.0),
             fader: float(1.0),
             eq: std::array::from_fn(|_| float(1.0)),
@@ -89,6 +115,10 @@ impl DeckAtoms {
             beat_position: double(f64::NAN),
             launch_at: double(f64::NAN),
             sync: AtomicBool::new(false),
+            sync_min_rate: double(f64::NAN),
+            sync_max_rate: double(f64::NAN),
+            sync_max_slew: double(f64::NAN),
+            sync_rate_limited: AtomicBool::new(false),
             master: AtomicBool::new(false),
             pitch: double(0.0),
             keylock: AtomicBool::new(false),
@@ -100,13 +130,24 @@ impl DeckAtoms {
             x.is_finite().then_some(x)
         }
         DeckSnapshot {
+            grid_revision: self.grid_revision.load(Ordering::Relaxed),
             track,
             playing: self.playing.load(Ordering::Relaxed),
             position_seconds: getd(&self.position),
             jog_touch: self.jog_touch.load(Ordering::Relaxed),
             position_revision: self.position_revision.load(Ordering::Relaxed),
             playback_rate: getd(&self.rate),
+            actual_playback_rate: getd(&self.actual_rate),
+            playback_bpm: optional(getd(&self.playback_bpm)),
+            local_bpm: optional(getd(&self.local_bpm)),
+            actual_playback_bpm: optional(getd(&self.actual_playback_bpm)),
+            target_playback_bpm: optional(getd(&self.target_playback_bpm)),
             tempo_percent: getd(&self.tempo),
+            fx_tail_active: self.fx_tail_active.load(Ordering::Relaxed),
+            restricted_tail_active: self.restricted_tail_active.load(Ordering::Relaxed),
+            fx_tail_peak: self.fx_tail_peak.each_ref().map(getf),
+            normalization_enabled: self.normalization_enabled.load(Ordering::Relaxed),
+            normalization_gain_db: getf(&self.normalization_db),
             gain: getf(&self.gain),
             channel_fader: getf(&self.fader),
             eq_low: getf(&self.eq[0]),
@@ -140,6 +181,12 @@ impl DeckAtoms {
             launch_pending: getd(&self.launch_at).is_finite(),
             launch_at_seconds: optional(getd(&self.launch_at)),
             sync_enabled: self.sync.load(Ordering::Relaxed),
+            sync_rate_limits: optional(getd(&self.sync_min_rate)).map(|min_rate| SyncRateLimits {
+                min_rate,
+                max_rate: getd(&self.sync_max_rate),
+                max_slew_per_second: getd(&self.sync_max_slew),
+            }),
+            sync_rate_limited: self.sync_rate_limited.load(Ordering::Relaxed),
             is_master: self.master.load(Ordering::Relaxed),
             pitch_semitones: getd(&self.pitch),
             keylock: self.keylock.load(Ordering::Relaxed),
@@ -147,9 +194,73 @@ impl DeckAtoms {
         }
     }
 }
+struct QualityAtoms {
+    input_peaks: [AtomicU32; 4],
+    reductions: [AtomicU32; 2],
+    counts: [AtomicU64; 10],
+}
+impl QualityAtoms {
+    fn new() -> Self {
+        Self {
+            input_peaks: std::array::from_fn(|_| float(0.)),
+            reductions: std::array::from_fn(|_| float(0.)),
+            counts: std::array::from_fn(|_| AtomicU64::new(0)),
+        }
+    }
+    fn publish(&self, q: &crate::AudioQualitySnapshot) {
+        for i in 0..2 {
+            putf(&self.input_peaks[i], q.master_input_peak[i]);
+            putf(&self.input_peaks[i + 2], q.cue_input_peak[i]);
+        }
+        putf(&self.reductions[0], q.master_gain_reduction_db);
+        putf(&self.reductions[1], q.cue_gain_reduction_db);
+        let counts = [
+            q.master_limited_frames,
+            q.cue_limited_frames,
+            q.invalid_signal_frames,
+            q.processor_resets[0],
+            q.processor_resets[1],
+            q.processor_blocks[0],
+            q.processor_blocks[1],
+            q.callback_count,
+            q.callback_max_ns,
+            q.callback_deadline_exceeded,
+        ];
+        for (slot, value) in self.counts.iter().zip(counts) {
+            slot.store(value, Ordering::Relaxed);
+        }
+    }
+    fn read(&self) -> crate::AudioQualitySnapshot {
+        let c = self.counts.each_ref().map(|v| v.load(Ordering::Relaxed));
+        crate::AudioQualitySnapshot {
+            headroom_db: 6.,
+            output_latency_frames: 128,
+            master_input_peak: [getf(&self.input_peaks[0]), getf(&self.input_peaks[1])],
+            cue_input_peak: [getf(&self.input_peaks[2]), getf(&self.input_peaks[3])],
+            master_gain_reduction_db: getf(&self.reductions[0]),
+            cue_gain_reduction_db: getf(&self.reductions[1]),
+            master_limited_frames: c[0],
+            cue_limited_frames: c[1],
+            invalid_signal_frames: c[2],
+            processor_resets: [c[3], c[4]],
+            processor_blocks: [c[5], c[6]],
+            callback_count: c[7],
+            callback_max_ns: c[8],
+            callback_deadline_exceeded: c[9],
+        }
+    }
+}
 pub(crate) struct SnapshotAtoms {
+    quality: QualityAtoms,
     load_revisions: [AtomicU64; 2],
     pub applied_fence: AtomicU64,
+    pub guarded_control_receipts: [AtomicU64; 64],
+    control_revision: AtomicU64,
+    deck_control_revisions: [AtomicU64; 2],
+    target_control_revisions: [AtomicU64; crate::COMMAND_TARGET_COUNT],
+    batch: [AtomicU64; 16],
+    batch_events: [[AtomicU64; 22]; crate::scheduled::MAX_SCHEDULED_STEPS],
+    batch_updates: [[AtomicU64; 5]; crate::scheduled::MAX_QUEUE_UPDATES],
     sequence: AtomicU64,
     rate: AtomicU32,
     channels: AtomicU32,
@@ -166,13 +277,21 @@ pub(crate) struct SnapshotAtoms {
     cue_mix: AtomicU32,
     sampler: AtomicU32,
     sample_positions: [AtomicU64; 16],
-    active_ramps: [AtomicBool; 17],
+    active_ramps: [AtomicBool; crate::CONTROL_TARGET_COUNT],
     decks: [DeckAtoms; 2],
 }
 impl SnapshotAtoms {
     pub fn new() -> Self {
         Self {
+            quality: QualityAtoms::new(),
             applied_fence: AtomicU64::new(0),
+            guarded_control_receipts: std::array::from_fn(|_| AtomicU64::new(0)),
+            control_revision: AtomicU64::new(0),
+            deck_control_revisions: std::array::from_fn(|_| AtomicU64::new(0)),
+            target_control_revisions: std::array::from_fn(|_| AtomicU64::new(0)),
+            batch: std::array::from_fn(|_| AtomicU64::new(0)),
+            batch_events: std::array::from_fn(|_| std::array::from_fn(|_| AtomicU64::new(0))),
+            batch_updates: std::array::from_fn(|_| std::array::from_fn(|_| AtomicU64::new(0))),
             load_revisions: std::array::from_fn(|_| AtomicU64::new(0)),
             sequence: AtomicU64::new(0),
             rate: AtomicU32::new(48000),
@@ -196,6 +315,104 @@ impl SnapshotAtoms {
     }
     pub fn publish(&self, m: &Mixer, channels: u16, frames: u32, master: [f32; 2], cue: [f32; 2]) {
         self.sequence.fetch_add(1, Ordering::AcqRel);
+        for (a, v) in self
+            .guarded_control_receipts
+            .iter()
+            .zip(m.guarded_control_receipts)
+        {
+            a.store(v, Ordering::Release);
+        }
+        self.control_revision
+            .store(m.control_revision, Ordering::Relaxed);
+        for (a, v) in self
+            .deck_control_revisions
+            .iter()
+            .zip(m.deck_control_revisions)
+        {
+            a.store(v, Ordering::Relaxed);
+        }
+        for (a, v) in self
+            .target_control_revisions
+            .iter()
+            .zip(m.target_control_revisions)
+        {
+            a.store(v, Ordering::Relaxed);
+        }
+        if let Some(b) = &m.scheduled {
+            let (decks, targets) = crate::scheduled::active_ownership(b);
+            let values = [
+                b.id,
+                b.state.code(),
+                b.reason as u64,
+                b.receipts[..b.len].iter().filter(|r| r.state == 2).count() as u64,
+                b.len as u64,
+                b.frame,
+                targets as u64,
+                b.revision,
+                b.open as u64,
+                b.clock as u64,
+                b.completion_carrier as u64,
+                b.completion_event as u64,
+                b.expires_frame,
+                b.update_count as u64,
+                b.command_queue as u64,
+                decks as u64,
+            ];
+            for (a, v) in self.batch.iter().zip(values) {
+                a.store(v, Ordering::Relaxed);
+            }
+            for (a, e) in self.batch_updates.iter().zip(b.updates) {
+                for (slot, v) in a.iter().zip([
+                    e.patch_id,
+                    e.revision,
+                    e.accepted as u64,
+                    e.reason as u64,
+                    e.frame,
+                ]) {
+                    slot.store(v, Ordering::Relaxed);
+                }
+            }
+            for (a, e) in self.batch_events.iter().zip(b.receipts).take(b.len) {
+                for (slot, v) in a.iter().zip([
+                    e.step as u64,
+                    e.state,
+                    e.frame,
+                    e.clock_seconds.to_bits(),
+                    e.action_id,
+                    e.completed_frame,
+                    e.completed_clock_seconds[0].to_bits(),
+                    e.completed_clock_seconds[1].to_bits(),
+                    e.completed_load_revisions[0],
+                    e.completed_load_revisions[1],
+                    e.completed_grid_revisions[0],
+                    e.completed_grid_revisions[1],
+                    e.completed_position_revisions[0],
+                    e.completed_position_revisions[1],
+                    e.failure.map_or(0, |f| f.cause as u64),
+                    e.failure.and_then(|f| f.deck).map_or(0, |d| d as u64 + 1),
+                    e.failure.map_or(0, |f| f.action_id),
+                    e.resolved_clock.map_or(0, |d| d as u64 + 1),
+                    e.resolved_clock_seconds.unwrap_or(f64::NAN).to_bits(),
+                    e.resolved_frame.unwrap_or(u64::MAX),
+                    e.clock_source_headroom_seconds
+                        .unwrap_or(f64::NAN)
+                        .to_bits(),
+                    e.ramp_end_frame.unwrap_or(u64::MAX),
+                ]) {
+                    slot.store(v, Ordering::Relaxed);
+                }
+            }
+        } else {
+            for a in &self.batch {
+                a.store(0, Ordering::Relaxed);
+            }
+        }
+        for i in 0..2 {
+            self.decks[i]
+                .grid_revision
+                .store(m.grid_revisions[i], Ordering::Relaxed);
+        }
+        self.quality.publish(&m.quality);
         self.rate.store(m.sample_rate, Ordering::Relaxed);
         self.channels.store(channels as u32, Ordering::Relaxed);
         self.buffer.store(frames, Ordering::Relaxed);
@@ -229,7 +446,39 @@ impl SnapshotAtoms {
             a.position_revision
                 .store(d.position_revision, Ordering::Relaxed);
             putd(&a.rate, d.rate());
+            putd(&a.actual_rate, d.actual_rate());
+            putd(
+                &a.playback_bpm,
+                d.local_grid_bpm().map_or(f64::NAN, |bpm| bpm * d.rate()),
+            );
+            putd(&a.local_bpm, d.local_grid_bpm().unwrap_or(f64::NAN));
+            putd(
+                &a.actual_playback_bpm,
+                d.local_grid_bpm()
+                    .map_or(f64::NAN, |bpm| bpm * d.actual_rate()),
+            );
+            putd(
+                &a.target_playback_bpm,
+                d.target_playback_bpm().unwrap_or(f64::NAN),
+            );
             putd(&a.tempo, d.tempo);
+            a.fx_tail_active
+                .store(m.main_fx[i].active(), Ordering::Relaxed);
+            a.restricted_tail_active
+                .store(m.main_fx[i].restricted, Ordering::Relaxed);
+            for c in 0..2 {
+                putf(&a.fx_tail_peak[c], m.main_fx[i].peak[c]);
+            }
+            a.normalization_enabled
+                .store(d.normalization_enabled, Ordering::Relaxed);
+            putf(
+                &a.normalization_db,
+                if d.normalization_enabled {
+                    d.normalization_db
+                } else {
+                    0.
+                },
+            );
             putf(&a.gain, d.gain.target);
             putf(&a.fader, d.channel_fader.target);
             for j in 0..3 {
@@ -287,15 +536,25 @@ impl SnapshotAtoms {
                 m.launches[i].map_or(f64::NAN, |p| p.at_seconds),
             );
             a.sync.store(d.sync_enabled, Ordering::Relaxed);
+            putd(
+                &a.sync_min_rate,
+                d.sync_rate_limits.map_or(f64::NAN, |l| l.min_rate),
+            );
+            putd(
+                &a.sync_max_rate,
+                d.sync_rate_limits.map_or(f64::NAN, |l| l.max_rate),
+            );
+            putd(
+                &a.sync_max_slew,
+                d.sync_rate_limits
+                    .map_or(f64::NAN, |l| l.max_slew_per_second),
+            );
+            a.sync_rate_limited
+                .store(d.sync_rate_limited, Ordering::Relaxed);
             a.master.store(m.master_deck == i, Ordering::Relaxed);
             putd(&a.pitch, d.pitch);
             a.keylock.store(d.keylock, Ordering::Relaxed);
-            a.pending.store(
-                (d.keylock || d.pitch.abs() > 0.0001)
-                    && (d.prepared_generation != d.preparation_generation
-                        || (d.prepared_rate - d.rate()).abs() > 1e-6),
-                Ordering::Relaxed,
-            );
+            a.pending.store(d.preparation_pending(), Ordering::Relaxed);
         }
         self.sequence.fetch_add(1, Ordering::Release);
         self.applied_fence.store(m.applied_fence, Ordering::Release);
@@ -307,7 +566,110 @@ impl SnapshotAtoms {
                 std::hint::spin_loop();
                 continue;
             }
+            let batch: [u64; 16] = std::array::from_fn(|i| self.batch[i].load(Ordering::Relaxed));
             let mut result = EngineSnapshot {
+                engine_epoch: self.stream_revision.load(Ordering::Relaxed),
+                control_revision: self.control_revision.load(Ordering::Relaxed),
+                deck_control_revisions: std::array::from_fn(|i| {
+                    self.deck_control_revisions[i].load(Ordering::Relaxed)
+                }),
+                target_control_revisions: std::array::from_fn(|i| {
+                    self.target_control_revisions[i].load(Ordering::Relaxed)
+                }),
+                scheduled_batch: crate::scheduled::ScheduledBatchSnapshot {
+                    command_queue: batch[14] != 0,
+                    revision: batch[7],
+                    open: batch[8] != 0,
+                    clock: batch[9] as usize,
+                    completion_carrier: batch[10] as usize,
+                    completion_event: batch[11] as i64,
+                    expires_frame: batch[12],
+                    updates: self
+                        .batch_updates
+                        .iter()
+                        .take((batch[13] as usize).min(crate::scheduled::MAX_QUEUE_UPDATES))
+                        .map(|a| crate::scheduled::BatchPatchReceipt {
+                            patch_id: a[0].load(Ordering::Relaxed),
+                            revision: a[1].load(Ordering::Relaxed),
+                            accepted: a[2].load(Ordering::Relaxed) != 0,
+                            reason: crate::scheduled::BatchReason::from_code(
+                                a[3].load(Ordering::Relaxed),
+                            ),
+                            frame: a[4].load(Ordering::Relaxed),
+                        })
+                        .collect(),
+                    id: batch[0],
+                    state: crate::scheduled::BatchLifecycle::from_code(batch[1]),
+                    reason: crate::scheduled::BatchReason::from_code(batch[2]),
+                    completed: batch[3] as usize,
+                    total: batch[4] as usize,
+                    frame: batch[5],
+                    owned_targets: batch[6] as u32,
+                    owned_decks: batch[15] as u8,
+                    events: self
+                        .batch_events
+                        .iter()
+                        .take(batch[4].min(crate::scheduled::MAX_SCHEDULED_STEPS as u64) as usize)
+                        .map(|a| crate::scheduled::BatchEventReceipt {
+                            step: a[0].load(Ordering::Relaxed) as usize,
+                            action_id: a[4].load(Ordering::Relaxed),
+                            completed_frame: a[5].load(Ordering::Relaxed),
+                            completed_load_revisions: [
+                                a[8].load(Ordering::Relaxed),
+                                a[9].load(Ordering::Relaxed),
+                            ],
+                            completed_grid_revisions: [
+                                a[10].load(Ordering::Relaxed),
+                                a[11].load(Ordering::Relaxed),
+                            ],
+                            completed_position_revisions: [
+                                a[12].load(Ordering::Relaxed),
+                                a[13].load(Ordering::Relaxed),
+                            ],
+                            completed_clock_seconds: [
+                                f64::from_bits(a[6].load(Ordering::Relaxed)),
+                                f64::from_bits(a[7].load(Ordering::Relaxed)),
+                            ],
+                            state: a[1].load(Ordering::Relaxed),
+                            frame: a[2].load(Ordering::Relaxed),
+                            clock_seconds: f64::from_bits(a[3].load(Ordering::Relaxed)),
+                            failure: crate::scheduled::CommandFailureCause::from_code(
+                                a[14].load(Ordering::Relaxed),
+                            )
+                            .map(|cause| {
+                                crate::scheduled::CommandFailure {
+                                    cause,
+                                    deck: a[15]
+                                        .load(Ordering::Relaxed)
+                                        .checked_sub(1)
+                                        .map(|d| d as usize),
+                                    action_id: a[16].load(Ordering::Relaxed),
+                                }
+                            }),
+                            resolved_clock: a[17]
+                                .load(Ordering::Relaxed)
+                                .checked_sub(1)
+                                .map(|d| d as usize),
+                            resolved_clock_seconds: {
+                                let v = f64::from_bits(a[18].load(Ordering::Relaxed));
+                                v.is_finite().then_some(v)
+                            },
+                            resolved_frame: {
+                                let v = a[19].load(Ordering::Relaxed);
+                                (v != u64::MAX).then_some(v)
+                            },
+                            clock_source_headroom_seconds: {
+                                let v = f64::from_bits(a[20].load(Ordering::Relaxed));
+                                v.is_finite().then_some(v)
+                            },
+                            ramp_end_frame: {
+                                let v = a[21].load(Ordering::Relaxed);
+                                (v != u64::MAX).then_some(v)
+                            },
+                        })
+                        .collect(),
+                },
+                audio_quality: self.quality.read(),
                 load_revisions: std::array::from_fn(|i| {
                     self.load_revisions[i].load(Ordering::Relaxed)
                 }),

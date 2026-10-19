@@ -297,6 +297,15 @@
     }
   },
   {
+    "type": "set_playback_bpm",
+    "description": "Set absolute playback BPM from the current four-beat local grid fit at renderer execution, preserving source analysis and beat timestamps; takes manual tempo ownership and disables Sync. This is an entry adjustment, not a continuous BPM lock. Verify target_playback_bpm and actual_playback_bpm. Requires a valid loaded local BPM, a 30..300 BPM target and a reachable -90..100 percent tempo.",
+    "example": {
+      "type": "set_playback_bpm",
+      "deck": 0,
+      "bpm": 124.0
+    }
+  },
+  {
     "type": "jog",
     "example": {
       "type": "jog",
@@ -441,6 +450,26 @@
       "clock": null,
       "beats": null,
       "quantize": null
+    }
+  },
+  {
+    "type": "set_sync_rate_limits",
+    "example": {
+      "type": "set_sync_rate_limits",
+      "deck": 1,
+      "limits": {
+        "min_rate": 0.98,
+        "max_rate": 1.02,
+        "max_slew_per_second": 0.01
+      }
+    }
+  },
+  {
+    "type": "set_normalization",
+    "example": {
+      "type": "set_normalization",
+      "deck": 0,
+      "enabled": true
     }
   }
 ]

@@ -50,6 +50,39 @@ pub struct NeuralRhythm {
     pub beats_per_bar: Option<usize>,
 }
 
+pub fn neural_cache_identity() -> String {
+    format!(
+        "{}:{}:{}:dbn-acoustic-v11",
+        BEAT_SHA256,
+        MEL_SHA256,
+        std::env::var("PULSEDECK_BEAT_POSTPROCESS").unwrap_or_else(|_| "dbn".into())
+    )
+}
+
+fn minimal_postprocess() -> Result<bool, String> {
+    match std::env::var("PULSEDECK_BEAT_POSTPROCESS").as_deref() {
+        Ok("minimal") => Ok(true),
+        Ok("dbn") | Err(std::env::VarError::NotPresent) => Ok(false),
+        _ => Err("PULSEDECK_BEAT_POSTPROCESS must be dbn or minimal (benchmark only)".into()),
+    }
+}
+
+/// Validate the exact model and event provenance before adopting a legacy
+/// immutable-provider analysis. This does not assert a historical PCM hash.
+pub fn legacy_neural_provenance_current(rhythm: &NeuralRhythm, duration: f64) -> bool {
+    let expected = match minimal_postprocess() {
+        Ok(true) => MINIMAL_MODEL_ID,
+        Ok(false) => MODEL_ID,
+        Err(_) => return false,
+    };
+    rhythm.model == expected
+        && duration.is_finite()
+        && duration > 0.
+        && rhythm.bpm.is_finite()
+        && (30. ..=300.).contains(&rhythm.bpm)
+        && validate_events(&rhythm.beats_seconds, &rhythm.downbeats_seconds, duration).is_ok()
+}
+
 /// Optionally warm up verified model loading on a background thread. Successful
 /// loading is retained for the process; missing/invalid assets are retryable.
 pub fn initialize_neural_rhythm() -> Result<(), String> {
@@ -65,8 +98,8 @@ pub fn initialize_neural_rhythm() -> Result<(), String> {
 
 /// Analyze decoded stereo PCM in memory. No source audio is written to disk or
 /// decoded a second time. Call only on a background worker: the model mutex
-/// serializes complete analyses and its private pool is limited to two threads
-/// by default. A missing model returns an error rather than a spectral result.
+/// serializes inference and its private pool leaves capacity for temporal decoding
+/// and audio/UI (at most twelve analysis threads by default). A missing model returns an error rather than a spectral result.
 pub fn analyze_neural_rhythm(
     samples: &[[f32; 2]],
     sample_rate: u32,
@@ -109,15 +142,11 @@ pub fn analyze_neural_rhythm_with_logit_observer(
     let mut analysis = stream
         .finish()
         .map_err(|e| format!("neural beat inference: {e:#}"))?;
+    // Post-processing owns the returned activations; release the model so the
+    // other deck can infer while this track's independent decoder is running.
+    drop(guard);
     observe(&analysis.beat_logits, &analysis.downbeat_logits)?;
-    let minimal = match std::env::var("PULSEDECK_BEAT_POSTPROCESS") {
-        Ok(mode) if mode == "minimal" => true,
-        Ok(mode) if mode == "dbn" => false,
-        Err(std::env::VarError::NotPresent) => false,
-        _ => {
-            return Err("PULSEDECK_BEAT_POSTPROCESS must be dbn or minimal (benchmark only)".into())
-        }
-    };
+    let minimal = minimal_postprocess()?;
     let mut bar_evidence = Vec::new();
     if !minimal {
         let (beats, downbeats, evidence) = crate::dbn::decode_with_acoustic_meter_for_validation(
@@ -343,9 +372,11 @@ fn load_tracker() -> Result<Tracker, String> {
         Ok(value) => value
             .parse::<usize>()
             .ok()
-            .filter(|n| (1..=8).contains(n))
-            .ok_or_else(|| "PULSEDECK_BEAT_THREADS must be an integer from 1 to 8".to_string())?,
-        Err(_) => 2,
+            .filter(|n| (1..=16).contains(n))
+            .ok_or_else(|| "PULSEDECK_BEAT_THREADS must be an integer from 1 to 16".to_string())?,
+        Err(_) => std::thread::available_parallelism()
+            .map(|n| n.get().saturating_sub(6).clamp(1, 12))
+            .unwrap_or(2),
     };
     let runtime = BoundedRuntime {
         pool: Arc::new(ThreadPool::with_num_threads(thread_count)),
@@ -397,7 +428,9 @@ struct BoundedModel {
 impl Runtime for BoundedRuntime {
     type Model = BoundedModel;
     fn load_model(&self, path: &Path) -> anyhow::Result<Self::Model> {
-        let graph = rten::Model::load_file(path)?;
+        let graph = rten::ModelOptions::default()
+            .prepack_weights(true)
+            .load_file(path)?;
         let inputs = graph
             .input_ids()
             .iter()

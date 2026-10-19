@@ -1,4 +1,0 @@
-interface:
-  display_name: "Prepare Next Track"
-  short_description: "Prepare the incoming deck while protecting playback"
-  default_prompt: "Use $pulsedeck-prepare-next-track to handle the requested PulseDeck task through the CLI and verify the result."

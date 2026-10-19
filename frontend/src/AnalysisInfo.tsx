@@ -1,12 +1,13 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { ChevronDown, LoaderCircle, RefreshCw } from "lucide-react";
-import type { DeckSnapshot, TrackRecord, Vocabulary } from "./types";
+import type { DeckSnapshot, TrackRecord } from "./types";
 import {
-  SECTION_COLORS,
-  SECTION_NAMES,
-  UNLABELLED_SECTION,
-  displaySections,
+  CUE_ROLE_COLORS,
+  CUE_ROLE_NAMES,
+  UNLABELLED_CUE,
+  displayCuePoints,
 } from "./waveform-data";
+import { control } from "./api";
 import { useControl } from "./control-bridge";
 import { controlBoolean, controlNumber } from "./control-state";
 
@@ -22,25 +23,33 @@ const modelScoreText = (value: number | null) =>
 export default function AnalysisInfo({
   track,
   onReanalyze,
-  onVocabulary,
   baseBpm,
   onChooseBpm,
   controlTarget,
   deck,
+  deckId,
+  expectedLoadRevision,
 }: {
   track: TrackRecord;
   onReanalyze: () => Promise<void>;
-  onVocabulary: (vocabulary: Vocabulary | null) => Promise<void>;
   baseBpm: number;
   onChooseBpm: (bpm: number) => void;
   controlTarget?: string;
   deck?: DeckSnapshot;
+  deckId?: number;
+  expectedLoadRevision?: number;
 }) {
   const [details, setDetails] = useState(false);
   const [reanalyzing, setReanalyzing] = useState(false);
   const [error, setError] = useState("");
+  const [editingCue, setEditingCue] = useState<string | null>(null);
+  const [cueName, setCueName] = useState("");
+  const [savingCue, setSavingCue] = useState(false);
   const model = track.neural_rhythm;
-  const pulseRepairs = model?.bar_evidence?.flatMap(e => e.pulse_repairs ?? []) ?? [];
+  const pulseRepairs = useMemo(
+    () => model?.bar_evidence?.flatMap((e) => e.pulse_repairs ?? []) ?? [],
+    [model],
+  );
   const rhythm = strength(model?.beat_confidence ?? track.bpm_confidence),
     downbeat = strength(model?.downbeat_confidence),
     key = strength(track.key_confidence);
@@ -49,8 +58,10 @@ export default function AnalysisInfo({
   const manual =
     track.bpm_source === "manual" ||
     (!!referenceBpm && Math.abs(baseBpm - referenceBpm) > 0.005);
-  const manualGrid = deck?.beatgrid_manual ?? track.beatgrid_source === "manual";
-  const validGrid = deck?.beatgrid_valid ?? track.beatgrid_offset_seconds != null;
+  const manualGrid =
+    deck?.beatgrid_manual ?? track.beatgrid_source === "manual";
+  const validGrid =
+    deck?.beatgrid_valid ?? track.beatgrid_offset_seconds != null;
   const tagged = track.bpm_source === "tag" || track.bpm_source === "import";
   // Only what a DJ has to act on before mixing; scores live in the popover.
   const flags: string[] = [];
@@ -70,20 +81,14 @@ export default function AnalysisInfo({
     flags.push("check beat 1");
   if (!track.key) flags.push(track.key_candidates?.length ? "key ?" : "no key");
   else if (key !== null && key < 0.45) flags.push("key ?");
-  const stage = track.sections;
-  const sections = displaySections(
-    stage,
-    track.duration_seconds ?? track.duration ?? 0,
+  const cueMarkers = useMemo(
+    () =>
+      displayCuePoints(
+        track.cue_points,
+        track.duration_seconds ?? track.duration ?? 0,
+      ),
+    [track.cue_points, track.duration_seconds, track.duration],
   );
-  const vocabulary = stage?.vocabulary_override ?? stage?.vocabulary;
-  async function chooseVocabulary(choice: Vocabulary) {
-    setError("");
-    try {
-      await onVocabulary(choice === stage?.vocabulary ? null : choice);
-    } catch (e) {
-      setError(String(e instanceof Error ? e.message : e));
-    }
-  }
   async function reanalyze() {
     setReanalyzing(true);
     setError("");
@@ -93,6 +98,34 @@ export default function AnalysisInfo({
       setError(String(e instanceof Error ? e.message : e));
     } finally {
       setReanalyzing(false);
+    }
+  }
+  async function renameCue() {
+    if (!editingCue || deckId === undefined) return;
+    const id = editingCue,
+      revision = expectedLoadRevision;
+    setSavingCue(true);
+    setError("");
+    try {
+      const current = await control<{ revision: number }>(
+        "cues.get",
+        { deck: deckId },
+        { expected_load_revision: revision },
+      );
+      await control(
+        "cues.set",
+        {
+          deck: deckId,
+          point: { id, name: cueName },
+          expected_revision: current.revision,
+        },
+        { expected_load_revision: revision },
+      );
+      setEditingCue(null);
+    } catch (e) {
+      setError(String(e instanceof Error ? e.message : e));
+    } finally {
+      setSavingCue(false);
     }
   }
   useControl(
@@ -193,8 +226,20 @@ export default function AnalysisInfo({
                 : "More than one tempo is plausible. Check the beatgrid and half / double tempo before syncing."}
             </p>
           )}{" "}
-          {model?.beats_per_bar && <p>Detected {model.beats_per_bar} beats per bar. Verify bar alignment before mixing.</p>}
-          {!!pulseRepairs.length && <p>Acoustic pulse correction reconstructed {pulseRepairs.reduce((n,r) => n+r.inserted_beats,0)} beats in {pulseRepairs.length} passages. Check these passages before syncing.</p>}
+          {model?.beats_per_bar && (
+            <p>
+              Detected {model.beats_per_bar} beats per bar. Verify bar alignment
+              before mixing.
+            </p>
+          )}
+          {!!pulseRepairs.length && (
+            <p>
+              Acoustic pulse correction reconstructed{" "}
+              {pulseRepairs.reduce((n, r) => n + r.inserted_beats, 0)} beats in{" "}
+              {pulseRepairs.length} passages. Check these passages before
+              syncing.
+            </p>
+          )}
           {!!track.bpm_candidates?.length && (
             <>
               <h5>
@@ -217,44 +262,84 @@ export default function AnalysisInfo({
               </div>
             </>
           )}
-          {!!sections.length && (
+          {track.audio_measurements && (
+            <section>
+              <h5>PCM measurements</h5>
+              <p>
+                {track.audio_measurements.integrated_lufs?.toFixed(1) ??
+                  "Unknown"}{" "}
+                LUFS ·{" "}
+                {track.audio_measurements.true_peak_dbtp?.toFixed(1) ??
+                  "Unknown"}{" "}
+                dBTP
+              </p>
+              <p>
+                Audible:{" "}
+                {track.audio_measurements.audible_start_frame == null
+                  ? "Silent"
+                  : `${(track.audio_measurements.audible_start_frame / track.audio_measurements.sample_rate).toFixed(3)} – ${((track.audio_measurements.audible_end_frame ?? 0) / track.audio_measurements.sample_rate).toFixed(3)} s`}{" "}
+                (−60 dBFS)
+              </p>
+              {track.audio_measurements.error && (
+                <p role="alert">{track.audio_measurements.error}</p>
+              )}
+            </section>
+          )}
+          {!!cueMarkers.length && (
             <>
-              <h5>Sections</h5>
+              <h5>Named cues</h5>
               <div className="section-list">
-                {sections.map((s, i) => (
-                  <span key={`${s.start}-${i}`}>
+                {cueMarkers.map((s) => (
+                  <span key={s.id}>
                     <i
                       style={{
                         background: s.label
-                          ? SECTION_COLORS[s.label]
-                          : UNLABELLED_SECTION,
+                          ? CUE_ROLE_COLORS[s.label]
+                          : UNLABELLED_CUE,
                       }}
                     />
-                    {s.label ? SECTION_NAMES[s.label] : "Section"} {s.bars}
+                    <button
+                      type="button"
+                      disabled={deckId === undefined || savingCue}
+                      title="Rename this source cue"
+                      onClick={() => {
+                        setEditingCue(s.id);
+                        setCueName(s.name);
+                      }}
+                    >
+                      {s.name ||
+                        (s.label ? CUE_ROLE_NAMES[s.label] : "Cue")}{" "}
+                    </button>
                   </span>
                 ))}
               </div>
-              <div className="bpm-candidates">
-                {(["dance", "hip_hop"] as const).map((choice) => (
+              {editingCue && (
+                <form
+                  className="cue-name-editor"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void renameCue();
+                  }}
+                >
+                  <label>
+                    Cue name
+                    <input
+                      aria-label="Cue name"
+                      value={cueName}
+                      maxLength={128}
+                      onChange={(event) => setCueName(event.target.value)}
+                    />
+                  </label>
+                  <button disabled={savingCue}>Save name</button>
                   <button
-                    key={choice}
-                    className={vocabulary === choice ? "selected" : ""}
-                    onClick={() => chooseVocabulary(choice)}
-                    title={
-                      choice === "dance"
-                        ? "Label intro, build-up, drop, breakdown and outro"
-                        : "Label intro, verse, hook and outro"
-                    }
+                    type="button"
+                    disabled={savingCue}
+                    onClick={() => setEditingCue(null)}
                   >
-                    <strong>
-                      {choice === "dance" ? "Dance labels" : "Hip-hop labels"}
-                    </strong>
-                    <span>
-                      {stage?.vocabulary === choice ? "detected" : "switch"}
-                    </span>
+                    Cancel
                   </button>
-                ))}
-              </div>
+                </form>
+              )}
             </>
           )}
           {!!track.key_candidates?.length && (
@@ -275,7 +360,7 @@ export default function AnalysisInfo({
             </>
           )}
           <p>
-            Key estimates can vary between sections of a track. Listen before
+            Key estimates can vary between passages of a track. Listen before
             relying on harmonic matching.
           </p>
         </div>

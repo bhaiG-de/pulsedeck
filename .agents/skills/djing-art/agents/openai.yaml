@@ -1,0 +1,4 @@
+interface:
+  display_name: "DJing — the art"
+  short_description: "Turn track and live deck data into musical decisions"
+  default_prompt: "Use $djing-art to choose the next musical handover from the available track evidence."

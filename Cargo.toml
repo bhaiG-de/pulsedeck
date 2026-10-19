@@ -24,6 +24,12 @@ opt-level = 3
 opt-level = 3
 [profile.dev.package.rten-simd]
 opt-level = 3
+[profile.dev.package.rten-base]
+opt-level = 3
+[profile.dev.package.rayon]
+opt-level = 3
+[profile.dev.package.rayon-core]
+opt-level = 3
 [profile.dev.package.rubato]
 opt-level = 3
 [profile.dev.package.realfft]
@@ -31,4 +37,61 @@ opt-level = 3
 [profile.dev.package.rustfft]
 opt-level = 3
 [profile.dev.package.audio-analysis]
+opt-level = 3
+[profile.dev.package.ebur128]
+opt-level = 3
+
+# Native rendering must meet device deadlines in development builds too.
+[profile.dev.package.deck-engine]
+opt-level = 3
+
+# File decoding runs before a local deck can play; keep codecs optimized in
+# development bundles as well as the engine and analysis workers.
+[profile.dev.package.symphonia]
+opt-level = 3
+[profile.dev.package.symphonia-bundle-flac]
+opt-level = 3
+[profile.dev.package.symphonia-bundle-mp3]
+opt-level = 3
+[profile.dev.package.symphonia-codec-aac]
+opt-level = 3
+[profile.dev.package.symphonia-codec-adpcm]
+opt-level = 3
+[profile.dev.package.symphonia-codec-alac]
+opt-level = 3
+[profile.dev.package.symphonia-codec-pcm]
+opt-level = 3
+[profile.dev.package.symphonia-codec-vorbis]
+opt-level = 3
+[profile.dev.package.symphonia-core]
+opt-level = 3
+[profile.dev.package.symphonia-format-caf]
+opt-level = 3
+[profile.dev.package.symphonia-format-isomp4]
+opt-level = 3
+[profile.dev.package.symphonia-format-mkv]
+opt-level = 3
+[profile.dev.package.symphonia-format-ogg]
+opt-level = 3
+[profile.dev.package.symphonia-format-riff]
+opt-level = 3
+[profile.dev.package.symphonia-metadata]
+opt-level = 3
+[profile.dev.package.symphonia-utils-xiph]
+opt-level = 3
+
+# A content check must not dominate cached deck loads in a development bundle.
+[profile.dev.package.sha2]
+opt-level = 3
+
+# Cover thumbnails are decoded off-thread when visible, including in dev apps.
+[profile.dev.package.image]
+opt-level = 3
+[profile.dev.package.moxcms]
+opt-level = 3
+[profile.dev.package.zune-jpeg]
+opt-level = 3
+
+# Library queries should use the same optimized SQLite in development as release.
+[profile.dev.package.libsqlite3-sys]
 opt-level = 3

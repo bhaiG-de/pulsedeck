@@ -1,5 +1,5 @@
 use control_protocol::{Request, Response};
-use std::io::{BufRead, Write};
+use std::io::Write;
 fn print(response: &Response, json: bool) {
     if json {
         println!("{}", serde_json::to_string(response).unwrap());
@@ -27,27 +27,18 @@ fn main() {
         );
         return;
     }
-    if tokens.first().map(String::as_str) == Some("session") {
-        let socket = match pulsedeck_cli::parse_session(&tokens) {
+    if pulsedeck_cli::is_session(&tokens) {
+        let invocation = match pulsedeck_cli::parse_session(&tokens) {
             Ok(socket) => socket,
             Err(e) => {
                 print(&Response::failure("", e.clone()), true);
                 std::process::exit(e.exit_code());
             }
         };
-        for line in std::io::stdin().lock().lines() {
-            let response = match line {
-                Ok(line) => match serde_json::from_str::<Request>(&line) {
-                    Ok(r) => control_protocol::ipc::call(&socket, &r)
-                        .unwrap_or_else(|e| Response::failure(r.request_id, e)),
-                    Err(e) => Response::failure(
-                        "",
-                        control_protocol::ControlError::new("invalid_request", e.to_string()),
-                    ),
-                },
-                Err(_) => break,
-            };
-            print(&response, true);
+        let result = pulsedeck_cli::session::run(invocation.socket, invocation.start);
+        if let Err(error) = result {
+            print(&Response::failure("", error.clone()), true);
+            std::process::exit(error.exit_code());
         }
         return;
     }
@@ -65,16 +56,33 @@ fn main() {
     loop {
         let response = control_protocol::ipc::call(&invocation.socket, &request)
             .unwrap_or_else(|e| Response::failure(request.request_id.clone(), e));
-        print(&response, invocation.json || invocation.watch);
-        if let Some(error) = response.error {
+        print(
+            &response,
+            invocation.json || invocation.watch || invocation.follow,
+        );
+        if let Some(error) = &response.error {
             std::process::exit(error.exit_code());
+        }
+        if invocation.follow {
+            if let Err(error) = pulsedeck_cli::mix::follow(&invocation.socket, &response) {
+                print(&Response::failure(&request.request_id, error.clone()), true);
+                std::process::exit(error.exit_code());
+            }
+            break;
         }
         iteration += 1;
         let job_done = request.command == "jobs.get"
             && response.result.as_ref().is_some_and(|r| {
                 matches!(
                     r["state"].as_str(),
-                    Some("completed" | "failed" | "cancelled")
+                    Some(
+                        "completed"
+                            | "recovered"
+                            | "failed"
+                            | "cancelled"
+                            | "yielded"
+                            | "interrupted"
+                    )
                 )
             });
         if !invocation.watch || job_done || invocation.count.is_some_and(|n| iteration >= n) {
@@ -93,6 +101,15 @@ fn main() {
                     .result
                     .as_ref()
                     .is_some_and(|r| r["state"] == "cancelled")
+            {
+                std::process::exit(7);
+            }
+            if job_done
+                && invocation.watch
+                && response
+                    .result
+                    .as_ref()
+                    .is_some_and(|r| matches!(r["state"].as_str(), Some("yielded" | "interrupted")))
             {
                 std::process::exit(7);
             }

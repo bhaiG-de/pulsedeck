@@ -30,7 +30,7 @@
   border: 1px solid var(--seam);
   border-bottom: 0;
   border-radius: 18px 18px 0 0;
-  box-shadow: var(--float-shadow);
+  box-shadow: inset 0 1px 0 var(--key-hi), 0 -2px 0 rgba(18, 20, 24, 0.12);
   transform: translateY(105%);
   visibility: hidden;
   pointer-events: none;
@@ -275,6 +275,8 @@
   transform: none;
 }
 .controller-tracks-pane {
+  contain: layout paint style;
+  transform: translateZ(0);
   padding: 0 8px 8px;
 }
 .browser-pane-heading {
@@ -345,9 +347,6 @@
 }
 .track-table {
   width: 100%;
-  border-collapse: separate;
-  border-spacing: 0;
-  table-layout: fixed;
   text-align: left;
 }
 .track-table thead {
@@ -364,19 +363,6 @@
   font-weight: 400;
   color: var(--ink-3);
   text-transform: lowercase;
-}
-.track-table th:first-child {
-  width: 42px;
-}
-.track-table th:nth-child(3),
-.track-table th:nth-child(5) {
-  width: 70px;
-}
-.track-table th:nth-child(4) {
-  width: 92px;
-}
-.track-table th:nth-child(6) {
-  width: 84px;
 }
 .track-table td {
   padding: 5px 10px;
@@ -913,27 +899,6 @@
 .spotify-tracks .track-table thead {
   top: 0;
 }
-.spotify-tracks .track-table th:first-child {
-  width: 42px;
-}
-.spotify-tracks .track-table th:nth-child(2) {
-  width: 34%;
-}
-.spotify-tracks .track-table th:nth-child(3) {
-  width: auto;
-}
-.spotify-tracks .track-table th:nth-child(4) {
-  width: 78px;
-}
-.spotify-tracks .track-table th:nth-child(5) {
-  width: 60px;
-}
-.spotify-tracks .track-table th:nth-child(6) {
-  width: 56px;
-}
-.spotify-tracks .track-table th:nth-child(7) {
-  width: 98px;
-}
 .spotify-tracks .track-table td {
   cursor: default;
 }
@@ -1164,11 +1129,168 @@
   }
 }
 
-.track-tags { display: flex; flex-direction: column; gap: 5px; }
-.track-tag-list { display: flex; flex-wrap: wrap; gap: 4px; }
-.song-tag { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; border: 1px solid var(--seam); border-radius: 10px; padding: 2px 5px 2px 8px; font-size: 10px; }
-.song-tag > span { overflow-wrap: anywhere; min-width: 0; }
-.song-tag button { border: none; background: transparent; color: inherit; padding: 0 3px; min-width: 16px; border-radius: 50%; }
-.track-tags input { width: 100%; min-width: 0; padding: 4px 6px; font-size: 10px; border: 1px solid var(--seam); border-radius: 4px; color: inherit; background: transparent; }
-.track-tags input::placeholder { color: var(--ink-3); }
-.track-tag-error { font-size: 10px; color: var(--fault-ink); overflow-wrap: anywhere; }
+.track-tags {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.track-tag-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.song-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  border: 1px solid var(--seam);
+  border-radius: 10px;
+  padding: 2px 5px 2px 8px;
+  font-size: 10px;
+}
+.song-tag > span {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.song-tag button {
+  box-shadow: none;
+  border: none;
+  background: transparent;
+  color: inherit;
+  padding: 0 3px;
+  min-width: 16px;
+  border-radius: 50%;
+}
+.track-drawer .track-table .track-tags input {
+  box-shadow: inset 0 1px 0 var(--seam-soft), 0 1px 0 var(--key-hi);
+}
+.track-tags input {
+  width: 100%;
+  min-width: 0;
+  padding: 4px 6px;
+  font-size: 10px;
+  border: 1px solid var(--seam);
+  border-radius: 4px;
+  color: inherit;
+  background: transparent;
+}
+.track-tags input::placeholder {
+  color: var(--ink-3);
+}
+.track-tag-error {
+  font-size: 10px;
+  color: var(--fault-ink);
+  overflow-wrap: anywhere;
+}
+
+.track-table .virtual-loading td {
+  height: 44px;
+  color: var(--ink-3);
+}
+.controller-tracks-pane {
+  overflow-anchor: none;
+}
+.track-art {
+  overflow: hidden;
+}
+.track-art img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* One collection tree; each source retains its complete tools and bounded rows. */
+.unified-library {
+  display: grid;
+  grid-template-columns: minmax(180px, 22%) minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--seam-soft);
+  border-radius: 10px;
+}
+.library-content,
+.library-source-view {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+}
+.library-source-view[hidden] {
+  display: none;
+}
+.unified-library .controller-browser-split {
+  grid-template-columns: minmax(0, 1fr);
+  border: 0;
+  border-radius: 0;
+}
+.unified-library .spotify-collection-host .controller-playlists-pane {
+  overflow: visible;
+  border: 0;
+  padding: 0;
+  background: transparent;
+}
+.unified-library .spotify-collection-host .browser-pane-heading {
+  position: static;
+}
+.unified-library > .controller-playlists-pane {
+  padding-top: 6px;
+}
+.unified-library .library-toolbar {
+  padding: 12px;
+}
+.spotify-library-home {
+  gap: 8px;
+}
+
+.unified-library[data-source="local"]
+  .spotify-collection-host
+  .controller-selected {
+  background: transparent;
+  color: var(--ink-2);
+  box-shadow: none;
+}
+
+/* Positioned rows keep scrolling independent of full table layout and spacers. */
+.track-table { display: grid; --track-columns: 42px minmax(0,1fr) 70px 92px 70px 84px minmax(0,1fr); }
+.track-table thead, .virtual-track-body { display: block; width: 100%; }
+.track-table tr { display: grid; grid-template-columns: var(--track-columns); }
+.track-table :is(td,th) { min-width: 0; align-content: center; }
+.virtual-track-body { position: relative; }
+.spotify-tracks .track-table { --track-columns: 42px 34% minmax(0,1fr) 78px 60px 56px 98px; }
+@media (max-width:1100px) { .local-track-table { --track-columns:42px minmax(0,1fr) 70px 70px 84px minmax(0,1fr); } }
+
+.library-tools { flex: none; }
+.library-tools-actions { display:flex; gap:8px; padding:6px 0; }
+.library-filter-panel { max-height:30vh; overflow:auto; border:1px solid var(--seam); border-radius:8px; padding:12px; background:var(--plate-top); }
+.library-filter-ranges,.my-tag-categories { display:flex; flex-wrap:wrap; gap:14px; }
+.library-filter-ranges>label,.metadata-form>label { display:flex; flex-direction:column; gap:5px; }
+.color-filters { display:flex; flex-wrap:wrap; gap:8px; }
+.color-filters label,.my-tag-options label,.metadata-my-tags label { display:inline-flex; align-items:center; gap:5px; margin:4px 10px 4px 0; }
+.library-filter-panel input[type=checkbox],.metadata-dialog input[type=checkbox] { width:auto; }
+.my-tag-options small { color:var(--ink-3); }
+.library-filter-panel details { margin:6px 0; }
+.library-filter-panel summary,.metadata-dialog summary { cursor:pointer; padding:5px 0; }
+.taxonomy-manager { border-top:1px solid var(--seam); padding-top:5px; }
+.taxonomy-manager form,.taxonomy-name,.taxonomy-tag { display:flex; align-items:center; flex-wrap:wrap; gap:6px; margin:5px 0; }
+.taxonomy-tag { margin-left:16px; }
+.track-color { display:inline-block; width:10px; height:10px; border:1px solid var(--ink-3); border-radius:50%; flex:none; }
+.track-classification { display:flex; align-items:center; gap:4px; font-size:10px; white-space:nowrap; }
+.metadata-dialog { position:fixed; width:min(820px,94vw); max-height:85vh; overflow:auto; border:1px solid var(--seam); border-radius:14px; padding:20px; background:var(--plate-top); color:var(--ink); box-shadow:0 12px 60px #0005; }
+.metadata-dialog::backdrop { background:#0006; }
+.metadata-header { display:flex; align-items:center; justify-content:space-between; }
+.metadata-header h2 { margin:0; }
+.metadata-note { color:var(--ink-2); font-size:13px; }
+.metadata-form { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+.metadata-dialog input:not([type=checkbox]),.metadata-dialog textarea,.metadata-dialog select { width:100%; box-sizing:border-box; padding:8px; border:1px solid var(--seam); border-radius:5px; background:var(--key-top); color:var(--ink); }
+.metadata-dialog textarea { min-height:72px; resize:vertical; }
+.metadata-my-tags { margin:14px 0; }
+.metadata-dialog pre { max-height:240px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; }
+.metadata-footer { display:flex; flex-wrap:wrap; gap:8px; margin-top:16px; }
+.metadata-dialog [role=alert],.library-tools [role=alert] { color:var(--danger,#b82424); }
+@media(max-width:700px) { .metadata-form { grid-template-columns:1fr; } }
+.metadata-dialog input[type=color] { width:48px; height:28px; padding:2px; }

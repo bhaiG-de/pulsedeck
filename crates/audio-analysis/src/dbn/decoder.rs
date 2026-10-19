@@ -53,8 +53,29 @@ pub fn decode(
     let mut best_path: Vec<usize> = Vec::new();
     let mut best_hmm: Option<&HiddenMarkovModel> = None;
 
-    for hmm in &hmms {
-        let (path, logp) = hmm.viterbi(&act, &mut progress_tracker)?;
+    let results = std::thread::scope(|scope| {
+        let jobs: Vec<_> = hmms
+            .iter()
+            .map(|hmm| {
+                let act = &act;
+                scope.spawn(move || {
+                    let mut sink = |_: ProgressEvent| {};
+                    let mut local =
+                        DbnProgressTracker::new(&mut sink, hmm.work_units(act.len()).max(1));
+                    hmm.viterbi(act, &mut local)
+                })
+            })
+            .collect();
+        jobs.into_iter()
+            .map(|job| {
+                job.join()
+                    .map_err(|_| RhythmError::Model("DBN worker failed".into()))?
+            })
+            .collect::<Result<Vec<_>, _>>()
+    })?;
+    // Reduce in the original meter order so tie-breaking stays identical.
+    for (hmm, (path, logp)) in hmms.iter().zip(results) {
+        progress_tracker.advance(hmm.work_units(act.len()));
         if logp > best_logp {
             best_logp = logp;
             best_path = path;

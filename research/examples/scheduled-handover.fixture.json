@@ -1,0 +1,156 @@
+{
+  "schedule": {
+    "operation_id": "fixture-handover",
+    "clock": "A",
+    "expected_load_revisions": [
+      0,
+      0
+    ],
+    "expected_position_revisions": [
+      1,
+      1
+    ],
+    "expected_grid_revisions": [
+      1,
+      1
+    ],
+    "expected_engine_epoch": 0,
+    "expected_control_revision": 3,
+    "arm_before_event": 2,
+    "completion_event": 24,
+    "pause_outgoing": true,
+    "intent": {
+      "fixture_only": true,
+      "tempo_policy": "nearby",
+      "protected_payoff": "retain requested first payoff",
+      "performance_baseline": {
+        "engine_epoch": 0,
+        "rendered_frames": 0,
+        "sample_rate": 1000
+      }
+    },
+    "recovery": {
+      "carrier": "B",
+      "seconds": 0.2,
+      "controls": [
+        {
+          "type": "ramp",
+          "target": {
+            "type": "channel_fader",
+            "deck": "B"
+          },
+          "value": 1,
+          "seconds": 0.2,
+          "clock": null,
+          "beats": null,
+          "quantize": null
+        },
+        {
+          "type": "ramp",
+          "target": {
+            "type": "channel_fader",
+            "deck": "A"
+          },
+          "value": 0,
+          "seconds": 0.2,
+          "clock": null,
+          "beats": null,
+          "quantize": null
+        },
+        {
+          "type": "set_eq",
+          "deck": "B",
+          "low": 1,
+          "mid": 1,
+          "high": 1
+        }
+      ]
+    }
+  },
+  "steps": [
+    {
+      "command": "engine.command",
+      "args": {
+        "type": "play_quantized",
+        "deck": "B",
+        "clock": "A",
+        "clock_revision": 0,
+        "at_seconds": null,
+        "quantize": 1
+      },
+      "expected_load_revision": 0,
+      "at_event": 4,
+      "require": {
+        "deck": "B",
+        "playing": false,
+        "ready": true
+      }
+    },
+    {
+      "command": "automation.ramp",
+      "args": {
+        "target": {
+          "type": "channel_fader",
+          "deck": "A"
+        },
+        "value": 0,
+        "clock": "A",
+        "beats": 8
+      },
+      "expected_load_revision": 0,
+      "at_event": 8,
+      "require": {
+        "deck": "B",
+        "playing": true,
+        "ready": true,
+        "advanced_from_seconds": 0,
+        "min_advanced_beats": 3,
+        "phase_tolerance_beats": 0.01
+      }
+    },
+    {
+      "command": "automation.ramp",
+      "args": {
+        "target": {
+          "type": "channel_fader",
+          "deck": "B"
+        },
+        "value": 1,
+        "clock": "A",
+        "beats": 8
+      },
+      "expected_load_revision": 0,
+      "at_event": 8,
+      "require": {
+        "deck": "B",
+        "playing": true,
+        "ready": true,
+        "advanced_from_seconds": 0,
+        "min_advanced_beats": 3,
+        "phase_tolerance_beats": 0.01
+      }
+    },
+    {
+      "command": "automation.ramp",
+      "args": {
+        "target": {
+          "type": "eq_low",
+          "deck": "B"
+        },
+        "value": 1,
+        "clock": "A",
+        "beats": 8
+      },
+      "expected_load_revision": 0,
+      "at_event": 8,
+      "require": {
+        "deck": "B",
+        "playing": true,
+        "ready": true,
+        "advanced_from_seconds": 0,
+        "min_advanced_beats": 3,
+        "phase_tolerance_beats": 0.01
+      }
+    }
+  ]
+}

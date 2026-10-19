@@ -107,41 +107,17 @@ held-out tracks with independently verified references for that assessment.
 
 ## Neural beat stage
 
-`track_beats` uses the existing pinned full Beat This! final0 model and RTen runtime. `stage_from_rhythm` derives compatibility metadata from an already analyzed `NeuralRhythm`, without a second inference pass. The optional constant-grid fit is diagnostic only: it never replaces the native beat/downbeat event clock, BPM provenance or manual edits. The application derives section features from its decoded RAM audio. The incoming small-model/tract spike remains historical research; its weights and runtime are not shipped.
+`track_beats` uses the existing pinned full Beat This! final0 model and RTen runtime. `stage_from_rhythm` derives compatibility metadata from an already analyzed `NeuralRhythm`, without a second inference pass. The optional constant-grid fit is diagnostic only: it never replaces the native beat/downbeat event clock, BPM provenance or manual edits. The incoming small-model/tract spike remains historical research; its weights and runtime are not shipped.
 
-## Song sections and automatic cues
+## Manual cue records
 
-`detect_sections_on_bars` cuts sections on actual native bar timestamps, including variable tempo and 3/4/5/7 meter. A section spectrogram supplies the timbre and energy features. `detect_sections` remains a constant-grid compatibility helper. Every
-full bar from the grid's beat 1 gets 16 timbre bands plus overall, bass and
-treble level and bass onset strength. Silent bars at either end are dropped.
-Dynamic programming over the z-scored bar vectors minimises within-section
-variance plus a cost per section; lengths in whole 8-bar phrases are free, 4-bar
-sections and odd lengths cost more, and fragments under four bars at the ends
-join their neighbour. Sections are only cut from model or manual grids: the DSP
-phase marks a beat, not beat 1.
-
-Labels use each section's energy, groove (bass level and how far bass stands
-out from the mix, so a noise riser does not read as a drop) and repetition.
-**Dance** (chosen when bass drops out mid-track and later returns): drops are
-loud with strong groove, breakdowns lose the groove, build-ups lead into a drop
-and either rise or are short and lighter, and plain phrases before the first or
-after the last labelled section extend the intro and outro. **Hip-hop**: short
-edge sections are the intro and outro, the repeating group of roughly 8-bar
-sections is the hook, and longer sections are verses. The DJ can switch
-vocabulary per track without re-reading audio. Neighbouring sections with the
-same label display and cue as one; the stored sections stay fine-grained.
-
-`plan_auto_cues` fills only empty hot cue pads (first downbeat, then drops or
-hooks, breakdowns or verses, build-ups and the outro, placed in time order) and
-memory cues (every section start). It records what it placed: untouched auto
-cues move when sections change, cues the DJ set or moved are never changed, and
-auto cues the DJ cleared are not placed again on any pad.
-
-Tests cover a synthetic EDM arrangement (intro, build-up, drop, breakdown,
-build-up, drop, outro cut on exact phrases), a synthetic hip-hop arrangement
-(intro, verse, hook, verse, hook, outro), silence, label extension and merging,
-and the cue rules. Real tracks need the annotated evaluation in
-`research/ai-features-scope.md`.
+`CueCollection` stores human-authored source-time points and spans. Hot pads,
+memory slots and the main cue bind to stable records. Named unbound points remain
+available through `cues.get` and `cues.set`. Reanalysis and grid edits do not
+create, reposition or regenerate cues. The library migration removes retired
+untouched generated markers while retaining manual/imported knowledge and
+human edits. Structural segmentation, label classification and automatic cue
+placement have been removed.
 
 Public DSP references:
 
@@ -150,3 +126,11 @@ Public DSP references:
 - [Essentia KeyExtractor documentation](https://essentia.upf.edu/reference/streaming_KeyExtractor.html) and [tonal-analysis tutorial](https://essentia.upf.edu/tutorial_tonal_hpcpkeyscale.html): spectral peaks, pitch-class profiles and tuning compensation. This project does not depend on or copy Essentia implementation code.
 - [W3C Audio EQ Cookbook](https://www.w3.org/TR/audio-eq-cookbook/): independent biquad coefficient formulas.
 - [RustFFT](https://github.com/ejmahler/RustFFT): MIT/Apache-2.0 FFT implementation used off-thread.
+
+## PCM bounds and programme loudness
+
+`AudioMeasurements` is an independently versioned full-source PCM result. Audible bounds are the first frame above −60 dBFS on either channel and the exclusive last frame above that threshold; silence has no bounds. These are technical sound limits, not musical intro/outro cues. Current metadata is upgraded from decoded PCM off the render thread, without rerunning compatible rhythm/key stages or replacing user cues.
+
+Pinned `ebur128` 0.1.10 measures gated EBU R128 integrated LUFS and oversampled true peak. The static programme correction targets −18 LUFS, bounds boost to +12 dB and attenuation to −60 dB, and reduces the correction further when needed to keep measured source peak at −1 dBTP. Silence, too-short/unmeasurable material and errors retain unity gain with explicit absent measurements/error. This is programme normalization, not a compressor or a guarantee of equal loudness at every transition passage. Effect/EQ summing and output true peak remain separate concerns.
+
+Primary implementation reference: https://docs.rs/ebur128/0.1.10/ebur128/struct.EbuR128.html (MIT licensed dependency; its interpolation algorithm/version is part of the measurement identity).

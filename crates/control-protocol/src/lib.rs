@@ -4,6 +4,28 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+pub mod selection;
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum EnergyDirection {
+    #[default]
+    Keep,
+    #[serde(alias = "up")]
+    Raise,
+    #[serde(alias = "down")]
+    Lower,
+}
+impl EnergyDirection {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Keep => "keep",
+            Self::Raise => "raise",
+            Self::Lower => "lower",
+        }
+    }
+}
 pub const VERSION: u32 = 1;
 pub const MAX_FRAME: usize = 4 * 1024 * 1024;
 pub fn catalog() -> Vec<Value> {
@@ -44,6 +66,36 @@ pub fn validate_arguments(request: &Request) -> Result<(), ControlError> {
         );
         return Err(ControlError::new("command_unsupported",format!("Unknown command: {}",request.command)).with_detail("command",request.command.clone()).with_detail("suggestions",serde_json::json!(choices)).with_detail("hint","Use one of the suggested exact method names, or run pulsedeckctl commands list --json."));
     };
+    if request.command == "cues.set" {
+        let forms = ["cues", "point", "delete_id", "bind", "kind"]
+            .into_iter()
+            .filter(|key| request.args.get(*key).is_some())
+            .collect::<Vec<_>>();
+        if forms.len() != 1 {
+            return Err(ControlError::new(
+                "invalid_arguments",
+                "Choose exactly one cue edit form: cues, point, delete_id, bind, or legacy kind",
+            ));
+        }
+        if forms[0] != "kind"
+            && ["index", "seconds", "label"]
+                .into_iter()
+                .any(|key| request.args.get(key).is_some())
+        {
+            return Err(ControlError::new(
+                "invalid_arguments",
+                "Legacy index/seconds/label belong only to the kind edit form",
+            ));
+        }
+    }
+    if matches!(request.command.as_str(), "cues.get" | "cues.set")
+        && request.args.get("source").is_some() == request.args.get("deck").is_some()
+    {
+        return Err(ControlError::new(
+            "invalid_arguments",
+            "Cue operations require exactly one of source or deck",
+        ));
+    }
     let schema = &descriptor["input_schema"];
     let properties = schema["properties"]
         .as_object()
@@ -113,7 +165,11 @@ pub fn validate_arguments(request: &Request) -> Result<(), ControlError> {
             ));
         }
         if let Some(options) = property["enum"].as_array() {
-            if !options.contains(value) {
+            let aliased = value
+                .as_str()
+                .and_then(|s| property["aliases"].get(s))
+                .is_some_and(|v| options.contains(v));
+            if !options.contains(value) && !aliased {
                 return Err(fail(
                     key,
                     format!("Argument '{key}' must be one of {}", property["enum"]),
@@ -165,6 +221,10 @@ pub struct Request {
     pub expected_load_revision: Option<u64>,
     #[serde(default)]
     pub no_wait: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fields: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub view: Option<String>,
 }
 fn version() -> u32 {
     VERSION
@@ -192,9 +252,12 @@ impl Request {
             timeout_ms: timeout(),
             expected_load_revision: None,
             no_wait: false,
+            fields: None,
+            view: None,
         }
     }
     pub fn validate(&self) -> Result<(), ControlError> {
+        selection::validate(self)?;
         if self.protocol_version != VERSION {
             return Err(ControlError::new(
                 "protocol_mismatch",
@@ -477,6 +540,15 @@ pub mod ipc {
                 .name("pulsedeck-control".into())
                 .spawn(move || {
                     while !stopped.load(Ordering::Acquire) {
+                        let mut ready = libc::pollfd {
+                            fd: listener.as_raw_fd(),
+                            events: libc::POLLIN,
+                            revents: 0,
+                        };
+                        // The listener outlives poll; wake on input without a fixed request delay.
+                        if unsafe { libc::poll(&mut ready, 1, 50) } <= 0 {
+                            continue;
+                        }
                         match listener.accept() {
                             Ok((mut stream, _)) => {
                                 // macOS accepted sockets inherit the listener's
@@ -519,9 +591,7 @@ pub mod ipc {
                                     active.fetch_sub(1, Ordering::AcqRel);
                                 });
                             }
-                            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                                std::thread::sleep(Duration::from_millis(10))
-                            }
+                            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
                             Err(_) => break,
                         }
                     }
@@ -549,6 +619,27 @@ pub mod ipc {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn incremental_queue_methods_are_discoverable_and_require_transaction_identity() {
+        for command in ["batch.append", "batch.invalidate", "batch.seal"] {
+            assert!(catalog()
+                .iter()
+                .any(|descriptor| descriptor["command"] == command));
+            let error = validate_arguments(&Request::new(command, serde_json::json!({"id":"job"})))
+                .unwrap_err();
+            assert_eq!(error.details["argument"], "patch_id");
+        }
+        let wait = Request::new(
+            "events.get",
+            serde_json::json!({"since":42,"wait_ms":60000,"job_id":"job"}),
+        );
+        validate_arguments(&wait).unwrap();
+        assert!(validate_arguments(&Request::new(
+            "batch.seal",
+            serde_json::json!({"id":"job","patch_id":"p","expected_revision":1,"execute":"shell"})
+        ))
+        .is_err());
+    }
     #[test]
     fn actionable_errors_report_exact_argument_schema_example_and_suggestions() {
         let error = validate_arguments(&Request::new("deck.laod", serde_json::json!({"deck":"A"})))

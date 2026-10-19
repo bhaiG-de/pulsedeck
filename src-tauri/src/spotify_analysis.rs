@@ -81,15 +81,17 @@ pub fn validate_uri(uri: &str) -> Result<(), String> {
     Ok(())
 }
 pub fn store(app: &tauri::AppHandle, analysis: &TrackAnalysis) -> Result<(), String> {
-    app.state::<AppState>()
+    let changed = app
+        .state::<AppState>()
         .library
         .lock()
         .map_err(|_| "Analysis cache unavailable")?
         .cache_spotify_analysis(analysis)?;
-    let _ = app.emit("spotify-analysis-updated", AnalysisSummary::from(analysis));
+    if changed {
+        let _ = app.emit("spotify-analysis-updated", AnalysisSummary::from(analysis));
+    }
     Ok(())
 }
-#[tauri::command]
 pub fn spotify_cached_analysis(
     app: tauri::AppHandle,
     uris: Vec<String>,
@@ -111,16 +113,13 @@ pub fn spotify_cached_analysis(
     }
     Ok(result)
 }
-#[tauri::command]
 pub fn spotify_analysis_status(app: tauri::AppHandle) -> BatchStatus {
     app.state::<AppState>().spotify_analysis.snapshot()
 }
-#[tauri::command]
 pub fn cancel_spotify_analysis(app: tauri::AppHandle) {
     app.state::<AppState>().spotify_analysis.cancel()
 }
 
-#[tauri::command]
 pub fn analyze_spotify_page(
     app: tauri::AppHandle,
     uris: Vec<String>,
@@ -176,12 +175,8 @@ fn run_page(app: &tauri::AppHandle, queue: Vec<String>, cancel: Arc<AtomicBool>)
             .lock()
             .ok()
             .and_then(|cache| cache.spotify_analysis(&uri).ok().flatten());
-        let beat_model = state.beat_model_spotify.load(Ordering::Acquire);
-        // Cached entries without the current beat and section stage are upgraded in place.
-        if cached
-            .as_ref()
-            .is_some_and(|c| !beat_model || crate::beat_stage_current(c))
-        {
+        // Upgrade only entries missing compatible persisted timing or PCM measurements.
+        if cached.as_ref().is_some_and(crate::source_analysis_current) {
             if let Ok(mut b) = state.spotify_analysis.0.lock() {
                 b.status.completed += 1;
                 b.status.cached += 1;
@@ -231,26 +226,30 @@ fn run_page(app: &tauri::AppHandle, queue: Vec<String>, cancel: Arc<AtomicBool>)
                 if current.load(Ordering::Acquire) {
                     return Err("Analysis interrupted".into());
                 }
-                let mut analysis = match cached.clone() {
-                    // Keep the cached key, waveform and manual edits; add beats only.
-                    Some(cached) => cached,
-                    None => deck_engine::analyze_decoded_audio(
-                        &source.samples,
-                        source.sample_rate,
-                        &AudioSourceInfo {
-                            id: uri.clone(),
-                            location: uri.clone(),
-                            title: source.metadata.title,
-                            artist: Some(source.metadata.artists.join(", ")),
-                            extension: None,
-                        },
-                        false,
-                    )?,
-                };
+                let mut analysis = deck_engine::analyze_decoded_audio_cached(
+                    &source.samples,
+                    source.sample_rate,
+                    &AudioSourceInfo {
+                        id: uri.clone(),
+                        location: uri.clone(),
+                        title: source.metadata.title,
+                        artist: Some(source.metadata.artists.join(", ")),
+                        extension: None,
+                        release_identity: Some(
+                            source
+                                .metadata
+                                .resolved_uri
+                                .clone()
+                                .unwrap_or_else(|| uri.clone()),
+                        ),
+                    },
+                    false,
+                    cached.clone(),
+                );
                 let interrupted = || current.load(Ordering::Acquire);
                 let mut model_error = None;
-                if beat_model {
-                    match deck_engine::analyze_beats_and_sections(
+                {
+                    match deck_engine::analyze_beats(
                         &source.samples,
                         source.sample_rate,
                         &mut analysis,

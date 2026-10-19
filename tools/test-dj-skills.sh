@@ -2,6 +2,8 @@
 set -euo pipefail
 task_root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$task_root"
+python3 tools/validate-dj-skills.py
+python3 tools/test-dj-skill-packaging.py
 task_name="workflow-$(date +%s)-$$"
 task_started=0
 cleanup() {

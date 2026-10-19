@@ -35,11 +35,33 @@ pulsedeckctl call controller.action --args '{"action":{"type":"pad","deck":0,"mo
 
 Human commands use decks A/B, hot cues A-H and sampler slots 1-16. Native JSON uses zero-based controller decks/pads/sampler slots. `engine.command` accepts A/B or 0/1 for a top-level deck. Time arguments explicitly support `s` and `ms`; ramp duration also supports `beats`. Gain/EQ are 0..2 with unity at 1; channel faders/cue mix are 0..1; filter/crossfader are -1..1 with neutral at 0. Numeric limits are enforced by the native command validator and reflected in discovery.
 
+Bulk local imports can request `summary:true` to return only stable track IDs, keeping receipts bounded when existing tracks have cached waveforms and neural results. The Library UI uses this mode. The default full-record response remains available; retrieve paginated metadata with `library.tracks`.
+
+```sh
+pulsedeckctl call library.import --args '{"folder":"/music/pack","summary":true}' --json
+```
+
 ## Common actions
+
+`deck.load` returns a compact ready receipt by default: identity, source/load guards,
+BPM/key, stage outcomes and neural counts. Use `deck A load --detail` or
+`call deck.load --args '{"deck":"A","track":"local:42","detail":true}'` when the
+full analysis arrays are required. Engine metadata and bounded inspection retain
+their existing full-analysis capabilities.
+
+Discover one renderer payload with `commands describe engine.command --action set_sync`.
+For first-pair preparation, `batch validate --file plan.json` also accepts the exact
+session `{"op":"add","items":[...]}` object. It checks the whole dependency/group
+graph without executing or reserving its IDs; send the unchanged object to the
+persistent session after validation. The phrase checker supports `--preflight`
+for prepared paused sources, retaining its timing/grid/Sync checks without claiming
+that live execution has occurred.
 
 ```sh
 pulsedeckctl library import --path /music/song.flac
 pulsedeckctl library tracks --search ambient --sort bpm --json
+pulsedeckctl library tracks --search house --bpm-min 120 --bpm-max 128 --limit 20 --json
+pulsedeckctl library tracks --filters '{"my_tags":[1,2],"tag_mode":"and","rating_min":3}' --limit 20 --json
 pulsedeckctl deck A load --track local:42
 pulsedeckctl deck B load --path /music/next-song.wav
 pulsedeckctl deck A play
@@ -137,10 +159,65 @@ Stages distinguish `accepted`, native `applied`, load `ready`, metadata `persist
 pulsedeckctl deck A wait
 pulsedeckctl state watch --interval 250ms
 pulsedeckctl events watch --count 10
-pulsedeckctl session --stdio
+pulsedeckctl session start --stdio
 ```
 
-## Batches and native ramps
+## Set playing tempo without changing analysis
+
+`pulsedeckctl deck A tempo set --bpm 124` enters an absolute playback BPM using the current four-beat local fit at renderer apply. `--bpm` accepts 30–300 and cannot be combined with `--percent`; missing local tempo or unreachable rate fails. This sets entry rate once, not a continuing BPM lock across real tempo changes. It takes manual ownership, disables Sync and clears adaptation while preserving analysis/grid. `deck A bpm set 124` instead corrects source/grid metadata and selects a uniform override.
+
+`bpm` remains the canonical stored source/grid reference. `local_bpm` is the current four-beat fit; `playback_bpm` is that local BPM times nominal rate, and `actual_playback_bpm` uses rendered rate including adaptive offset, bounded phase and bend. `target_playback_bpm` remembers accepted intent: exact absolute entry, the local result at a percent setter's apply, or the Sync leader's stable target. Verify target/actual fields separately; null is missing evidence. Receipt success follows accepted target/ownership rather than a later changing local fit. See [field details](../.agents/skills/references/cli.md#playing-tempo-and-source-bpm).
+
+Use valid master/follower Sync for ongoing variable-tempo overlap. It uses the same local fit while preserving transport position. Sync-off/master promotion folds the effective rate into nominal control once for continuity. Loading/unloading the master can promote a healthy playing other deck while preserving rate; pausing the master alone freezes follower correction and does not promote another deck. Inspect current roles after handoff instead of assuming stale master state.
+
+## Persistent sessions for agents
+
+Start one process for the set and keep stdin open:
+
+```sh
+pulsedeckctl session start --stdio
+```
+
+It emits `session_ready` with session/job IDs, revision and event cursor. Write software commands directly as JSON lines; they queue by default. Omitted IDs are generated. Link dependent commands with `when.after`; otherwise they are independent. This readiness example requires a real selected track and appropriate incoming-channel isolation before it is used in a mix:
+
+```jsonl
+{"id":"load-b","command":"deck.load","args":{"deck":"B","uri":"spotify:track:TRACK_ID"},"request_id":"load-b-once"}
+{"id":"play-b","command":"engine.command","args":{"type":"play","deck":"B"},"when":{"after":"load-b"},"request_id":"play-b-once"}
+```
+
+A parallel item uses `commands` instead of outer `command`/`args`:
+
+```jsonl
+{"id":"blend","commands":[{"command":"automation.ramp","args":{"target":{"type":"eq_low","deck":"B"},"value":1,"seconds":4}},{"command":"automation.ramp","args":{"target":{"type":"tempo_percent","deck":"B"},"value":-1,"seconds":8}}],"when":{"after":"play-b"},"request_id":"blend-once"}
+```
+
+The example bass/tempo target values are illustrative; choose actual values from the source and musical plan. Groups contain 2–64 native `engine.command`/`automation.ramp` members on disjoint controls. They start together on the same renderer frame under one outer `when`, while durations can differ. Put quantization on outer `when`; per-member ramp `quantize` is rejected, while each member may use its own clock/beats for duration. Group completion waits for all member endpoints; `when.after:"blend"` anchors dependent work to the last actual completion. Assets and other software commands remain separate readiness-dependent items. Unsupported members, ambiguous envelopes and overlapping targets reject the whole group. Acks echo `commands`/`member_count`; execution notifications carry member progress. Pending group updates/removals/retries use the same public IDs and operations as single items.
+
+For all-or-none registration of a linked plan, submit `{"op":"add","items":[{"id":"first",...},{"id":"next",...,"when":{"after":"first"}}],"request_id":"plan-once"}`. It delegates one existing `batch.append` patch. Each of 1–256 items keeps independent timing and may contain one native parallel `commands` group. One ack has `atomic:true`, `items` with accepted logical IDs/versions, and `registered_count:N`; rejection registers zero and leaves prior accepted work unchanged. Execution is still per item. See [the bounded isolate/load/entry/absolute-launch/blend example](../.agents/skills/references/timed-execution.md#register-a-linked-plan-atomically).
+
+A rejected changed-body reuse of an accepted ID blocks later unversioned dependencies with `dependency_ambiguous`; it does not modify the original action. `op:status` exposes `dependency_ambiguities` and accepted versions. Intentional historical dependencies use `when:{"after":"pause-b","after_version":1}`; unknown versions return `dependency_unknown`. Explicit selection does not unpoison other callers; a valid accepted update does. Identical retries do not create ambiguity.
+
+`when:{"type":"after_beats","clock":"A","beats":16,"quantize":4}` resolves a future native beat target. `when:{"after":"play-b","type":"after_beats","clock":"B","beats":8}` starts its delay after the prior command actually completes. `after_seconds` uses renderer time; `at_event` remains available for a known inspected event index. The agent does not need to invoke CLI at the exact target beat.
+
+An add acknowledgment echoes the item/command with type `registered`; it proves acceptance. Successful edits/removals return `updated`/`removed`. Continuous `job.action` notifications distinguish `queued`, `running`, `executed`, `failed` and `cancelled`, with logical `item_id`, version, native action ID and event sequence. `executed` verifies actual command completion, including a ramp endpoint. Acks/events can interleave. Prepare ahead or consume process output while pending work runs; do not poll to time individual faders.
+
+```jsonl
+{"op":"update","id":"play-b","command":"engine.command","args":{"type":"play","deck":"B"},"when":{"after":"load-b","type":"after_beats","clock":"A","beats":8},"request_id":"edit-play-b-1"}
+{"op":"remove","id":"play-b","request_id":"remove-play-b-1"}
+{"op":"status"}
+{"op":"call","command":"state.get","args":{},"view":"compact"}
+{"op":"stop"}
+```
+
+Update atomically replaces pending work and preserves its logical ID with a new version; executed work cannot be rewritten, and the backend rejects edits that are too late. The CLI handles queue revision conflicts. Repeat an identical `request_id`/input after an uncertain reply without replaying commands; changed-body reuse conflicts. Explicit `op:"call"` makes an immediate canonical request for inspection. `stop`, or stdin EOF, cancels only this session's pending work and closes the stream; ordinary playback continues unless explicitly paused. Keep the process handle through compaction. A stream gap produces `session_resync`; a lost process should prompt inspection of its known job, not replay of the set.
+
+Session feedback distinguishes pending renderer work (`queued`), actual execution (`running`) and verified completion (`executed`). Rejected add/update/remove input returns `type:"rejected",ok:false` with a compact error. Internal progress/accepted patch bookkeeping is omitted from the default session stream.
+
+Default command-job status includes every unfinished item, eight recent terminal items, counts and omitted-history counts. `jobs get JOB_ID --detail` returns full retained history. Session status annotates logical item IDs and versions consistently with execution events.
+
+The older `session --stdio` remains a synchronous raw Request stream. The new persistent mode delegates to existing `batch.run/append/invalidate`, `jobs` and `events.get`; it introduces no separate product dispatcher or scheduler. Detailed operational guidance is in [timed execution](../.agents/skills/references/timed-execution.md).
+
+## Existing batches and native ramps
 
 ```json
 [
@@ -179,7 +256,7 @@ The desktop harness starts a temporary profile with separate library, preference
 
 Physical controller/routing verification and live Spotify authorization require the corresponding hardware/account. Parsed controls with no software implementation (mic gain, Android mono, Smart Fader Next and shifted loop-in/out) remain explicitly unsupported. Spotify playlist writes, embedded-widget transport, musical-section detection, general wall-clock transport scheduling and an MCP server remain future work. The CLI supplies the control, metadata, job and diagnostic foundation for that work.
 
-For musical operation through shell agents, see the [seven DJ skills](../.agents/skills/README.md). `track.inspect` provides bounded waveform and beat-event range views, compact neural metadata and cue revisions, without seeking or reanalyzing.
+For musical operation through shell agents, see the [three DJ skills](../.agents/skills/README.md). `track.inspect` provides bounded waveform and beat-event range views, compact neural metadata and cue revisions, without seeking or reanalyzing.
 
 Song tags are free-form strings stored in the local library. Edit them inline in the Tags column (Enter to add, × to remove), or run `pulsedeckctl library track tags local:42 --tags '["Afro house","chill vibe"]' --json`. Supplying `[]` clears tags. Library search includes tags, and `track.inspect` returns them as `metadata.tags`. Tags survive reimport/reanalysis and do not alter audio files.
 
@@ -196,8 +273,31 @@ Explicit manual BPM correction selects a constant-tempo grid for the entire sour
 
 For an authorized analysis refresh, `pulsedeckctl deck B analyze --expected-load-revision N --json` runs full analysis on the loaded source; wait for completion, then reinspect identity, error/provenance and events. An inspection-only request remains read-only. Source guards protect identity, not every concurrent knob or seek.
 
-After choosing B's arrival event and entry-to-arrival beat count, count backward from A's handover and select its actual future grid-event timestamp. Use `pulsedeckctl deck B launch --clock A --clock-revision A_REV --at A_SECONDSs --expected-load-revision B_REV`, substituting observed revisions/times. The renderer snaps B's paused entry to its nearest effective beat and queues a sample-clock start on A's chosen timestamp. A must be playing; both grids must be valid, effective tempos must match within 0.01 BPM, neither deck may have a loop/jog hold, incoming preparation must be ready, and audio must run. Mean-BPM timestamp arithmetic can miss a variable grid; use inspected event times. Omitting `--at` selects the next boundary; `--quantize 4`/`32` counts beats, with bar/phrase interpretation requiring separate evidence.
+After choosing B's arrival event and entry-to-arrival beat count, count backward from A's handover and select its actual future grid-event timestamp. Use `pulsedeckctl deck B launch --clock A --clock-revision A_REV --at A_SECONDSs --expected-load-revision B_REV`, substituting observed revisions/times. The renderer snaps B's paused entry to its nearest effective beat and queues a sample-clock start on A's chosen timestamp. A must be playing and distinct from paused B; valid source/grid, future-beat, readiness, jog/loop and ownership guards remain. Audio must run. Launch itself accepts unequal BPMs and neither enables Sync nor changes rate: it aligns the selected clock beat and incoming entry. The caller chooses close-tempo/Sync preparation for a beatmixed overlap or a purposeful unequal-tempo cut. Mean-BPM timestamp arithmetic can miss a variable grid; use inspected event times. Omitting `--at` selects the next boundary; `--quantize 4`/`32` counts beats, with bar/phrase interpretation requiring separate evidence.
 
 Inspect `launch_pending`/`launch_at_seconds`, wait with `pulsedeckctl call engine.wait --args '{"deck":"B","launches":true}' --expected-load-revision B_REV --timeout 30s --json`, then verify B playing and both source revisions. Compute phase from simultaneous native `beat_position` values, wrapping the difference to `[-0.5,0.5)` beats; do not use a uniform BPM/offset formula. Keep B isolated until phase is checked and monitor drift during overlap. A cancelled launch also clears pending state, so wait completion alone does not prove success. Source/timeline/tempo/grid changes and manual takeover cancel stale launches. `deck B launch cancel` or `automation stop` cancels pending launch. Synced Play queues the next master beat; unsynced Play is immediate. Native timing cannot choose a phrase or prevent vocal/bass clashes. See [DJ control reference](../.agents/skills/references/cli.md#correct-a-grid-and-queue-a-musical-launch).
 
-Section analysis and next-track suggestions extend the existing Beat This! clock. Use `analysis.settings.get`, `analysis.settings.set`, `library.analysis.update`, `library.analysis.cancel`, `deck.sections.vocabulary`, `library.suggest_next` and `library.history.clear` through `pulsedeckctl call`. The `beat_model_spotify` compatibility setting enables Spotify section analysis; core beat detection remains part of source preparation.
+## Manual cues and cached suggestions
+
+BPM, neural beat/downbeat timing, key and waveform analysis remain available.
+Automatic cue/section generation and its settings/vocabulary commands are removed.
+Read saved human-authored points with `cues.get`, and bounded event/band evidence
+with `track.inspect`. Authorized `cues.set` edits create/delete/bind points in the
+same durable store. `library.suggest_next` shortlists cached candidates within the
+requested collection; it does not detect phrases or choose transitions.
+`library.analysis.update/cancel` explicitly refreshes or cancels measured analysis.
+
+For live agents, use the persistent session above: queue software commands, consume completion feedback and update pending work. Advanced guarded handovers still use existing `batch.run/append/invalidate/seal` and remain compatible; see [the native scheduling contract](scheduled-batches.md) and [tested fixture](examples/scheduled-handover.fixture.json). They support explicit event groups, guards and recovery when an existing client requires them. `status --view resume` exposes persisted intent/receipts after compaction; unfinished jobs are interrupted on restart without replay. Read masks use JSON pointers, for example `status --fields /engine,/metadata`. The UI and CLI invoke the same dispatcher; only control transport and UI acknowledgments are Tauri invoke handlers.
+
+### Categorized tags and metadata
+
+`library.tag_categories` lists categories, shared tag IDs and assignment counts. `library.edit_taxonomy` creates/renames/reorders/removes categories or tags. `library.details` reads selected-track fields and a revision without waveforms. `library.edit_details` requires that revision and applies a partial `fields` map plus rating, color and My Tag assignments; it preserves untouched file fields, personal labels, cues and analysis.
+
+```sh
+pulsedeckctl call library.edit_taxonomy --args '{"kind":"category","name":"Energy"}' --json
+pulsedeckctl call library.tag_categories --json
+pulsedeckctl call library.details --args '{"id":42}' --json
+pulsedeckctl call library.tracks --args '{"filters":{"my_tags":[1,2],"tag_mode":"and","rating_min":3,"colors":["#FF0000"]},"limit":200}' --json
+```
+
+Use actual category/tag IDs and the current details revision. `library.write_metadata` is the explicit source-file text-write action: it requires `id` and `revision`, returns the original backup path, and rejects malformed source tags. Ratings/colors/categories remain library/XML data. XML imports can use `summary:true` just like folder imports to avoid large cached-analysis receipts. See [tagging/XML behavior and limits](library-tagging-and-xml.md).

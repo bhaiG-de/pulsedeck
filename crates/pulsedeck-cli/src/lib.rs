@@ -1,14 +1,17 @@
 use control_protocol::{ControlError, Request};
 use serde_json::{json, Map, Value};
 use std::path::PathBuf;
+pub mod mix;
+pub mod session;
 
-pub const HELP: &str = "PulseDeck control CLI (pulsedeckctl)\n\nOpen PulseDeck, then use:\n  pulsedeckctl status --json\n  pulsedeckctl deck A load --path /music/song.flac\n  pulsedeckctl deck A play|pause|cue|seek --at 32s\n  pulsedeckctl deck B launch --clock A --clock-revision 1 --at 64s\n  pulsedeckctl deck A grid set --offset 0.125s\n  pulsedeckctl deck A hotcue A set --at 32s\n  pulsedeckctl deck A tempo set --percent -2\n  pulsedeckctl deck A eq set --low 0.7\n  pulsedeckctl mixer crossfader set -0.5\n  pulsedeckctl library tracks --search ambient\n  pulsedeckctl playlist create --name Work\n  pulsedeckctl playlist add local:7 --track local:42\n  pulsedeckctl ui theme set anatomy-dark\n  pulsedeckctl commands list --json\n  pulsedeckctl call METHOD --args '{\"key\":\"value\"}'\n  pulsedeckctl command --file request.json\n  pulsedeckctl batch run --file plan.json\n  pulsedeckctl state watch [--count 10] [--interval 250ms]\n  pulsedeckctl session --stdio\n\nGlobal: --json --socket PATH --timeout 30s --no-wait\n        --expected-load-revision N --request-id ID\nNative slots are zero-based in JSON; named hot cues A-H / samples 1-16.\nUse commands list/describe for the complete callable catalog.\n";
+pub const HELP: &str = "PulseDeck control CLI (pulsedeckctl)\n\nOpen PulseDeck, then use:\n  pulsedeckctl status --json\n  pulsedeckctl deck A load --path /music/song.flac\n  pulsedeckctl deck A play|pause|cue|seek --at 32s\n  pulsedeckctl deck B launch --clock A --clock-revision 1 --at 64s\n  pulsedeckctl deck A grid set --offset 0.125s\n  pulsedeckctl deck A hotcue A set --at 32s\n  pulsedeckctl deck A tempo set --bpm 124\n  pulsedeckctl deck A tempo set --percent -2\n  tempo set changes playback; deck A bpm set BPM corrects source analysis/grid.\n  Absolute --bpm uses current four-beat local BPM at apply; it is not a continuing BPM lock.\n  Verify target_playback_bpm and actual_playback_bpm; source bpm remains analysis/grid reference.\n  pulsedeckctl deck A eq set --low 0.7\n  pulsedeckctl mixer crossfader set -0.5\n  pulsedeckctl library tracks --search ambient\n  pulsedeckctl library suggest --deck A --energy keep\n  pulsedeckctl library analysis update --no-wait\n  pulsedeckctl playlist create --name Work\n  pulsedeckctl playlist add local:7 --track local:42\n  pulsedeckctl ui theme set graphite\n  pulsedeckctl commands list --json   # concise; --detail opts into all schemas\n  pulsedeckctl call mix.openers --args '{\"playlist\":\"spotify:liked\",\"provider\":\"spotify\"}' --json\n  pulsedeckctl call METHOD --args '{\"key\":\"value\"}'\n  pulsedeckctl command --file request.json\n  pulsedeckctl batch validate|run --file plan.json\n  pulsedeckctl batch append|invalidate|seal --id JOB --patch-id ID --expected-revision N ...\n  Native queues capture omitted guards; open:true schedules accept later actions.\n  pulsedeckctl mix execute --option-id OPTION --review-confirmed --follow --json\n  pulsedeckctl mix queue start --playlist spotify:liked --provider spotify --duration-seconds 3600 --review-confirmed --replace-prepared\n  pulsedeckctl mix queue start --sources '[\"/music/next.flac\",\"/music/last.flac\"]' --review-confirmed\n  pulsedeckctl mix queue status|stop --queue-id QUEUE\n  Queue start returns immediately: the app owns selection/preparation, timing and duration.\n  Agents finish after acceptance. Healthy queues need no follow, polling or model wakeups.\n  mix.queue.notice reports actionable outcomes to event subscribers and the UI.\n  One action owns preparation, short fallback, native timing and lifecycle feedback.\n  --follow streams events until terminal; disconnect does not cancel the move.\n  pulsedeckctl events wait --since 0 --operation-id MIX --timeout 60s\n  pulsedeckctl status --view resume --fields /engine,/jobs\n  pulsedeckctl commands list --prefix batch. --names-only\n  pulsedeckctl state watch [--count 10] [--interval 250ms]\n  pulsedeckctl session start --stdio\n  Queue load: {\"id\":\"load-b\",\"command\":\"deck.load\",\"args\":{\"deck\":\"B\",\"uri\":\"spotify:track:TRACK_ID\"}}\n  Queue input: {\"id\":\"play-b\",\"command\":\"engine.command\",\"args\":{\"type\":\"play\",\"deck\":\"B\"},\"when\":{\"after\":\"load-b\"}}\n  Atomic add: {\"op\":\"add\",\"items\":[{\"id\":\"one\",\"command\":\"state.get\",\"args\":{}},{\"id\":\"two\",\"command\":\"state.get\",\"args\":{},\"when\":{\"after\":\"one\"}}],\"request_id\":\"plan-once\"}\n  Atomic registration accepts all items or zero; each keeps its own timing.\n  Rejected ID reuse blocks ambiguous dependencies; select known when.after_version explicitly.\n  Edit input: {\"op\":\"update\",\"id\":\"play-b\",\"command\":\"engine.command\",\"args\":{\"type\":\"play\",\"deck\":\"B\"}}\n  Timing: omitted=now; {\"after\":\"load-b\"} waits for completion.\n  Relative when: {\"type\":\"after_beats\",\"clock\":\"A\",\"beats\":16,\"quantize\":4}\n                 {\"type\":\"after_seconds\",\"seconds\":2}\n  Absolute when: {\"type\":\"at_seconds\",\"clock\":\"A\",\"seconds\":160} (source audio time).\n                 {\"type\":\"at_event\",\"clock\":\"A\",\"event\":64} (clocks A/B).\n  Commands are independent unless linked with when.after.\n  Parallel input: {\"id\":\"blend\",\"commands\":[{\"command\":\"automation.ramp\",\"args\":{\"target\":{\"type\":\"channel_fader\",\"deck\":\"B\"},\"value\":1,\"seconds\":4}},{\"command\":\"automation.ramp\",\"args\":{\"target\":{\"type\":\"eq_high\",\"deck\":\"B\"},\"value\":1,\"seconds\":2}}],\"when\":{\"after\":\"play-b\"}}\n  Groups contain 2..64 engine.command/automation.ramp members with disjoint targets.\n  One shared trigger starts all members on the same audio frame; durations can differ.\n  Put quantization on shared when; per-ramp quantize is rejected in groups.\n  A group executes only when all members finish; when.after a group waits for all.\n  Tempo ramp target: {\"type\":\"tempo_percent\",\"deck\":\"B\"}; value is absolute source-relative percent.\n  Tempo ramps take manual tempo ownership and disable follower Sync at start.\n  Remove: {\"op\":\"remove\",\"id\":\"play-b\"}; inspect: {\"op\":\"status\"}; stop: {\"op\":\"stop\"}\n  Read immediately: {\"op\":\"call\",\"command\":\"state.get\",\"args\":{},\"view\":\"compact\"}\n  stdout streams registrations and job.action completion/failure events.\n  Keep stdin open; EOF/stop cancels this queue's pending items and leaves playback running.\n  Include request_id to retry an edit without executing it twice.\n  Update replaces a pending item/group; repeat command/args or commands and new timing.\n  Legacy direct requests: pulsedeckctl session --stdio\n\nGlobal: --json --socket PATH --timeout 30s --no-wait\n        --expected-load-revision N --request-id ID\nRead-only: --fields /engine/decks,/metadata/tracks,... --view handover|resume|compact\nNative slots are zero-based in JSON; named hot cues A-H / samples 1-16.\nUse commands list/describe for the complete callable catalog.\n";
 #[derive(Debug)]
 pub struct Invocation {
     pub request: Request,
     pub socket: PathBuf,
     pub json: bool,
     pub watch: bool,
+    pub follow: bool,
     pub count: Option<usize>,
     pub interval_ms: u64,
 }
@@ -84,42 +87,51 @@ fn deck_example(tokens: &[String]) -> &'static str {
     }
 }
 
-pub fn parse_session(tokens: &[String]) -> Result<PathBuf, ControlError> {
-    let mut socket = control_protocol::socket_path();
-    let mut stdio = false;
-    let mut seen_socket = false;
-    let mut i = 1;
-    while i < tokens.len() {
-        match tokens[i].as_str() {
-            "--stdio" if !stdio => stdio = true,
-            "--json" => {}
-            "--socket" if !seen_socket => {
-                i += 1;
-                let path = tokens
-                    .get(i)
-                    .filter(|v| !v.starts_with("--"))
-                    .ok_or_else(|| invalid("Missing path for --socket"))?;
-                socket = PathBuf::from(path);
-                seen_socket = true;
-            }
-            token => {
-                return Err(invalid(format!(
-                    "Unknown, duplicate or inapplicable session option {token}"
-                ))
-                .with_detail("valid_options", json!(["--stdio", "--socket PATH"]))
-                .with_detail(
-                    "example",
-                    "pulsedeckctl session --stdio --socket /tmp/control.sock",
-                ))
-            }
-        }
-        i += 1;
+#[derive(Debug)]
+pub struct SessionInvocation {
+    pub socket: PathBuf,
+    pub start: bool,
+}
+/// Discover the command through the same option tokenizer used by ordinary calls.
+pub fn is_session(tokens: &[String]) -> bool {
+    split_tokens(tokens).is_ok_and(|(words, _)| words.first().is_some_and(|word| word == "session"))
+}
+pub fn parse_session(tokens: &[String]) -> Result<SessionInvocation, ControlError> {
+    let (words, mut flags) = split_tokens(tokens)?;
+    let start = match words
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
+        ["session"] => false,
+        ["session", "start"] => true,
+        _ => return Err(invalid("Use session [start] --stdio [--socket PATH]")),
+    };
+    if let Some(key) = flags
+        .keys()
+        .find(|key| !["stdio", "socket", "json"].contains(&key.as_str()))
+    {
+        return Err(invalid(format!(
+            "Unknown or inapplicable session option --{}",
+            key.replace('_', "-")
+        ))
+        .with_detail(
+            "valid_options",
+            json!(["--stdio", "--socket PATH", "--json"]),
+        ));
     }
-    if !stdio {
-        return Err(invalid("Session mode requires --stdio")
-            .with_detail("example", "pulsedeckctl session --stdio"));
+    if flags.remove("stdio") != Some(json!(true)) {
+        return Err(invalid("Session mode requires --stdio").with_detail(
+            "example",
+            "pulsedeckctl session start --stdio --socket /tmp/control.sock",
+        ));
     }
-    Ok(socket)
+    let socket = flags
+        .remove("socket")
+        .map(|value| PathBuf::from(text(&value)))
+        .unwrap_or_else(control_protocol::socket_path);
+    Ok(SessionInvocation { socket, start })
 }
 
 pub fn parse(tokens: &[String]) -> Result<Invocation, ControlError> {
@@ -136,11 +148,11 @@ pub fn parse(tokens: &[String]) -> Result<Invocation, ControlError> {
         };
         error=error.with_detail("usage",usage).with_detail("command",topic);
         if error.details.get("example").is_none(){error=error.with_detail("example",example);}
-        if error.message.contains("Unknown command") {error=error.with_detail("suggestions",json!(control_protocol::suggestions(topic,["status","state","deck","mixer","sampler","library","playlist","audio","midi","recording","spotify","ui","commands","call","command","batch","jobs","automation"].map(str::to_string))));}
+        if error.message.contains("Unknown command") {error=error.with_detail("suggestions",json!(control_protocol::suggestions(topic,["status","state","deck","mixer","sampler","library","playlist","analysis","track","audio","midi","recording","spotify","ui","commands","call","command","batch","jobs","automation"].map(str::to_string))));}
         error
     })
 }
-fn parse_inner(tokens: &[String]) -> Result<Invocation, ControlError> {
+fn split_tokens(tokens: &[String]) -> Result<(Vec<String>, Map<String, Value>), ControlError> {
     let mut words = Vec::new();
     let mut flags = Map::new();
     let mut i = 0;
@@ -154,6 +166,7 @@ fn parse_inner(tokens: &[String]) -> Result<Invocation, ControlError> {
             let bool_flag = matches!(
                 name,
                 "json"
+                    | "stdio"
                     | "no-wait"
                     | "demo"
                     | "replace-playing"
@@ -163,6 +176,15 @@ fn parse_inner(tokens: &[String]) -> Result<Invocation, ControlError> {
                     | "scratch"
                     | "shift"
                     | "ramps"
+                    | "names-only"
+                    | "dialog"
+                    | "allow-half-double"
+                    | "detail"
+                    | "follow"
+                    | "review-confirmed"
+                    | "replace-prepared"
+                    | "allow-analysis"
+                    | "allow-fallback"
             );
             let val = if let Some(v) = inline {
                 value(v)
@@ -191,6 +213,10 @@ fn parse_inner(tokens: &[String]) -> Result<Invocation, ControlError> {
         }
         i += 1;
     }
+    Ok((words, flags))
+}
+fn parse_inner(tokens: &[String]) -> Result<Invocation, ControlError> {
+    let (words, mut flags) = split_tokens(tokens)?;
     let word_refs: Vec<&str> = words.iter().map(String::as_str).collect();
     let valid_flags = allowed_flags(&word_refs);
     if let Some(key) = flags
@@ -242,6 +268,10 @@ fn parse_inner(tokens: &[String]) -> Result<Invocation, ControlError> {
         })
         .transpose()?;
     let request_id = flags.remove("request_id").map(|v| text(&v));
+    let fields = flags
+        .remove("fields")
+        .map(|v| text(&v).split(',').map(str::to_owned).collect::<Vec<_>>());
+    let view = flags.remove("view").map(|v| text(&v));
     let count = flags
         .remove("count")
         .map(|v| {
@@ -256,6 +286,10 @@ fn parse_inner(tokens: &[String]) -> Result<Invocation, ControlError> {
         .transpose()?
         .unwrap_or(250)
         .max(20);
+    let follow = flags
+        .remove("follow")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let mut watch = false;
     let w: Vec<&str> = words.iter().map(String::as_str).collect();
     let mut request = match w.as_slice() {
@@ -283,8 +317,18 @@ fn parse_inner(tokens: &[String]) -> Result<Invocation, ControlError> {
             serde_json::from_str::<Request>(&std::fs::read_to_string(file).map_err(invalid)?)
                 .map_err(invalid)?
         }
+        ["mix", "execute"] => Request::new("mix.execute", json!(flags)),
+        ["mix", "queue", action @ ("start" | "status" | "edit" | "stop")] => {
+            Request::new(format!("mix.queue.{action}"), json!(flags))
+        }
         ["status"] => Request::new("status", json!({})),
         ["state", "get"] | ["state"] => Request::new("state.get", json!(flags)),
+        ["events", "wait"] => {
+            flags
+                .entry("wait_ms")
+                .or_insert(json!(timeout.saturating_sub(100).min(60000)));
+            Request::new("events.get", json!(flags))
+        }
         ["state", "watch"] | ["events", "watch"] => {
             watch = true;
             Request::new(
@@ -296,23 +340,38 @@ fn parse_inner(tokens: &[String]) -> Result<Invocation, ControlError> {
                 json!(flags),
             )
         }
-        ["commands", "list"] | ["capabilities"] => Request::new("commands.list", json!({})),
-        ["commands", "describe", name] => Request::new("commands.describe", json!({"name":name})),
-        ["batch", action] if matches!(*action, "run" | "validate") => {
-            let file = text(required(&flags, "file")?);
-            let plan: Value =
-                serde_json::from_str(&std::fs::read_to_string(file).map_err(invalid)?)
-                    .map_err(invalid)?;
+        ["commands", "list"] | ["capabilities"] => Request::new("commands.list", json!(flags)),
+        ["commands", "describe", name] => {
+            flags.insert("name".into(), json!(name));
+            Request::new("commands.describe", json!(flags))
+        }
+        ["batch", action]
+            if matches!(
+                *action,
+                "run" | "validate" | "append" | "invalidate" | "seal"
+            ) =>
+        {
+            let plan: Value = if let Some(file) = flags.remove("file") {
+                if !flags.is_empty() {
+                    return Err(invalid("Use --file or inline batch arguments, not both"));
+                }
+                serde_json::from_str(&std::fs::read_to_string(text(&file)).map_err(invalid)?)
+                    .map_err(invalid)?
+            } else {
+                json!(flags)
+            };
             Request::new(
                 format!("batch.{action}"),
-                if plan.is_array() {
+                if *action == "validate" && plan.get("items").is_some() {
+                    session::validation_args(&plan)?
+                } else if plan.is_array() {
                     json!({"steps":plan})
                 } else {
                     plan
                 },
             )
         }
-        ["jobs", action] if *action == "list" => Request::new("jobs.list", json!({})),
+        ["jobs", action] if *action == "list" => Request::new("jobs.list", json!(flags)),
         ["jobs", action, id] if matches!(*action, "get" | "cancel" | "wait") => {
             watch = *action == "wait";
             Request::new(
@@ -321,7 +380,15 @@ fn parse_inner(tokens: &[String]) -> Result<Invocation, ControlError> {
                 } else {
                     format!("jobs.{action}")
                 },
-                json!({"id":id}),
+                {
+                    let mut args = json!({"id":id});
+                    for key in ["mode", "detail"] {
+                        if let Some(value) = flags.remove(key) {
+                            args[key] = value;
+                        }
+                    }
+                    args
+                },
             )
         }
         ["automation", "stop"] => Request::new("automation.stop", json!({})),
@@ -350,13 +417,34 @@ fn parse_inner(tokens: &[String]) -> Result<Invocation, ControlError> {
             json!({"type":"set_sampler_gain","gain":number(gain)?}),
         ),
         ["sampler", "list"] | ["sampler", "state"] => Request::new("sampler.state", json!({})),
+        ["library", "analysis", action] if matches!(*action, "update" | "cancel") => {
+            Request::new(format!("library.analysis.{action}"), json!({}))
+        }
+        ["library", "suggest"] => {
+            if let Some(v) = flags.remove("energy") {
+                let direction:control_protocol::EnergyDirection=serde_json::from_value(v).map_err(|_|invalid("Energy direction must be keep, raise or lower (up/down aliases accepted)"))?;
+                flags.insert("energy_direction".into(), json!(direction.as_str()));
+            }
+            if let Some(v) = flags.get_mut("deck") {
+                *v = json!(text(v).to_ascii_uppercase());
+            }
+            Request::new("library.suggest_next", json!(flags))
+        }
+        ["library", "history", "clear"] => Request::new("library.history.clear", json!({})),
         ["library", "import"] => {
-            let paths = if let Some(p) = flags.remove("paths") {
-                p
+            if flags.get("dialog").and_then(Value::as_bool) == Some(true) {
+                if flags.contains_key("path") || flags.contains_key("paths") {
+                    return Err(invalid("Use dialog:true or path/paths exclusively"));
+                }
+                Request::new("library.import", json!(flags))
             } else {
-                json!([text(required(&flags, "path")?)])
-            };
-            Request::new("library.import", json!({"paths":paths}))
+                let paths = if let Some(p) = flags.remove("paths") {
+                    p
+                } else {
+                    json!([text(required(&flags, "path")?)])
+                };
+                Request::new("library.import", json!({"paths":paths}))
+            }
         }
         ["library", "tracks"] | ["library", "tracks", "list"] => {
             Request::new("library.tracks", json!(flags))
@@ -430,7 +518,9 @@ fn parse_inner(tokens: &[String]) -> Result<Invocation, ControlError> {
         ["ui", target, action, rest @ ..] => {
             let (target, action, value) = if *target == "theme" {
                 if *action != "set" || rest.len() != 1 {
-                    return Err(invalid("Use ui theme set THEME; valid themes: hardware-dark, anatomy-light, anatomy-dark"));
+                    return Err(invalid(
+                        "Use ui theme set THEME; valid themes: aluminium, ivory, graphite",
+                    ));
                 }
                 (
                     "app".to_string(),
@@ -479,6 +569,8 @@ fn parse_inner(tokens: &[String]) -> Result<Invocation, ControlError> {
     if let Some(id) = request_id {
         request.request_id = id;
     }
+    request.fields = fields.or(request.fields);
+    request.view = view.or(request.view);
     request.validate()?;
     control_protocol::validate_arguments(&request)?;
     if matches!(
@@ -500,7 +592,7 @@ fn parse_inner(tokens: &[String]) -> Result<Invocation, ControlError> {
         }
     }
     if request.command == "library.import" {
-        if let Some(paths) = request.args["paths"].as_array_mut() {
+        if let Some(paths) = request.args.get_mut("paths").and_then(Value::as_array_mut) {
             for path in paths {
                 let input = PathBuf::from(text(path));
                 if !input.is_absolute() {
@@ -511,12 +603,27 @@ fn parse_inner(tokens: &[String]) -> Result<Invocation, ControlError> {
                 }
             }
         }
+        if let Some(folder) = request.args.get_mut("folder") {
+            let input = PathBuf::from(text(folder));
+            if !input.is_absolute() {
+                *folder = json!(std::env::current_dir()
+                    .map_err(invalid)?
+                    .join(input)
+                    .to_string_lossy());
+            }
+        }
+    }
+    if follow && !matches!(request.command.as_str(), "mix.execute" | "mix.queue.start") {
+        return Err(invalid(
+            "--follow is supported for mix.execute and mix.queue.start",
+        ));
     }
     Ok(Invocation {
         request,
         socket,
         json: json_output,
         watch,
+        follow,
         count,
         interval_ms: interval,
     })
@@ -529,15 +636,38 @@ fn allowed_flags(words: &[&str]) -> Vec<String> {
         "no_wait",
         "expected_load_revision",
         "request_id",
+        "fields",
+        "view",
+        "follow",
     ]
     .map(str::to_string)
     .to_vec();
     let extra: &[&str] = match words {
-        ["call", method] => {
+        ["mix", "queue", action @ ("start" | "status" | "edit" | "stop")] => {
+            if let Some(desc) = control_protocol::catalog()
+                .iter()
+                .find(|d| d["command"] == format!("mix.queue.{action}"))
+            {
+                flags.extend(
+                    desc["input_schema"]["properties"]
+                        .as_object()
+                        .unwrap()
+                        .keys()
+                        .cloned(),
+                );
+            }
+            return flags;
+        }
+        ["call", method] | ["mix", method @ "execute"] => {
+            let method = if words[0] == "mix" {
+                "mix.execute"
+            } else {
+                *method
+            };
             let mut extra = vec!["args".to_string()];
             if let Some(desc) = control_protocol::catalog()
                 .iter()
-                .find(|d| d["command"] == *method)
+                .find(|d| d["command"] == method)
             {
                 extra.extend(
                     desc["input_schema"]["properties"]
@@ -550,16 +680,45 @@ fn allowed_flags(words: &[&str]) -> Vec<String> {
             flags.extend(extra);
             return flags;
         }
-        ["command"] | ["batch", _] => &["file"],
+        ["command"] => &["file"],
+        ["batch", "run" | "validate"] => &["file", "steps", "schedule"],
+        ["batch", "append"] => &[
+            "file",
+            "id",
+            "patch_id",
+            "expected_revision",
+            "steps",
+            "invalidate_action_ids",
+        ],
+        ["batch", "invalidate"] => &["file", "id", "patch_id", "expected_revision", "action_ids"],
+        ["batch", "seal"] => &[
+            "file",
+            "id",
+            "patch_id",
+            "expected_revision",
+            "completion_event",
+        ],
+        ["jobs", "get", _] | ["jobs", "list"] => &["detail"],
+        ["events", "wait"] => &[
+            "since",
+            "wait_ms",
+            "job_id",
+            "operation_id",
+            "queue_id",
+            "types",
+        ],
+        ["commands", "list"] | ["capabilities"] => &["prefix", "names_only", "detail", "search"],
+        ["commands", "describe", _] => &["action"],
+        ["jobs", "cancel", _] => &["mode"],
         ["state", "watch"] => &["count", "interval"],
         ["events", "watch"] => &["count", "interval", "since"],
         ["jobs", "wait", _] => &["count", "interval"],
-        ["deck", _, "load"] => &["path", "track", "uri", "demo", "replace_playing"],
+        ["deck", _, "load"] => &["path", "track", "uri", "demo", "replace_playing", "detail"],
         ["deck", _, "cue", "set"] | ["deck", _, "hotcue", _, "set"] => &["at", "current"],
         ["deck", _, "seek"] => &["at", "snap"],
         ["deck", _, "launch"] => &["clock", "clock_revision", "at", "quantize"],
         ["deck", _, "jump"] | ["deck", _, "loop", "set"] => &["beats"],
-        ["deck", _, "tempo", "set"] => &["percent"],
+        ["deck", _, "tempo", "set"] => &["percent", "bpm"],
         ["deck", _, "pitch", "set"] => &["semitones"],
         ["deck", _, "grid", "set"] => &["offset"],
         ["deck", _, "eq", "set"] => &["low", "mid", "high"],
@@ -570,14 +729,25 @@ fn allowed_flags(words: &[&str]) -> Vec<String> {
         ["deck", _, "wait"] => &["ramps", "launches"],
         ["mixer", _, "ramp"] => &["to", "over", "clock", "quantize"],
         ["mixer", _, "set"] => &["position", "gain", "mix"],
-        ["sampler", "slot", _, "load"] => &["path"],
-        ["library", "import"] => &["path", "paths"],
+        ["sampler", "slot", _, "load"] => &["path", "dialog"],
+        ["library", "suggest"] => &[
+            "deck",
+            "energy",
+            "sources",
+            "provider",
+            "playlist",
+            "max_stretch_percent",
+            "allow_half_double",
+            "limit",
+        ],
+        ["library", "import"] => &["path", "paths", "dialog"],
         ["library", "track", "tags", _] => &["tags"],
-        ["library", "tracks"] | ["library", "tracks", "list"] => {
-            &["search", "sort", "playlist", "offset", "limit", "waveform"]
-        }
-        ["library", "import-rekordbox"] => &["path"],
-        ["library", "export-rekordbox"] => &["path", "overwrite"],
+        ["library", "tracks"] | ["library", "tracks", "list"] => &[
+            "search", "sort", "playlist", "offset", "limit", "waveform", "bpm_min", "bpm_max",
+            "filters",
+        ],
+        ["library", "import-rekordbox"] => &["path", "dialog"],
+        ["library", "export-rekordbox"] => &["path", "overwrite", "dialog"],
         ["playlist", "create"] => &["name", "source"],
         ["playlist", "add", _] => &["track"],
         ["playlist", _, _] => &["tracks", "name"],
@@ -589,7 +759,7 @@ fn allowed_flags(words: &[&str]) -> Vec<String> {
             "routing",
         ],
         ["midi", "connect"] => &["input", "output", "input_name", "output_name"],
-        ["recording", "start"] => &["path", "overwrite"],
+        ["recording", "start"] => &["path", "overwrite", "dialog"],
         ["spotify", rest @ ..] => {
             let method = format!("spotify.{}", rest.join("."));
             if let Some(desc) = control_protocol::catalog()
@@ -716,10 +886,29 @@ fn deck_request(
             };
             "set_loop_edit"
         }
-        ["tempo", "set"] => {
-            c["percent"] = json!(scalar(&flags, "percent")?);
-            "set_tempo"
-        }
+        ["tempo", "set"] => match (flags.get("bpm"), flags.get("percent")) {
+            (Some(_), None) => {
+                let bpm = text(required(&flags, "bpm")?)
+                    .parse::<f64>()
+                    .map_err(|_| invalid("--bpm requires a numeric playback BPM"))?;
+                if !(30.0..=300.0).contains(&bpm) {
+                    return Err(invalid("--bpm must be 30..300 playback BPM")
+                        .with_detail("argument", "--bpm"));
+                }
+                c["bpm"] = json!(bpm);
+                "set_playback_bpm"
+            }
+            (None, Some(_)) => {
+                c["percent"] = json!(scalar(&flags, "percent")?);
+                "set_tempo"
+            }
+            _ => {
+                return Err(
+                    invalid("Use exactly one of --bpm or --percent for tempo set")
+                        .with_detail("valid_options", json!(["--bpm 124", "--percent -2"])),
+                )
+            }
+        },
         ["tempo", "reset"] => {
             c["percent"] = json!(0);
             "set_tempo"
@@ -886,6 +1075,151 @@ fn mixer_request(
 mod tests {
     use super::*;
     #[test]
+    fn successor_queue_cli_keeps_order_and_revision_guards() {
+        let tokens = [
+            "mix",
+            "queue",
+            "edit",
+            "--queue-id",
+            "q",
+            "--expected-revision",
+            "7",
+            "--sources",
+            r#"["local:42","local:7"]"#,
+        ]
+        .map(str::to_owned);
+        let request = super::parse(&tokens).unwrap().request;
+        assert_eq!(request.command, "mix.queue.edit");
+        assert_eq!(request.args["sources"], json!(["local:42", "local:7"]));
+        assert_eq!(request.args["expected_revision"], 7);
+        assert_eq!(p("mix queue status").request.command, "mix.queue.status");
+        assert!(control_protocol::selection::is_read("mix.queue.status"));
+    }
+    #[test]
+    fn live_discovery_and_full_load_detail_are_explicit() {
+        let describe = p("commands describe engine.command --action set_sync");
+        assert_eq!(
+            describe.request.args,
+            json!({"name":"engine.command","action":"set_sync"})
+        );
+        assert_eq!(
+            p("deck B load --track local:53 --detail").request.args["detail"],
+            true
+        );
+        assert!(p("deck B load --track local:53")
+            .request
+            .args
+            .get("detail")
+            .is_none());
+    }
+    #[test]
+    fn library_search_passes_indexed_filters_and_requires_an_object() {
+        for words in [vec!["library", "tracks"], vec!["library", "tracks", "list"]] {
+            let mut tokens: Vec<String> = words.into_iter().map(str::to_owned).collect();
+            tokens.extend(
+                [
+                    "--search",
+                    "house summer",
+                    "--bpm-min",
+                    "120",
+                    "--bpm-max",
+                    "128",
+                    "--limit",
+                    "20",
+                    "--filters",
+                    r##"{"my_tags":[1,2],"tag_mode":"and","rating_min":3,"colors":["#FF0000"]}"##,
+                ]
+                .map(str::to_owned),
+            );
+            let request = parse(&tokens).unwrap().request;
+            assert_eq!(request.command, "library.tracks");
+            assert_eq!(
+                request.args,
+                json!({"search":"house summer","bpm_min":120,
+                "bpm_max":128,"limit":20,"filters":{"my_tags":[1,2],"tag_mode":"and",
+                "rating_min":3,"colors":["#FF0000"]}})
+            );
+            for invalid in ["[]", "3", "true"] {
+                *tokens.last_mut().unwrap() = invalid.to_owned();
+                assert!(
+                    parse(&tokens).is_err(),
+                    "accepted invalid filters {invalid}"
+                );
+            }
+        }
+    }
+    #[test]
+    fn session_global_options_are_order_independent_and_do_not_become_commands() {
+        let variants = [
+            "--socket /tmp/pd.sock session start --stdio",
+            "session start --stdio --socket /tmp/pd.sock",
+            "--json --socket=/tmp/pd.sock session --stdio start",
+            "--stdio session --socket /tmp/pd.sock start --json",
+        ];
+        for variant in variants {
+            let tokens: Vec<String> = variant.split_whitespace().map(str::to_owned).collect();
+            assert!(is_session(&tokens), "not recognized: {variant}");
+            let session = parse_session(&tokens).unwrap();
+            assert!(session.start);
+            assert_eq!(session.socket, PathBuf::from("/tmp/pd.sock"));
+        }
+        let tokens = ["--socket", "session", "status"].map(str::to_owned);
+        assert!(!is_session(&tokens));
+        assert_eq!(parse(&tokens).unwrap().request.command, "status");
+        let legacy = ["--socket", "/tmp/pd.sock", "session", "--stdio"].map(str::to_owned);
+        assert!(!parse_session(&legacy).unwrap().start);
+        for invalid in [
+            "--socket /tmp/pd.sock session start --stdio --socket /tmp/other.sock",
+            "session start --stdio --stdio",
+            "session start --stdio=false",
+            "session start --stdio --no-wait",
+            "session start --stdio nonsense",
+            "--socket session start --stdio",
+        ] {
+            let tokens: Vec<String> = invalid.split_whitespace().map(str::to_owned).collect();
+            assert!(parse_session(&tokens).is_err(), "accepted: {invalid}");
+        }
+    }
+
+    #[test]
+    fn absolute_playback_bpm_is_distinct_from_source_grid_correction() {
+        let args = |command: &str| {
+            parse(
+                &command
+                    .split_whitespace()
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>(),
+            )
+        };
+        let invocation = args("deck A tempo set --bpm 124.25 --expected-load-revision 9").unwrap();
+        assert_eq!(invocation.request.command, "engine.command");
+        assert_eq!(
+            invocation.request.args,
+            json!({"type":"set_playback_bpm","deck":"A","bpm":124.25})
+        );
+        assert_eq!(invocation.request.expected_load_revision, Some(9));
+        assert_eq!(
+            args("deck A bpm set 124.25").unwrap().request.args["type"],
+            "set_bpm"
+        );
+        assert_eq!(
+            args("deck B tempo set --percent -2").unwrap().request.args,
+            json!({"type":"set_tempo","deck":"B","percent":-2.0})
+        );
+        for command in [
+            "deck A tempo set",
+            "deck A tempo set --bpm 124 --percent 1",
+            "deck A tempo set --bpm NaN",
+            "deck A tempo set --bpm 0",
+            "deck A tempo set --bpm 301",
+            "deck A tempo set --bpm nope",
+            "deck A tempo set --bpm 124s",
+        ] {
+            assert!(args(command).is_err(), "accepted {command}");
+        }
+    }
+
+    #[test]
     fn invalid_commands_are_actionable_and_never_silently_ignore_flags() {
         for (command, argument) in [
             ("deck A tempo set --precent -2", "--precent"),
@@ -935,6 +1269,19 @@ mod tests {
     }
     fn p(s: &str) -> Invocation {
         parse(&s.split_whitespace().map(str::to_string).collect::<Vec<_>>()).unwrap()
+    }
+    #[test]
+    fn folder_import_does_not_add_null_paths() {
+        let invocation = parse(
+            &["call", "library.import", "--args", "{\"folder\":\"music\"}"].map(str::to_owned),
+        )
+        .unwrap();
+        assert_eq!(invocation.request.command, "library.import");
+        assert!(invocation.request.args.get("paths").is_none());
+        assert!(invocation.request.args["folder"]
+            .as_str()
+            .unwrap()
+            .ends_with("/music"));
     }
     #[test]
     fn units_and_identity() {
@@ -1005,5 +1352,33 @@ mod tests {
             p("mixer crossfader set -0.5").request.args,
             json!({"type":"set_crossfader","position":-0.5})
         );
+    }
+    #[test]
+    fn new_capabilities_preserve_arguments_units_and_guards() {
+        assert_eq!(
+            p("library suggest --deck b --energy up").request.args,
+            json!({"deck":"B","energy_direction":"raise"})
+        );
+        let r = p("library analysis update --no-wait");
+        assert_eq!(r.request.command, "library.analysis.update");
+        assert!(r.request.no_wait);
+        for command in [
+            "mix guide choose 0",
+            "library suggest --energy louder",
+            "deck A sections vocabulary rock",
+            "analysis settings set",
+            "analysis settings set --hot-cues perhaps",
+        ] {
+            assert!(
+                parse(
+                    &command
+                        .split_whitespace()
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                )
+                .is_err(),
+                "{command}"
+            );
+        }
     }
 }

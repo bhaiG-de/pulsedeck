@@ -26,6 +26,7 @@ audio.json
 *.flac
 *.ogg
 *.m4a
+!crates/deck-engine/tests/fixtures/metadata/tags.*
 # Captures and third-party reverse-engineering output stay on this Mac.
 research/evidence/
 research/ghidra-projects/
@@ -33,3 +34,7 @@ research/flx4-reference/
 src-tauri/gen/
 *.tsbuildinfo
 src-tauri/resources/beat-models/*.onnx
+
+# Python runtime caches
+__pycache__/
+*.py[cod]

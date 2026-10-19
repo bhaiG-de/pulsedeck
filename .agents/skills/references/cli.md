@@ -4,7 +4,7 @@ Use this for endpoint setup, source guards, completion stages, jobs, ramps and e
 
 ## Bind the actual runtime
 
-From the repository, build `bash tools/rust-env.sh cargo build -p pulsedeck-cli` and open the current PulseDeck desktop bundle. To use an installed client, choose its absolute path instead. Use the socket belonging to the requested session; inspect status before any mutation.
+Use the existing built client and running PulseDeck app for a live set. From the repository, the client is `target/debug/pulsedeckctl`; the installed client is `/Applications/PulseDeck.app/Contents/MacOS/pulsedeckctl` (or `~/Applications/PulseDeck.app/Contents/MacOS/pulsedeckctl`). Building belongs to setup/development, rather than each performance. Use the socket belonging to the requested session; inspect status before any mutation.
 
 ```sh
 export PULSEDECK_CLI="$PWD/target/debug/pulsedeckctl"
@@ -12,20 +12,23 @@ export PATH="$(dirname "$PULSEDECK_CLI"):$PATH"
 # Default endpoint; override for a separately started instance.
 export PULSEDECK_SOCKET="/tmp/pulsedeck-$(id -u)/control.sock"
 pd() { "$PULSEDECK_CLI" "$@" --socket "$PULSEDECK_SOCKET" --json; }
-pd status
-pd commands list
+pd status --view compact
+# Describe only a command whose contract is unfamiliar.
 pd commands describe track.inspect
-pd commands describe engine.command
-pd commands describe automation.ramp
+pd commands describe engine.command --action set_sync
 ```
 
 For isolated trials, `python3 tools/skill-trials/profile.py start NAME --audio` creates generated tracks, copies the built app, isolates credentials/library/preferences/socket and mutes master AND cue gain. Bind `PULSEDECK_CLI` and `PULSEDECK_SOCKET` to the returned manifest values, not the default endpoint. Stop only that profile with `python3 tools/skill-trials/profile.py stop NAME`. Omit `--audio` for metadata-only work. Real audio trials require an output device; muted software output does not prove hardware isolation.
 
 Concrete IDs, paths, revisions, timestamps and BPM in examples must come from discovery/current observations. A skill's illustrative local ID is a parameter, not a claim that your library contains that ID. Store substantial JSON in temporary files and read the needed fields; don't flood model context with full waveforms.
 
+Read reference paths exactly as linked from the current file; repository-shared `../references/cli.md` is not the same location as a skill's own `references/` directory. Read a few relevant files at a time and recover truncated portions. For large status/catalog results, save the response and extract needed fields or use `--fields`; do not infer absent source data from clipped output. Discover command names with a filtered/names-only catalog rather than printing the full schemas.
+
+Load receipts are compact by default and retain identity, load revision, stage outcomes, BPM/key and neural summaries. Full analysis remains available with `deck A load --detail` (or `detail:true`), `library track get` and bounded `track.inspect`. Avoid full load arrays during a live performance.
+
 ## Observe and identify
 
-`status.result` includes `engine`, compact `metadata`, `controller`, `audio`, `midi`, `recording`, source jobs and analysis activity. `engine.load_revisions[0/1]` identify current deck source epochs. Deck state contains `playing`, `position_seconds`, `position_revision`, BPM/rate, preparation state, EQ/filter/FX/fader/cue and loop settings. Inspect full state/catalog for exact current field names.
+`status.result` includes `engine`, compact `metadata`, `controller`, `audio`, `midi`, `recording`, source jobs and analysis activity. `engine.load_revisions[0/1]` identify current deck source epochs. Each status/transport deck has a compact `track` identity and `source_state`: `empty`, `preparing`, `ready` or `metadata_pending`. During mismatched source epochs the track is omitted and source state is `metadata_pending`; re-read before applying source-specific controls. `deck wait` requires a loaded source and returns its `source` and guarded `load_revision`. Deck state contains `playing`, `position_seconds`, `position_revision`, BPM/rate, preparation state, EQ/filter/FX/fader/cue and loop settings. Use bounded reads or describe the relevant method for unfamiliar fields; a full catalog is unnecessary for each transition.
 
 `library.tracks` is paginated (`tracks`, `total`, `next_offset`) and sorts title/BPM/duration. Playlist filtering preserves membership, not saved order. `playlist.list` returns saved `track_ids`; use those to reconstruct the playlist order. Local source IDs are `local:ID`; playlist create returns an integer `id`, and reorder takes unique integer track IDs. Spotify playlist writes are unsupported.
 
@@ -37,7 +40,27 @@ pd call track.inspect --args '{"deck":"A","start_seconds":8,"end_seconds":24,"po
 pd call cues.get --args '{"deck":"A"}'
 ```
 
-The range example requires a loaded track lasting at least 24 seconds. `track.inspect` takes exactly one of `source` or `deck`, optional `start_seconds`/`end_seconds` and `points` 1..512 (default 64). Result: canonical `source`, optional `load_revision`, compact `metadata`, cues/revision, requested range, stored waveform resolution/bands/bins and bounded `beat_events`. Each event has `seconds`, `beat_index`, effective anchor-relative `beat_position` and `downbeat`. The event view reports `total_in_range`, `truncated`, `timing_resolution_seconds:0.02`, `source`, `manual` and `uniform`. With `uniform:false`, indices identify neural events; with `uniform:true`, they identify the manual constant-tempo lattice and must not be labeled model detections. Events are range-filtered and capped at `points`; narrow a truncated range before counting progression. `metadata.neural_rhythm` summarizes original model/BPM/counts/scores/time with `scores_calibrated:false`; its counts can differ from effective edited events. More points do not interpolate neural detections or exceed stored waveform resolution. Waveform boundaries can straddle the range, peaks are maxima, bands aggregate shared-scale RMS, and null bands are missing evidence. This reads analysis, not musical sections. Save full metadata to a file when needed.
+The range example requires a loaded track lasting at least 24 seconds. `track.inspect` takes exactly one of `source` or `deck`, optional `start_seconds`/`end_seconds` and `points` 1..512 (default 64). Result: canonical `source`, optional `load_revision`, compact `metadata`, cues/revision, requested range, stored waveform resolution/bands/bins and bounded `beat_events`. Each event has `seconds`, `beat_index`, effective anchor-relative `beat_position` and `downbeat`. The event view reports `total_in_range`, `truncated`, `timing_resolution_seconds:0.02`, `source`, `manual` and `uniform`. With `uniform:false`, indices identify neural events; with `uniform:true`, they identify the manual constant-tempo lattice and must not be labeled model detections. Events are range-filtered and capped at `points`; narrow a truncated range before counting progression. `metadata.neural_rhythm` summarizes original model/BPM/counts/scores/time with `scores_calibrated:false`; its counts can differ from effective edited events. More points do not interpolate neural detections or exceed stored waveform resolution. Waveform boundaries can straddle the range, peaks are maxima, bands aggregate shared-scale RMS, and null bands are missing evidence. Human-authored cues are available under metadata/cue reads; automatic cues and section labels are not generated. Save full metadata to a file when needed.
+
+## Playing tempo and source BPM
+
+Use `pd deck B tempo set --bpm TARGET` for absolute playback-BPM entry at the current position. `TARGET` is 30–300 BPM and must be reachable within the source's supported rate range. The renderer calculates rate from the current four-beat local BPM fit when the command executes; missing source/local tempo or unreachable targets fail. This sets entry tempo once, not a continuing BPM lock across real tempo changes. `--bpm` and `--percent` are mutually exclusive. Queue the canonical `engine.command` with `{"type":"set_playback_bpm","deck":"B","bpm":TARGET}`. Both setters take manual tempo ownership, disable follower Sync and clear adaptive offsets while preserving source analysis/grid. `deck B bpm set BPM` instead corrects source/grid metadata and selects a uniform override.
+
+Read the fields for their separate meanings:
+
+| Deck field | Meaning |
+| --- | --- |
+| `bpm` | Canonical stored source/grid reference; not the absolute-entry calculation's local measurement. |
+| `local_bpm` | Current four-beat local BPM fit from the effective grid. |
+| `playback_rate` | Nominal rate control. |
+| `playback_bpm` | Current `local_bpm × playback_rate`. |
+| `actual_playback_rate` | Rendered rate including local Sync adaptation, bounded phase correction and bend. |
+| `actual_playback_bpm` | Current `local_bpm × actual_playback_rate`. |
+| `target_playback_bpm` | Remembered intent: exact absolute entry, local result at a percent setter's apply, or the Sync leader's stable target. |
+
+Verify the accepted `target_playback_bpm` and actual `actual_playback_bpm`; a null local/playing value means missing evidence. Completion verifies the accepted target and ownership; a later local measurement changing on a varying track does not mean the command failed. Do not repeatedly reset the target to chase each local interval or bend. Use Sync for ongoing variable-tempo overlap, with a loaded, playing master and distinct loaded follower on usable grids; settle the paused follower's entry while isolated. Equal entry targets do not guarantee a later local match. Sync uses the same local fit, preserves transport position, and adapts local rate and beat phase.
+
+Sync-off or follower promotion to master folds current effective rate into nominal control once for continuity; inspect the resulting role/target after handoff. Loading/unloading the master can promote a healthy playing other deck while preserving its rate. A paused master alone does not cause promotion; follower correction freezes rather than inventing a new leader. An explicit BPM/percent setter establishes fresh manual intent and clears adaptation.
 
 ## Apply and verify
 
@@ -45,7 +68,9 @@ Human CLI decks A/B, hot cues A-H, samples 1-16; JSON controller decks/pads/samp
 
 For `deck B launch --clock A`, `--clock-revision` is A's **load revision** from `engine.load_revisions`, not A's `position_revision`. The incoming `--expected-load-revision` guards B. Keep the source guard and musical timing/bar checks separate; a valid launch can still put the tracks in different parts of their bars.
 
-Responses have `ok`, `request_id`, `stage`, optional `result` and structured `error`. A success with no result is valid. Inspect stderr/exit code AND JSON. Stages: `accepted` queued/job started; `applied` command fence published; `ready` source load complete; `persisted` cue metadata committed; `rendered` UI acknowledgment. `applied` is not proof that 8ms audio control smoothing has settled or pitch/key-lock preparation has completed. `deck B wait` waits preparation; `call engine.wait --args '{"ramps":true}'` waits all active ramps. A native cue-edit response may be `applied` with `cue_revision` even when persistence succeeded; verify `cues.get` explicitly.
+Responses have `ok`, `request_id`, `stage`, optional `result` and structured `error`. A success with no result is valid. Inspect stderr/exit code AND JSON. Stages: `accepted` queued/job started; `applied` command fence published; `ready` source load complete; `persisted` cue metadata committed; `rendered` UI acknowledgment. `applied` is not proof that 8ms audio control smoothing has settled or loaded-source readiness has been verified. `deck B wait` checks loaded-source readiness; `call engine.wait --args '{"ramps":true}'` waits all active ramps. A native cue-edit response may be `applied` with `cue_revision` even when persistence succeeded; verify `cues.get` explicitly.
+
+The default live-agent transport is one persistent `session start --stdio` process; see [timed execution](timed-execution.md). Its input command objects enqueue and its output reports registration and actual completion, so timing does not require a new CLI invocation or repeated status polling. Older batch examples below describe standalone/advanced compatibility usage.
 
 Watch-style CLI calls such as `jobs wait` can emit several newline-separated JSON envelopes. Parse/retain each line and inspect the terminal envelope plus process exit code; `json.loads(all_stdout)` is not a valid general parser. A parser exception after `batch.run` acceptance does not imply no controls applied: inspect the job and native endpoints before retrying.
 
@@ -55,7 +80,7 @@ Ordinary seek preserves play state, but hotcue trigger starts playback. Explicit
 
 ## Batches, timing and takeover
 
-Batch files contain an array of full request objects (`command`, `args`, optional `expected_load_revision`). Validate before run. Batch returns accepted `job_id`; `jobs get` inspects even a failed job, whereas `jobs wait` exits 5 for failed, 7 for cancelled, 6 if its wait times out. Inspect executed step results and final native state; failures don't roll back earlier audible actions. Job history/receipts are bounded.
+Immediate batch files contain `steps` with full request objects (`command`, `args`, optional `expected_load_revision`); advanced scheduled files additionally contain a typed top-level `schedule` and per-step native event fields. Discover the installed contract with `commands describe batch.run` before authoring an advanced schedule. A separate validation round trip is optional. Batch returns accepted `job_id`; `jobs get` inspects even a failed job, whereas `jobs wait` exits 5 for failed, 7 for cancelled, 6 if its wait times out. Inspect executed step results and final native state; failures don't roll back earlier audible actions. Job history/receipts are bounded.
 
 ```sh
 pd jobs list
@@ -72,7 +97,7 @@ Errors expose code/message/retryability and details such as hint, expected types
 
 Recording requires running audio and eligible loaded sources. Source policy remains authoritative. Existing output files are protected; replacement requires `--overwrite`. Verify writer final status (`active`, `frames_written`, `dropped_frames`, `error`) and the output file. XML migration changes library/cue metadata, not audio PCM files. Live Spotify/hardware verification requires the corresponding account/device and user authorization.
 
-Source reference: [repository CLI guide](../../../research/cli-guide.md), current `commands list/describe`, and `src-tauri/src/control.rs`. When installed outside the checkout, return to the repository for these source references.
+Use public `commands describe METHOD` output for further command details. Live mixing uses the skill, its references and that installed CLI contract.
 
 
 ## Correct a grid and queue a musical launch
@@ -83,12 +108,16 @@ The UI's **Set bar 1 here** and the following CLI setter use the same native `se
 
 After reading the actual deck source and revision, set its grid origin with `pd deck B grid set --offset SECONDS --expected-load-revision REV`. Set a corrected base tempo separately with `pd deck B bpm set BPM --expected-load-revision REV` when needed. Grid edits preserve transport position, playback and cue markers; they persist per source and survive reload/reanalysis. Reinspect `status` and `track.inspect` to check the effective offset/provenance and unchanged transport. This changes musical grid metadata, so apply it when grid correction is requested or explicitly authorized, not merely during an inspection request. The UI also offers 1 ms draft nudges and half/double BPM; Apply grid commits the draft.
 
-An explicit BPM correction switches the whole source to a constant-tempo grid, including half/double edits; it is not merely a display change or a rescaling of the original event list. Offset-only **Set bar 1 here** preserves neural intervals when the neural grid is active and leaves an existing uniform mode uniform. Manual bar-origin numbering retains detected meter, falling back to four if unknown. The UI sends a BPM edit only when its draft changed by more than 0.01 BPM. Loaded `beatgrid_uniform`/effective events take precedence over original neural provenance; an unloaded source with `bpm_source:manual` is inferred to have a uniform override. Rate/tempo setters are for beatmatching without changing this grid mode.
+An explicit BPM correction switches the whole source to a constant-tempo grid, including half/double edits; it is not merely a display change or a rescaling of the original event list. Offset-only **Set bar 1 here** preserves neural intervals when the neural grid is active and leaves an existing uniform mode uniform. Manual bar-origin numbering retains detected meter, falling back to four if unknown. The UI sends a BPM edit only when its draft changed by more than 0.01 BPM. Loaded `beatgrid_uniform`/effective events take precedence over original neural provenance; an unloaded source with `bpm_source:manual` is inferred to have a uniform override. Rate/tempo setters are for beatmatching without changing this grid mode. An explicit tempo move disables continuous sync so its value is not overwritten on the next frame; percent is absolute relative to source BPM, not an incremental adjustment.
 
 For an authorized refresh of existing analysis, use `pd deck B analyze --expected-load-revision REV`, wait its completion/job and reinspect `rhythm_error`, model/provenance, actual events and source revision. This invokes full model inference; an inspection-only request does not request reanalysis. Prefer preparation while the incoming deck is isolated and allow for measured analysis latency. Resetting a warning is not proof of a musically correct grid.
 
-For a prepared incoming deck at its chosen entry, `pd deck B launch --clock A --clock-revision A_REV --at A_SOURCE_SECONDS --expected-load-revision B_REV` queues the start at an explicit future beat timestamp in A's source timeline. Replace every placeholder from observation. Choose the exact outgoing `seconds` from effective `beat_events`; a timestamp inferred from mean BPM can miss a variable grid and be rejected. Omit `--at` to use the next boundary; optional `--quantize 4` or `32` counts clock-grid beats from its origin, and only denotes bars/phrases when that origin and grouping were established musically. B's selected entry is snapped to its nearest grid beat: verify that position is still the intended musical entry. B must be paused, A playing; both need valid grids, effective tempos matching within 0.01 BPM, no jog holds/loops, ready incoming pitch preparation, running audio and sufficient source time. Matching average tempo is only a launch precondition; verify phase and local drift during the blend.
+For a prepared incoming deck at its chosen entry, `pd deck B launch --clock A --clock-revision A_REV --at A_SOURCE_SECONDS --expected-load-revision B_REV` queues the start at an explicit future beat timestamp in A's source timeline. Replace every placeholder from observation. Choose the exact outgoing `seconds` from effective `beat_events`; a timestamp inferred from mean BPM can miss a variable grid and be rejected. Omit `--at` to use the next boundary; optional `--quantize 4` or `32` counts clock-grid beats from its origin, and only denotes bars/phrases when that origin and grouping were established musically. B's selected entry is snapped to its nearest grid beat: verify that position is still the intended musical entry. B must be paused and distinct from playing A; source/grid, future-beat, readiness, jog/loop and ownership guards still apply, with running audio and sufficient source time. Launch aligns the clock beat and incoming entry without requiring equal BPM, enabling Sync or changing rate. The caller chooses tempo preparation: use close tempos/Sync for an intended beatmixed overlap, or deliberately different tempos for a musical cut. Do not chase four-beat estimate noise merely to satisfy a launch prerequisite. Verify local drift, bar and phrase alignment when the plan actually requires an ongoing blend.
 
 Acknowledgment means queued, not played: inspect `launch_pending` and `launch_at_seconds`, use `pd call engine.wait --args '{"deck":"B","launches":true}' --expected-load-revision B_REV --timeout 30s`, then verify B is playing with the same source/revision and a small difference between both native `beat_position` values before opening its fader. A cancelled launch also becomes nonpending, so wait completion alone does not prove playback. Native scheduling runs within the output sample clock; CLI/model latency cannot move an already queued boundary. A missed explicit timestamp, clock/source/position/tempo/grid change or manual takeover cancels the launch instead of starting stale audio. `pd deck B launch cancel` cancels only B's pending launch; `automation stop` cancels pending launches and ramps/jobs, leaving existing playback running. Clicking a queued UI Play button cancels it.
 
 When SYNC is enabled and the master is playing, UI, keyboard and CLI Play use the next native beat boundary. This aligns beats; it does not choose a musical phrase or identify vocals. An unsynced Play command remains immediate. For phrase mixing choose the entry and arrival event first, count backward, and queue that specific future clock timestamp while the channel stays isolated.
+
+## Manual cues, suggestions and scheduled commands
+
+Read [new capabilities](named-cues-and-suggestions.md) for source-owned named points, native slot bindings, scoped cached suggestions and explicit analysis refresh. Read [timed execution](timed-execution.md) for the default live-agent interface: one running `session start --stdio`, queued software commands, completion dependencies, relative timing, pushed execution feedback and pending-item edits. Existing guarded batches remain advanced compatibility controls. `mix guide` has been removed; the DJ chooses the transition from musical evidence.

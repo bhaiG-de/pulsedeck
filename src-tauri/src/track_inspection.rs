@@ -32,6 +32,9 @@ pub fn view(
     if metadata.get("beatgrid_uniform").is_none() && metadata["bpm_source"] == "manual" {
         metadata["beatgrid_uniform"] = json!(true);
     }
+    if let Some(stage) = metadata.as_object_mut().unwrap().remove("beat_model") {
+        metadata["beat_model"] = json!({"version":stage["version"],"beat_count":stage["beats_seconds"].as_array().map(Vec::len),"downbeat_count":stage["downbeats_seconds"].as_array().map(Vec::len),"grid":stage["grid"],"compatibility_stage":true});
+    }
     let rhythm = metadata
         .as_object_mut()
         .unwrap()

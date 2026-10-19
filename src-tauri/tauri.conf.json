@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "PulseDeck",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "app.pulsedeck.desktop",
   "build": {
     "beforeDevCommand": "python3 tools/ensure-beat-models.py && npm --prefix frontend run dev -- --host 127.0.0.1",
@@ -10,8 +10,24 @@
     "frontendDist": "../frontend/dist"
   },
   "app": {
-    "windows": [{"title": "PulseDeck", "width": 1500, "height": 940, "minWidth": 1100, "minHeight": 760, "titleBarStyle": "Overlay", "hiddenTitle": true, "trafficLightPosition": {"x": 16, "y": 20}}],
-    "security": {"csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://i.scdn.co; frame-src https://open.spotify.com; connect-src ipc: http://ipc.localhost"}
+    "windows": [
+      {
+        "title": "PulseDeck",
+        "width": 1500,
+        "height": 940,
+        "minWidth": 1100,
+        "minHeight": 760,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 16,
+          "y": 20
+        }
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: pulsedeck-art: http://pulsedeck-art.localhost https://i.scdn.co; frame-src https://open.spotify.com; connect-src ipc: http://ipc.localhost"
+    }
   },
   "bundle": {
     "active": true,
@@ -22,10 +38,32 @@
     "shortDescription": "Two-deck DJ performance software",
     "macOS": {
       "minimumSystemVersion": "12.0",
-      "infoPlist": "Info.plist"
+      "infoPlist": "Info.plist",
+      "signingIdentity": "-",
+      "dmg": {
+        "windowSize": {
+          "width": 660,
+          "height": 420
+        },
+        "appPosition": {
+          "x": 180,
+          "y": 190
+        },
+        "applicationFolderPosition": {
+          "x": 480,
+          "y": 190
+        }
+      }
     },
     "resources": {
       "resources/beat-models/": "beat-models/"
-    }
+    },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ]
   }
 }

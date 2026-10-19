@@ -75,58 +75,14 @@ Remaining before feature 1 counts as done: the 32-track annotated evaluation (th
 
 **Effort:** about 3 weeks including the spike.
 
-## 2. Song sections and automatic cues
+## 2. Manual cue knowledge (15 October 2026)
 
-Depends on feature 1. Version 1 uses rules on top of downbeats, not a new model: open structure models are mostly pop-oriented, and some require stem separation first.
-
-### Detection
-
-1. Per-bar features from the downbeats: low/mid/high energy and a pitch-class (chroma) profile for repetition. This needs PCM, so it runs inside `analyze_pcm`; its cost is small next to the model.
-2. Boundaries where energy or repetition changes, snapped to 4, 8, 16 or 32-bar lengths.
-3. Labels from one of two vocabularies:
-   - **Dance** (house, EDM, electronic): intro, build-up, drop, breakdown, outro. Used when a clear build-up into a drop exists.
-   - **Hip-hop**: intro, verse, hook, outro. The most-repeated section is the hook.
-   - Unclear sections stay unnamed. A per-track override in the analysis popover switches vocabulary.
-
-### Automatic cues
-
-- **Memory cues:** every section start, up to ten, in empty slots only.
-- **Hot cues:** empty pads only, up to eight, chosen by priority (first downbeat, drops or hooks, breakdowns or verses, build-ups, outro) and then ordered by time.
-- Record which slots were auto-filled, with their times, in the analysis metadata. Reanalysis replaces only auto slots that are still unchanged. A cue the DJ moved, deleted or set becomes manual and is never touched.
-- Settings: memory and hot auto-cues toggle separately (both on by default).
-- Local tracks: write auto cues into the library record when analysis completes, so `load_into_deck` restores them ([main.rs:438](../src-tauri/src/main.rs)).
-- Spotify tracks: cues are not persisted today ([spotify_decks.rs](../src-tauri/src/spotify_decks.rs) restores none), so auto cues come from the cached sections at each load. Persisting manual Spotify cues is a separate gap.
-
-### Interface
-
-- Coloured section bands with labels on the overview and detailed waveforms. The colours are tokens in `frontend/src/styles/tokens.css` and must stay distinct from the blue/orange/white bands and the cue colours.
-- A "bars to next section" countdown near the playhead.
-
-### Build status (14 October 2026)
-
-Implemented, with workspace Rust tests (130), strict Clippy and 42 frontend tests passing:
-
-- `audio-analysis::detect_sections`: reuses the beat model's log-mel spectrogram, so it adds well under a second per track. It works from per-bar timbre, level, bass and bass-onset features. Phrase-aware dynamic-programming segmentation joins edge fragments under four bars into their neighbours. Labels: dance (intro, build-up, drop, breakdown, outro) or hip-hop (intro, verse, hook, outro), with "groove" from bass level and bass prominence so noise risers do not read as drops. Sections are cut only from model or manual grids. `BEAT_MODEL_VERSION` is now 2 (beats plus sections), so tracks analysed before sections existed are updated on load or by **Update library analysis**.
-- `plan_auto_cues` and app wiring:
-  - Fills empty hot cue pads in priority order and adds memory cues at every merged section start.
-  - Records what it placed, so untouched auto cues move with new sections, cues the DJ set or moved are kept, and cleared auto cues stay gone.
-  - Applied at import and library update for stored tracks, and on the deck after load, background analysis, reanalysis and manual grid edits (sections are re-cut on the new grid within a quarter second).
-  - Spotify tracks get fresh auto cues at each load.
-  - Settings → Library → **Automatic cues** has separate hot and memory switches.
-- Interface: a colour strip of sections on both waveforms, section names on the detail view beside any hot cue flag, a "DROP in 8" countdown beside the bar counter, and a section list with a Dance / Hip-hop label switch (`set_section_vocabulary`) in the analysis popover. Neighbouring sections with the same label display and cue as one.
-
-Real tracks (no hand annotation yet): Detroit Swindle cut into 11 sections with a long intro, build-ups, drops, a short breakdown and an outro. FILV: intro, drop, breakdown, drop, outro. Kendrick Lamar "Prayer" alternates verse and hook. A melodic drill loop: intro, a 64-bar main section, outro. In the running dev app, a Spotify extended mix showed seven auto hot cues A to G on section starts, the section strip, labels and countdown.
-
-Not yet exercised in a running app: the vocabulary switch and the section refresh after a manual grid edit (both use unit-tested parts). Remaining before feature 2 counts as done: the 24-track section evaluation.
-
-**Out of scope.** Vocal detection (needs stems), mood or energy labels, manual section editing (a likely v1.1) and vocabularies for other genres.
-
-### Acceptance
-
-- 24 tracks (6 per genre group) with hand-marked section starts. Boundaries within one bar; label agreement reported per vocabulary.
-- In a practice review, the DJ keeps at least 80% of the automatic cues.
-
-**Effort:** about 3 weeks after feature 1. This is up from 2 because of the hip-hop vocabulary, repetition analysis and two cue types.
+Automatic structural segmentation, section labels and cue placement are removed.
+Saved cues are manual or imported. Their stable identities, names, spans and
+hot/memory/main bindings survive reload, reanalysis and XML exchange. A one-time
+library migration removes untouched generated records while retaining human edits.
+The DJ reasons from measured tempo/beat/key/waveform evidence and available human
+annotations. No automatic cue or vocabulary settings remain.
 
 ## 3. Next-track suggestions
 
@@ -196,47 +152,9 @@ About 2 weeks after a successful spike. Decisions needed from the owner: approva
 
 **Effort:** version 1 about 1 to 1.5 weeks with no dependency on feature 1. Version 2 about 2 weeks and reuses the model runner.
 
-## 5. Transition guide
+## 5. Native execution of a DJ's plan
 
-Added 14 October 2026 at the owner's request; it depends on feature 2. The app suggests when to start the waiting deck so the two tracks' sections line up, and draws a guide on the waveforms. The DJ still does the mix: nothing starts, moves or fades on its own.
-
-### How it works
-
-- **Decks.** The playing deck the crowd hears goes out (channel fader and crossfader, as in feature 3), and the other deck comes in. Both tracks need sections, so both need a model or manual grid.
-- **Bars, not seconds.** Each track is counted in bars on its own grid, so a plan holds once the decks are beatmatched, whatever their source tempos.
-- **Candidates.** Every 8-bar phrase start of the playing track from now on (section starts, and every 8 bars inside a section) is paired with start points in the new track. Those are the sections before its first drop or hook, plus the point exactly as many bars before that drop as remain to the playing track's end or its last drop.
-- **Score.**
-  - 35%: where the new drop or hook lands. Best is as the playing track ends, or as its last drop ends; worst is on top of a drop.
-  - 25%: avoiding two full sections at once, such as a drop over a drop.
-  - 20%: how long both play together; dance mixes prefer 16 to 32 bars, hip-hop 8 to 16.
-  - 10%: starting late in the playing track.
-  - 5% each: starting on a section start, and starting the new track on one of its phrases.
-
-  At most three alternatives are shown, one per start moment, and they are recomputed once per beat.
-- **Once both play,** the guide stops planning and checks the mix: whether the new track's next section falls on the playing track's phrase ("B is 2 bars behind A's phrase"), and where its drop will land.
-
-### Interface
-
-- A **mix guide** key in the waveform toolbar turns the guide on or off; the choice is remembered on this computer. Beside it is the suggestion, for example "start B at A bar 129 · B's intro over A's outro · 16 bars together · B's drop lands as A ends", with arrows to step through the alternatives. **Cue B** moves B's cue point, and its playhead when paused, to the suggested start, only when pressed.
-- On the playing deck's waveform: a dashed **START B** line, the stretch both play together tinted in B's colour, and a dotted **B DROP** line where B's drop lands. On the waiting deck: a dashed **START** line. The overview strips show the same lines.
-- Under the bar counter beside the playing deck's playhead: **START B in 8** (bars), then **in 3 beats**, then **NOW**.
-
-### Build status (14 October 2026)
-
-Implemented in the frontend only: [transition.ts](../frontend/src/transition.ts), [TransitionGuide.tsx](../frontend/src/TransitionGuide.tsx), guide drawing in [Waveform.tsx](../frontend/src/Waveform.tsx) and the toolbar line in `App.tsx`. Nothing changed in the engine or the analysis. 14 new tests, 62 frontend tests in all, cover intro-over-outro and drop-swap plans, phrase alignment, mixed tempos, start points part-way into an intro, a long outro, offering only future moments, the countdown, the guides, the live check (including inside a long section), bar numbering and deck roles.
-
-Checks so far:
-- **Real library.** On a copy of the owner's library, the first choice between house tracks put the new drop on the old track's end. For example, "How Long Have You Been Away?" into "It's Over Now" started at A bar 129: intro over outro, 16 bars together. Hip-hop and drill pairs got short intro-over-outro mixes. Irregular analysed lengths, such as 10-bar intros and 17-bar outros, are why start points part-way into an intro and a 2-bar tolerance at the end were added.
-- **Drawing.** A temporary preview page drew the guides with the real waveform component on two synthetic tracks: the start line, the tinted span, the landing line, the waiting deck's start line and the countdown.
-- **Desktop app** (debug bundle, master output muted, 14 October 2026), with the two local drill beats:
-  - With A playing, the toolbar showed "start b at a bar 73 · b's intro over a's outro · 8 bars together", with alternative 2 of 3 "start b at a bar 65 · b's intro over a's verse · 16 bars together".
-  - On A's waveform, "START B in 64" counted down to "in 2" beside a dashed START B line and the tinted span at A's outro; B's waveform showed its START line. **cue b** moved B's cue and playhead to its start. Once the moment had passed, the toolbar said "no phrase left in a to start b on".
-  - With B started on A's outro (using A's hot cue C), the live check read "b is on a's phrase", then "b is 0.25 bars ahead of a's phrase" two seconds later. That is correct, because the decks were not tempo-matched (142 against 150 BPM).
-  - The click-through found that with B inside a 64-bar section the live line was empty. It now checks against B's next 8-bar phrase.
-  - **Unexplained:** twice, deck A stopped when B was started, away from a track end. Two later attempts did not reproduce it, and no path in the interface or engine that pauses the other deck was found. Left open to watch.
-- **Not yet done:** a practice review of whether the suggested moments are the ones the DJ would choose.
-
-**Out of scope:** automatic mixing (starting, fading or EQ), meters other than 4/4, and FLX4 controls for the alternatives (the toolbar works with the mouse or keyboard).
+The automatic frontend mix guide was removed after session feedback. The DJ/agent selects musical phrasing using canonical named cues, source-time waveforms and effective Beat This! events. The existing unified `batch.validate/run` executes a complete guarded handover, including native mixer phases, advancement checks, final endpoints and owned recovery. See [scheduled batches](scheduled-batches.md). There is no second planner or timeline namespace.
 
 ## Order
 

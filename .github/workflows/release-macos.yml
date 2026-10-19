@@ -1,0 +1,83 @@
+name: macOS DMG release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: macos-release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+jobs:
+  dmg:
+    runs-on: macos-15
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+      CARGO_BUILD_JOBS: '2'
+      APPLE_SIGNING_IDENTITY: '-'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal
+      - name: Check tag matches app version
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          version = json.loads(Path('src-tauri/tauri.conf.json').read_text())['version']
+          assert os.environ['RELEASE_TAG'] == 'v' + version, 'Tag must match tauri.conf.json version'
+          PY
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm --prefix frontend ci
+      - name: Install verified analysis assets
+        run: python3 tools/ensure-beat-models.py
+      - name: Build Apple Silicon DMG
+        run: npm run package:macos
+      - name: Verify bundle and checksum
+        run: |
+          codesign --verify --deep --strict target/release/bundle/macos/PulseDeck.app
+          python3 tools/verify-release.py target/release/bundle/macos/PulseDeck.app
+          cd target/release/bundle/dmg
+          shasum -a 256 *.dmg > SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PulseDeck-${{ env.RELEASE_TAG }}-${{ github.sha }}
+          path: |
+            target/release/bundle/dmg/*.dmg
+            target/release/bundle/dmg/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 30
+      # Flowbar uses this action to publish its DMG; v3 uses the supported Node 24 runtime.
+      - name: Publish or update downloadable release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: PulseDeck ${{ env.RELEASE_TAG }}
+          body_path: .github/release-notes.md
+          files: |
+            target/release/bundle/dmg/*.dmg
+            target/release/bundle/dmg/SHA256SUMS.txt
+          fail_on_unmatched_files: true
+          overwrite_files: true
+          draft: false
+          prerelease: false

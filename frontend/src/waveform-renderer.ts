@@ -123,12 +123,84 @@ const lowColor = rgb(BAND_COLORS.low),
 export class WaveformRaster {
   private config: RasterSource | null = null;
   private bandGain = 1;
-  private tiles = new Map<number, HTMLCanvasElement>();
+  private tiles = new Map<number, HTMLCanvasElement | ImageBitmap>();
+  private pending = new Set<number>();
+  private generation = 0;
+  private worker: Worker | null = null;
+  private asynchronous: boolean;
+  private disposed = false;
+  private ready: () => void;
   readonly tileWidth = 1024;
   tileBuilds = 0;
   private createCanvas: CanvasFactory;
-  constructor(createCanvas: CanvasFactory = defaultFactory) {
+  constructor(
+    createCanvas: CanvasFactory = defaultFactory,
+    ready: () => void = () => {},
+  ) {
     this.createCanvas = createCanvas;
+    this.ready = ready;
+    this.asynchronous =
+      createCanvas === defaultFactory && typeof window !== "undefined";
+    if (
+      this.asynchronous &&
+      typeof Worker !== "undefined" &&
+      typeof OffscreenCanvas !== "undefined"
+    ) {
+      try {
+        this.worker = new Worker(
+          new URL("./waveform-worker.ts", import.meta.url),
+          { type: "module" },
+        );
+        this.worker.onmessage = ({ data }) => {
+          const { generation, number, bitmap } = data as {
+            generation: number;
+            number: number;
+            bitmap: ImageBitmap;
+          };
+          if (generation !== this.generation || this.disposed) {
+            bitmap.close();
+            return;
+          }
+          this.pending.delete(number);
+          this.remember(number, bitmap);
+          this.tileBuilds++;
+          this.ready();
+        };
+        this.worker.onerror = () => {
+          this.worker?.terminate();
+          this.worker = null;
+          const config = this.config;
+          this.config = null;
+          this.pending.clear();
+          if (config) this.configure(config);
+          this.ready();
+        };
+      } catch {
+        this.worker = null;
+      }
+    }
+  }
+  private release(tile: HTMLCanvasElement | ImageBitmap) {
+    if ("close" in tile) tile.close();
+  }
+  private remember(number: number, tile: HTMLCanvasElement | ImageBitmap) {
+    const old = this.tiles.get(number);
+    if (old) this.release(old);
+    this.tiles.set(number, tile);
+    while (this.tiles.size > 6) {
+      const key = this.tiles.keys().next().value!;
+      this.release(this.tiles.get(key)!);
+      this.tiles.delete(key);
+    }
+  }
+  dispose() {
+    this.disposed = true;
+    this.generation++;
+    this.worker?.terminate();
+    this.worker = null;
+    this.tiles.forEach((tile) => this.release(tile));
+    this.tiles.clear();
+    this.pending.clear();
   }
   configure(next: RasterSource): void {
     const p = this.config;
@@ -147,6 +219,19 @@ export class WaveformRaster {
     )
       return;
     this.config = next;
+    this.generation++;
+    this.pending.clear();
+    this.tiles.forEach((tile) => this.release(tile));
+    this.tiles.clear();
+    if (this.worker) {
+      this.worker.postMessage({
+        type: "configure",
+        generation: this.generation,
+        config: next,
+      });
+      return;
+    }
+    // Unsupported WebViews use idle construction below, never tile building inside paint.
     // One shared display gain preserves relative band energy. Normalize once per
     // immutable source, so the colored envelope fills the view without pumping.
     if (hasWaveformBands(next.bands, next.samples.length)) {
@@ -162,13 +247,36 @@ export class WaveformRaster {
     } else this.bandGain = 1;
     this.tiles.clear();
   }
-  private tile(number: number): HTMLCanvasElement {
+  private tile(number: number): HTMLCanvasElement | ImageBitmap | undefined {
     const hit = this.tiles.get(number);
     if (hit) {
       this.tiles.delete(number);
       this.tiles.set(number, hit);
       return hit;
     }
+    if (this.asynchronous) {
+      if (!this.pending.has(number) && this.pending.size < 6) {
+        this.pending.add(number);
+        const generation = this.generation;
+        if (this.worker)
+          this.worker.postMessage({ type: "tile", generation, number });
+        else {
+          const build = () => {
+            if (this.disposed || generation !== this.generation) return;
+            this.buildTile(number);
+            this.pending.delete(number);
+            this.ready();
+          };
+          if ("requestIdleCallback" in window)
+            window.requestIdleCallback(build, { timeout: 150 });
+          else setTimeout(build, 0);
+        }
+      }
+      return undefined;
+    }
+    return this.buildTile(number);
+  }
+  private buildTile(number: number): HTMLCanvasElement {
     const c = this.config!;
     const width = Math.ceil(this.tileWidth * c.dpr),
       height = Math.max(1, Math.ceil(c.height * c.dpr)),
@@ -241,10 +349,8 @@ export class WaveformRaster {
       }
     }
     ctx.putImageData(image, 0, 0);
-    this.tiles.set(number, canvas);
+    this.remember(number, canvas);
     this.tileBuilds++;
-    while (this.tiles.size > 6)
-      this.tiles.delete(this.tiles.keys().next().value!);
     return canvas;
   }
   prewarm(startSeconds: number, width: number, direction = 1): void {
@@ -283,6 +389,7 @@ export class WaveformRaster {
     ctx.clip();
     for (let number = first; number <= last; number++) {
       const tile = this.tile(number);
+      if (!tile) continue;
       ctx.drawImage(
         tile,
         number * this.tileWidth - begin,

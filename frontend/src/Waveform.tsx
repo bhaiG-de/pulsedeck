@@ -1,19 +1,22 @@
 import { useLayoutEffect, useRef } from "react";
+import { animate } from "motion/mini";
 import type { WaveformBands } from "./types";
 import {
   hasWaveformBands,
   getWaveformWindow,
+  expandWaveformWindow,
   timeToWaveformFraction,
   waveformSeekSeconds,
-  nextSection,
+  nextCue,
   HOT_CUE_COLORS,
-  SECTION_COLORS,
-  SECTION_NAMES,
-  UNLABELLED_SECTION,
-  type DisplaySection,
+  CUE_ROLE_COLORS,
+  CUE_ROLE_NAMES,
+  UNLABELLED_CUE,
+  type DisplayCue,
 } from "./waveform-data";
+import { registerWaveformPerformance } from "./performance";
+import { engineStore } from "./engine-state";
 import { WaveformMotion } from "./waveform-motion";
-import type { WaveformGuide } from "./transition";
 import {
   gridBarBeat,
   uniformBeatGrid,
@@ -50,6 +53,7 @@ const SCREEN = {
 };
 
 export type WaveformProps = {
+  deckId?: number;
   samples: number[];
   bands?: WaveformBands | null;
   position: number;
@@ -67,13 +71,8 @@ export type WaveformProps = {
   loopActive?: boolean;
   overview?: boolean;
   hotcues?: (number | null)[];
-  /** Song sections, drawn as a coloured strip along the top edge. */
-  sections?: DisplaySection[];
-  /** Transition guide marks: when to start the other deck, the stretch
-   * both play together and where the new track's drop lands. */
-  guides?: WaveformGuide[];
-  /** "START B in 8", drawn under the bar counter beside the playhead. */
-  guideCountdown?: { text: string; color: string } | null;
+  /** Saved cue markers, drawn as a coloured strip along the top edge. */
+  cueMarkers?: DisplayCue[];
   beatGrid?: BeatGrid;
   beatgridOffset?: number;
   beatgridValid?: boolean;
@@ -82,6 +81,7 @@ export type WaveformProps = {
   playbackRate?: number;
   jogTouch?: boolean;
   sourceId?: string;
+  loadRevision?: number;
   snapshotTime?: number;
   positionRevision?: number;
   onScrub?: (
@@ -117,20 +117,49 @@ interface Runtime {
   click: (event: MouseEvent) => void;
 }
 const empty: number[] = [];
-const noSections: DisplaySection[] = [];
-const noGuides: WaveformGuide[] = [];
+const noCueMarkers: DisplayCue[] = [];
 
 export default function Waveform(input: WaveformProps) {
   const props = useRef(input);
   props.current = input;
-  const canvasRef = useRef<HTMLCanvasElement>(null),
+  const hostRef = useRef<HTMLDivElement>(null),
+    canvasRef = useRef<HTMLCanvasElement>(null),
+    markersRef = useRef<HTMLCanvasElement>(null),
+    playedRef = useRef<HTMLDivElement>(null),
+    playheadRef = useRef<HTMLDivElement>(null),
+    labelRef = useRef<HTMLSpanElement>(null),
+    pinnedRef = useRef<HTMLDivElement>(null),
     runtime = useRef<Runtime | null>(null);
   useLayoutEffect(() => {
-    const canvas = canvasRef.current!,
-      ctx = canvas.getContext("2d");
-    if (!ctx) return;
+    const canvas = hostRef.current!,
+      waveCanvas = canvasRef.current!,
+      markerCanvas = markersRef.current!,
+      waveContext = waveCanvas.getContext("2d", { alpha: false }),
+      markerContext = markerCanvas.getContext("2d");
+    if (!waveContext || !markerContext) return;
+    let ctx: CanvasRenderingContext2D = waveContext;
+    let contentDirty = true,
+      stripAnchor: number | null = null,
+      stripPadding = 0,
+      pixelsPerSecond = 0,
+      lastDisplayPosition = 0,
+      pinnedKey = "",
+      stripAnimation: ReturnType<typeof animate> | null = null;
+    const stopStrip = () => {
+      stripAnimation?.cancel();
+      stripAnimation = null;
+    };
     const motion = new WaveformMotion(),
-      raster = new WaveformRaster();
+      raster = new WaveformRaster(undefined, () => {
+        contentDirty = true;
+        lastOverviewPixel = NaN;
+        dirty = true;
+        ensureFrame();
+      });
+    const metrics = registerWaveformPerformance(
+      `${input.deckId ?? "preview"}-${input.overview ? "overview" : "detail"}`,
+      () => raster.tileBuilds,
+    );
     let disposed = false,
       frame = 0,
       width = 0,
@@ -138,6 +167,7 @@ export default function Waveform(input: WaveformProps) {
       dpr = window.devicePixelRatio || 1,
       lastFrame = -Infinity,
       lastPaintPosition = 0,
+      lastOverviewPixel = NaN,
       lastPrewarmPosition = -Infinity,
       dirty = true,
       gesture: Gesture | null = null,
@@ -145,6 +175,44 @@ export default function Waveform(input: WaveformProps) {
       suppressClick = false;
     let nativeKey = "",
       prewarmTimer: ReturnType<typeof setTimeout> | null = null;
+    const current = (): WaveformProps => {
+      const p = props.current;
+      if (p.deckId === undefined) return p;
+      const engine = engineStore.getTransport(),
+        deck = engine.decks[p.deckId];
+      if (
+        !deck ||
+        deck.track?.path !== p.sourceId ||
+        engine.load_revisions?.[p.deckId] !== p.loadRevision
+      )
+        return p;
+      const delay =
+        (engine.audio_quality as { output_latency_frames?: number } | undefined)
+          ?.output_latency_frames ?? 0;
+      const rate =
+        deck.actual_playback_rate ??
+        deck.playback_rate ??
+        1 + (deck.tempo_percent ?? 0) / 100;
+      return {
+        ...p,
+        position: Math.max(
+          0,
+          (deck.position_seconds ?? deck.position ?? 0) -
+            (deck.playing ? (delay / (engine.sample_rate || 48000)) * rate : 0),
+        ),
+        playing: deck.playing,
+        playbackRate: rate,
+        jogTouch: deck.jog_touch,
+        positionRevision: deck.position_revision,
+        snapshotTime: engineStore.receivedAt(),
+        hotcues: deck.hot_cues,
+        memoryCues: deck.memory_cues,
+        cuePoint: deck.cue_seconds,
+        loopStart: deck.loop_start_seconds,
+        loopEnd: deck.loop_end_seconds,
+        loopActive: deck.loop_active,
+      };
+    };
     const sourceKey = () =>
       `${props.current.sourceId || ""}:${props.current.duration}:${props.current.spanBeats}:${props.current.bpm}:${props.current.zoom}:${width}:${height}:${dpr}`;
     const schedulePrewarm = (fn: () => void) => {
@@ -222,7 +290,51 @@ export default function Waveform(input: WaveformProps) {
         }
       })();
     };
+    const moveStrip = (now: number) => {
+      if (stripAnchor === null) return;
+      const p = current(),
+        position = motion.position(now);
+      const transform = (time: number) =>
+        `translateX(${(stripAnchor! - motion.position(time)) * pixelsPerSecond - stripPadding}px)`;
+      stopStrip();
+      for (const layer of [waveCanvas, markerCanvas])
+        layer.style.transform = transform(now);
+      if (!p.playing || p.jogTouch || gesture || finishing) return;
+      let milliseconds = Math.max(0, 120 - (now - (p.snapshotTime ?? now)));
+      const rate = Math.max(0, p.playbackRate ?? 1);
+      if (rate > 0) {
+        milliseconds = Math.min(
+          milliseconds,
+          ((p.duration - position) / rate) * 1000,
+        );
+        if (
+          p.loopActive !== false &&
+          p.loopEnd != null &&
+          p.loopStart != null &&
+          position >= p.loopStart &&
+          position < p.loopEnd
+        )
+          milliseconds = Math.min(
+            milliseconds,
+            ((p.loopEnd - position) / rate) * 1000 - 0.01,
+          );
+      }
+      if (milliseconds <= 0) return;
+      // Linear source time, never a spring: the beatgrid must stay on the audio clock.
+      stripAnimation = animate(
+        [waveCanvas, markerCanvas],
+        {
+          transform: [
+            transform(now),
+            transform(now + milliseconds / 2),
+            transform(now + milliseconds),
+          ],
+        },
+        { duration: milliseconds / 1000, ease: "linear" },
+      );
+    };
     const paint = (now: number) => {
+      const started = performance.now();
       if (disposed || width <= 0 || height <= 0) return;
       const {
         samples,
@@ -234,9 +346,7 @@ export default function Waveform(input: WaveformProps) {
         spanBeats,
         overview = false,
         hotcues = empty,
-        sections = noSections,
-        guides = noGuides,
-        guideCountdown,
+        cueMarkers = noCueMarkers,
         beatGrid,
         beatgridOffset = 0,
         beatgridValid = false,
@@ -247,13 +357,11 @@ export default function Waveform(input: WaveformProps) {
         loopStart,
         loopEnd,
         loopActive,
-      } = props.current;
+      } = current();
       const position = motion.position(now),
-        w = width,
-        h = height;
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.clearRect(0, 0, w, h);
-      const view = getWaveformWindow({
+        h = height,
+        strip = !overview && duration > 0 && samples.length > 0,
+        viewport = getWaveformWindow({
           position,
           duration,
           bpm,
@@ -261,10 +369,125 @@ export default function Waveform(input: WaveformProps) {
           overview,
           spanBeats,
         }),
-        { span, start } = view;
+        padding = strip ? Math.min(width / 4, 512) : 0,
+        w = width + padding * 2;
       const grid =
         beatGrid ??
         uniformBeatGrid(bpm, beatgridOffset, beatgridValid, beatgridDownbeat);
+      playedRef.current!.hidden = !strip;
+      playheadRef.current!.hidden = !strip;
+      markerCanvas.hidden = !!overview;
+      pinnedRef.current!.hidden = !strip;
+      if (strip) {
+        // Labels that entered before the visible window stay pinned at its edge.
+        const pinned = cueMarkers.flatMap((cue) => {
+          if (
+            cue.start >= viewport.start ||
+            cue.end <= viewport.start ||
+            !(cue.name || cue.label)
+          )
+            return [];
+          const text = (cue.name || CUE_ROLE_NAMES[cue.label!]).toUpperCase();
+          markerContext.font = SCREEN.font(9, 500);
+          if (
+            markerContext.measureText(text).width + 10 >=
+            ((cue.end - viewport.start) * width) / viewport.span
+          )
+            return [];
+          return [
+            {
+              text,
+              color: cue.label ? CUE_ROLE_COLORS[cue.label] : UNLABELLED_CUE,
+              loop: false,
+            },
+          ];
+        });
+        if (
+          loopActive !== false &&
+          loopStart != null &&
+          loopEnd != null &&
+          loopStart < viewport.start &&
+          loopEnd > viewport.start
+        )
+          pinned.push({ text: "LOOP", color: SCREEN.loopText, loop: true });
+        const key = JSON.stringify(pinned);
+        if (key !== pinnedKey) {
+          pinnedKey = key;
+          pinnedRef.current!.replaceChildren(
+            ...pinned.map(({ text, color, loop }) => {
+              const label = document.createElement("span");
+              label.textContent = text;
+              label.style.color = color;
+              label.className = loop
+                ? "waveform-pinned-loop"
+                : "waveform-pinned-cue";
+              return label;
+            }),
+          );
+        }
+        const bar = gridBarBeat(grid, position),
+          upcoming = nextCue(cueMarkers, position, bpm, grid);
+        const text = bar
+          ? upcoming?.name
+            ? `${bar} bars · ${upcoming.name.toUpperCase()} in ${upcoming.bars}`
+            : `${bar} bars`
+          : "";
+        if (labelRef.current!.textContent !== text)
+          labelRef.current!.textContent = text;
+        labelRef.current!.hidden = !text;
+        const wrapped = position < lastDisplayPosition - 0.1;
+        lastDisplayPosition = position;
+        if (
+          !contentDirty &&
+          stripAnchor !== null &&
+          Math.abs(position - stripAnchor) * pixelsPerSecond < padding * 0.75
+        ) {
+          if (
+            gesture ||
+            finishing ||
+            !current().playing ||
+            current().jogTouch ||
+            wrapped
+          )
+            moveStrip(now);
+          dirty = false;
+          return;
+        }
+      }
+      stopStrip();
+      stripAnchor = strip ? position : null;
+      waveCanvas.dataset.anchorSeconds = String(position);
+      stripPadding = padding;
+      pixelsPerSecond = viewport.span > 0 ? width / viewport.span : 0;
+      waveCanvas.dataset.pixelsPerSecond = String(pixelsPerSecond);
+      waveCanvas.dataset.paddingPixels = String(padding);
+      const pw = Math.round(w * dpr),
+        ph = Math.round(h * dpr);
+      for (const layer of [waveCanvas, markerCanvas]) {
+        if (layer.width !== pw || layer.height !== ph) {
+          layer.width = pw;
+          layer.height = ph;
+        }
+        layer.style.width = `${w}px`;
+        layer.style.transform = `translateX(${-padding}px)`;
+      }
+      ctx = waveContext;
+      // An overview only changes when its playhead crosses a physical pixel.
+      if (overview && duration > 0 && !gesture && !finishing) {
+        const pixel = Math.round((position / duration) * w * dpr);
+        if (pixel === lastOverviewPixel) {
+          dirty = false;
+          return;
+        }
+        lastOverviewPixel = pixel;
+      }
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.fillStyle = "#0b0b0c";
+      ctx.fillRect(0, 0, w, h);
+      markerContext.setTransform(dpr, 0, 0, dpr, 0, 0);
+      markerContext.clearRect(0, 0, w, h);
+      const view = expandWaveformWindow(viewport, width, padding);
+      const { span, start } = view;
       const xFor = (t: number) => timeToWaveformFraction(t, view) * w;
       // Dotted baseline, as on a recorder waiting for signal.
       ctx.strokeStyle = SCREEN.axis;
@@ -339,12 +562,15 @@ export default function Waveform(input: WaveformProps) {
             overview,
           });
           raster.draw(ctx, start, w);
-          // Played audio steps back so what is coming next reads first.
-          const played = overview
-            ? Math.max(0, Math.min(w, view.playheadFraction * w))
-            : w / 2;
-          ctx.fillStyle = SCREEN.played;
-          ctx.fillRect(0, 0, played, h);
+          if (overview) {
+            ctx.fillStyle = SCREEN.played;
+            ctx.fillRect(
+              0,
+              0,
+              Math.max(0, Math.min(w, view.playheadFraction * w)),
+              h,
+            );
+          }
           if (!overview && Math.abs(position - lastPrewarmPosition) > 1) {
             lastPrewarmPosition = position;
             const direction = position >= lastPaintPosition ? 1 : -1;
@@ -355,19 +581,40 @@ export default function Waveform(input: WaveformProps) {
             });
           }
         }
-        // Song sections: a strip along the top edge, with names on the detail view.
+        if (!overview) {
+          ctx = markerContext;
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+          ctx.clearRect(0, 0, w, h);
+        }
+        // Saved cue markers: a strip along the top edge, with names on the detail view.
         const strip = overview ? 3 : 4;
-        for (const section of sections) {
+        for (const section of cueMarkers) {
           const left = Math.max(0, xFor(section.start)),
-            right = Math.min(w, xFor(section.end));
+            right = Math.min(
+              w,
+              xFor(section.end === section.start ? section.start : section.end),
+            );
+          if (section.end === section.start && left > 0 && left < w) {
+            ctx.fillStyle = section.label
+              ? CUE_ROLE_COLORS[section.label]
+              : UNLABELLED_CUE;
+            ctx.fillRect(left, 0, 1, h);
+            if (!overview && section.name) {
+              ctx.font = SCREEN.font(9, 500);
+              ctx.fillText(section.name.toUpperCase(), left + 4, 16);
+            }
+            continue;
+          }
           if (right <= left) continue;
           const colour = section.label
-            ? SECTION_COLORS[section.label]
-            : UNLABELLED_SECTION;
+            ? CUE_ROLE_COLORS[section.label]
+            : UNLABELLED_CUE;
           ctx.fillStyle = colour;
           ctx.fillRect(left, 0, Math.max(1, right - left - 1), strip);
-          if (!overview && section.label) {
-            const name = SECTION_NAMES[section.label].toUpperCase();
+          if (!overview && (section.name || section.label)) {
+            const name = (
+              section.name || CUE_ROLE_NAMES[section.label!]
+            ).toUpperCase();
             ctx.font = SCREEN.font(9, 500);
             const textWidth = ctx.measureText(name).width;
             // Clear of a hot cue flag at the section start; pinned to the left
@@ -379,41 +626,6 @@ export default function Waveform(input: WaveformProps) {
               ctx.fillStyle = colour;
               ctx.fillText(name, labelX, 16);
             }
-          }
-        }
-        // Transition guide: a tinted "together" span, a dashed start line and
-        // a dotted landing line in the incoming deck's colour, labelled above
-        // the cue markers on the detail view.
-        for (const guide of guides) {
-          const x = xFor(guide.at);
-          if (guide.until !== undefined && guide.until > guide.at) {
-            const left = Math.max(0, x),
-              right = Math.min(w, xFor(guide.until));
-            if (right > left) {
-              ctx.globalAlpha = 0.1;
-              ctx.fillStyle = guide.color;
-              ctx.fillRect(left, 0, right - left, h);
-              ctx.globalAlpha = 1;
-            }
-          }
-          if (x < 0 || x > w) continue;
-          ctx.strokeStyle = guide.color;
-          ctx.lineWidth = guide.kind === "landing" ? 1 : 1.5;
-          ctx.setLineDash(guide.kind === "landing" ? [2, 3] : [5, 3]);
-          ctx.beginPath();
-          ctx.moveTo(x + 0.5, 0);
-          ctx.lineTo(x + 0.5, h);
-          ctx.stroke();
-          ctx.setLineDash([]);
-          if (!overview) {
-            ctx.font = SCREEN.font(9, 500);
-            const textWidth = ctx.measureText(guide.label).width,
-              labelX = Math.max(3, Math.min(x + 4, w - textWidth - 6)),
-              labelY = Math.max(22, h - 46);
-            ctx.fillStyle = SCREEN.labelFill;
-            ctx.fillRect(labelX - 3, labelY, textWidth + 6, 13);
-            ctx.fillStyle = guide.color;
-            ctx.fillText(guide.label, labelX, labelY + 10);
           }
         }
         // Beat markers sit over the envelopes, so loud passages cannot hide the
@@ -521,36 +733,12 @@ export default function Waveform(input: WaveformProps) {
         const mainCue = cuePoint !== undefined ? cuePoint : cueSeconds;
         if (mainCue != null)
           bottomMarker(mainCue, "C", color, overview ? 12 : 30);
-        const x = overview
-          ? Math.max(0.75, Math.min(w - 0.75, view.playheadFraction * w))
-          : w / 2;
-        ctx.fillStyle = SCREEN.playhead;
-        ctx.fillRect(x - 0.75, 0, 1.5, h);
-        if (!overview) {
-          ctx.beginPath();
-          ctx.arc(x, 4, 3.5, 0, Math.PI * 2);
-          ctx.fill();
-          const label = gridBarBeat(grid, position);
-          if (label) {
-            ctx.font = SCREEN.font(10, 500);
-            const upcoming = nextSection(sections, position, bpm, grid);
-            const text = upcoming?.label
-                ? `${label} bars · ${SECTION_NAMES[upcoming.label].toUpperCase()} in ${upcoming.bars}`
-                : `${label} bars`,
-              size = ctx.measureText(text).width;
-            ctx.fillStyle = SCREEN.labelFill;
-            ctx.fillRect(x + 5, 17, size + 8, 16);
-            ctx.fillStyle = SCREEN.barLabel;
-            ctx.fillText(text, x + 9, 29);
-          }
-          if (guideCountdown) {
-            ctx.font = SCREEN.font(10, 500);
-            const size = ctx.measureText(guideCountdown.text).width;
-            ctx.fillStyle = SCREEN.labelFill;
-            ctx.fillRect(x + 5, 35, size + 8, 16);
-            ctx.fillStyle = guideCountdown.color;
-            ctx.fillText(guideCountdown.text, x + 9, 47);
-          }
+        if (overview || !strip) {
+          const x = overview
+            ? Math.max(0.75, Math.min(w - 0.75, view.playheadFraction * w))
+            : w / 2;
+          ctx.fillStyle = SCREEN.playhead;
+          ctx.fillRect(x - 0.75, 0, 1.5, h);
         }
       }
       if (!duration && !overview) {
@@ -574,10 +762,18 @@ export default function Waveform(input: WaveformProps) {
         ctx.textAlign = "left";
       }
 
+      metrics.paint(
+        now,
+        performance.now() - started,
+        !!current().playing && !document.hidden,
+      );
       lastPaintPosition = position;
+      contentDirty = false;
       dirty = false;
+      moveStrip(now);
     };
     function tick(now: number) {
+      metrics.frame(now, !!current().playing && !document.hidden);
       frame = 0;
       lastFrame = now;
       if (gesture) flush(gesture);
@@ -590,20 +786,21 @@ export default function Waveform(input: WaveformProps) {
       width = rect.width;
       height = rect.height;
       dpr = window.devicePixelRatio || 1;
-      const pw = Math.round(width * dpr),
-        ph = Math.round(height * dpr);
-      if (canvas.width !== pw || canvas.height !== ph) {
-        canvas.width = pw;
-        canvas.height = ph;
-      }
+      contentDirty = true;
       dirty = true;
+      lastOverviewPixel = NaN;
       paint(performance.now());
       ensureFrame();
     };
-    const invalidate = () => {
-      const p = props.current,
+    const invalidate = (force = false) => {
+      if (force) {
+        lastOverviewPixel = NaN;
+        contentDirty = true;
+      }
+      const p = current(),
         now = performance.now(),
-        key = `${p.position}:${p.duration}:${p.playing}:${p.playbackRate}:${p.jogTouch}:${p.sourceId}:${p.snapshotTime}:${p.positionRevision}`;
+        key = `${p.position}:${p.duration}:${p.playing}:${p.playbackRate}:${p.jogTouch}:${p.sourceId}:${p.loadRevision}:${p.positionRevision}`;
+      if (nativeKey === key && !force) return;
       if (nativeKey !== key) {
         const previousSource = nativeKey;
         nativeKey = key;
@@ -614,7 +811,7 @@ export default function Waveform(input: WaveformProps) {
             playing: !!p.playing,
             playbackRate: p.playbackRate ?? 1,
             jogTouch: p.jogTouch,
-            sourceId: p.sourceId,
+            sourceId: `${p.sourceId ?? ""}@${p.loadRevision}`,
             time: p.snapshotTime ?? now,
             positionRevision: p.positionRevision,
             loopStart: p.loopStart,
@@ -623,20 +820,24 @@ export default function Waveform(input: WaveformProps) {
           },
           now,
         );
-        if (previousSource && gesture && p.sourceId !== grabSource) {
+        if (
+          previousSource &&
+          gesture &&
+          (p.sourceId !== grabSource || p.loadRevision !== grabRevision)
+        ) {
           finish(true);
         }
       }
       dirty = true;
-      if (now - lastFrame > 50) paint(now);
+      if (!force) moveStrip(now);
       ensureFrame();
     };
-    let grabSource: string | undefined;
+    let grabSource: string | undefined, grabRevision: number | undefined;
     runtime.current = {
-      invalidate,
+      invalidate: () => invalidate(true),
       down: (event) => {
         suppressClick = false;
-        const p = props.current;
+        const p = current();
         if (
           finishing ||
           !p.onScrub ||
@@ -656,6 +857,7 @@ export default function Waveform(input: WaveformProps) {
             spanBeats: p.spanBeats,
           });
         grabSource = p.sourceId;
+        grabRevision = p.loadRevision;
         const g: Gesture = {
           pointerId: event.pointerId,
           lastX: event.clientX,
@@ -715,7 +917,7 @@ export default function Waveform(input: WaveformProps) {
           suppressClick = false;
           return;
         }
-        const p = props.current;
+        const p = current();
         if (p.duration <= 0) return;
         const rect = canvas.getBoundingClientRect();
         if (rect.width <= 0) return;
@@ -753,7 +955,12 @@ export default function Waveform(input: WaveformProps) {
     canvas.addEventListener("wheel", wheel, { passive: false });
     measure();
     invalidate();
+    const unsubscribe = engineStore.subscribeTransport(() => invalidate());
     return () => {
+      unsubscribe();
+      stopStrip();
+      raster.dispose();
+      metrics.dispose();
       disposed = true;
       finish(true);
       if (frame) cancelAnimationFrame(frame);
@@ -766,11 +973,41 @@ export default function Waveform(input: WaveformProps) {
   }, []);
   useLayoutEffect(() => {
     runtime.current?.invalidate();
-  }, [input]);
+  }, [
+    input.deckId,
+    input.samples,
+    input.bands,
+    input.duration,
+    input.bpm,
+    input.color,
+    input.zoom,
+    input.spanBeats,
+    input.hotcues?.join(","),
+    input.memoryCues?.join(","),
+    input.cueMarkers,
+    input.cuePoint,
+    input.cueSeconds,
+    input.loopStart,
+    input.loopEnd,
+    input.loopActive,
+    input.overview,
+    input.beatGrid,
+    input.beatgridOffset,
+    input.beatgridValid,
+    input.beatgridDownbeat,
+    input.sourceId,
+    input.loadRevision,
+    input.deckId === undefined ? input.position : undefined,
+    input.deckId === undefined ? input.playing : undefined,
+    input.deckId === undefined ? input.playbackRate : undefined,
+    input.deckId === undefined ? input.jogTouch : undefined,
+    input.deckId === undefined ? input.positionRevision : undefined,
+  ]);
   const spectral = hasWaveformBands(input.bands, input.samples.length);
   return (
-    <canvas
-      ref={canvasRef}
+    <div
+      ref={hostRef}
+      role="img"
       className={input.overview ? "waveform overview" : "waveform"}
       aria-label={`${spectral ? "Three-band low, mid and high frequency" : "Peak amplitude"} waveform; ${input.overview ? "click to seek" : "hold to stop and drag to scratch"}`}
       style={{
@@ -783,6 +1020,14 @@ export default function Waveform(input: WaveformProps) {
       onPointerCancel={() => runtime.current?.cancel()}
       onLostPointerCapture={() => runtime.current?.cancel()}
       onClick={(e) => runtime.current?.click(e.nativeEvent)}
-    />
+    >
+      <canvas ref={canvasRef} aria-hidden="true" />
+      <div ref={playedRef} className="waveform-played" hidden />
+      <canvas ref={markersRef} aria-hidden="true" />
+      <div ref={pinnedRef} className="waveform-pinned" hidden />
+      <div ref={playheadRef} className="waveform-playhead" hidden>
+        <span ref={labelRef} />
+      </div>
+    </div>
   );
 }

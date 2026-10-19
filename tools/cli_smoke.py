@@ -80,8 +80,16 @@ else:
     call("engine.command", {"type": "set_tempo", "deck": "A", "precent": 2}, expected="invalid_arguments")
     run("deck", "B", "play", expected="deck_empty")
     passed("typo, unknown argument, range and empty-deck errors explain repair")
-    catalog = data("commands.list")
-    assert len(catalog["engine_commands"]) == 52
+    catalog = data("commands.list", {"detail": True})
+    native_types = {c["type"] for c in catalog["engine_commands"]}
+    assert len(native_types) == len(catalog["engine_commands"])
+    assert {"play_quantized", "ramp", "scrub_to", "set_eq", "restore_memory_cues"} <= native_types
+    schedule = next(c for c in catalog["commands"] if c["command"] == "batch.run")["input_schema"]["properties"]["schedule"]
+    assert {"clock", "recovery", "completion_event"} <= set(schedule["required"])
+    assert "expected_grid_revisions" in schedule["properties"]
+    # Mechanical guards can be captured coherently by the runtime. Explicit
+    # overrides remain discoverable and are covered by the backend guard tests.
+    assert "expected_grid_revisions" not in schedule["required"]
     assert any(c["command"] == "engine.command" and "native_input_schema" in c for c in catalog["commands"])
     passed("runtime command discovery includes native schemas and unsupported capabilities")
     sources = []
@@ -154,7 +162,7 @@ else:
     passed("sampler bank two assignment and observable playback")
     ui = data("ui.state")
     assert "app" in ui
-    run("ui", "theme", "set", "anatomy-light")
+    run("ui", "theme", "set", "ivory")
     run("ui", "app", "zoom", "64")
     run("ui", "app", "browser", "true")
     run("ui", "drawer", "height", "44")
@@ -162,7 +170,7 @@ else:
     run("ui", "app", "sampler", "true")
     run("ui", "app", "sampler-bank", "2")
     ui = data("ui.state")
-    assert ui["app"]["state"]["theme"] == "anatomy-light"
+    assert ui["app"]["state"]["theme"] == "ivory"
     assert ui["app"]["state"]["zoom"] == 64
     assert ui["drawer"]["state"]["height"] == 44
     assert ui["deck-A"]["state"]["pads"] == "memory"
@@ -212,6 +220,7 @@ else:
     (work / "expected.json").write_text(json.dumps({"source": sources[0], "order": order}))
     if opts.audio:
         run("mixer", "master-gain", "set", "0")
+        run("mixer", "cue-gain", "set", "0")
         data("audio.start", {"buffer_frames": 256})
         time.sleep(0.25)
         run("deck", "A", "play")

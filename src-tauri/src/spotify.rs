@@ -131,6 +131,8 @@ pub struct SpotifyPage<T> {
     pub offset: u64,
     pub total: u64,
     pub next_offset: Option<u64>,
+    /// Raw provider entries, including duplicates and unsupported media.
+    pub fetched_count: u64,
 }
 #[derive(Debug, Serialize)]
 pub struct SpotifyDevice {
@@ -312,7 +314,11 @@ impl SpotifyService {
             }
             .into(),
             playback_mode: "spotify_connect_and_native_experiment".into(),
-            dj_streaming_available: false,
+            dj_streaming_available: self.native_playback
+                && inner
+                    .token
+                    .as_ref()
+                    .is_some_and(|t| t.scope.split_whitespace().any(|scope| scope == "streaming")),
             playback_permission: inner
                 .token
                 .as_ref()
@@ -971,6 +977,7 @@ fn page<T>(raw: &Value, items: Vec<T>, offset: u64) -> SpotifyPage<T> {
         offset,
         total,
         next_offset,
+        fetched_count: count,
     }
 }
 fn text(v: &Value, key: &str) -> String {
@@ -1175,13 +1182,11 @@ async fn background<T: Send + 'static>(
         .await
         .map_err(|_| "Spotify background task failed".to_string())?
 }
-#[tauri::command]
 pub async fn spotify_native_status(
     service: tauri::State<'_, NativeSpotifyService>,
 ) -> Result<SpotifyStatus, String> {
     service.0.status()
 }
-#[tauri::command]
 pub async fn spotify_native_begin_login(
     service: tauri::State<'_, NativeSpotifyService>,
 ) -> Result<LoginStart, String> {
@@ -1195,7 +1200,6 @@ pub async fn spotify_native_begin_login(
     })
     .await
 }
-#[tauri::command]
 pub async fn spotify_native_disconnect(
     app: tauri::AppHandle,
     service: tauri::State<'_, NativeSpotifyService>,
@@ -1203,13 +1207,11 @@ pub async fn spotify_native_disconnect(
     crate::spotify_decks::clear_account_sources(&app)?;
     background(service.0.clone(), |s| s.disconnect()).await
 }
-#[tauri::command]
 pub async fn spotify_status(
     service: tauri::State<'_, SpotifyService>,
 ) -> Result<SpotifyStatus, String> {
     service.status()
 }
-#[tauri::command]
 pub async fn spotify_configure(
     app: tauri::AppHandle,
     service: tauri::State<'_, SpotifyService>,
@@ -1222,7 +1224,6 @@ pub async fn spotify_configure(
     }
     Ok(status)
 }
-#[tauri::command]
 pub async fn spotify_begin_login(
     service: tauri::State<'_, SpotifyService>,
     playback: Option<bool>,
@@ -1245,7 +1246,6 @@ pub async fn spotify_begin_login(
     })
     .await
 }
-#[tauri::command]
 pub async fn spotify_disconnect(
     app: tauri::AppHandle,
     service: tauri::State<'_, SpotifyService>,
@@ -1253,32 +1253,103 @@ pub async fn spotify_disconnect(
     crate::spotify_decks::clear_account_sources(&app)?;
     background(service.inner().clone(), |s| s.disconnect()).await
 }
-#[tauri::command]
 pub async fn spotify_playlists(
     service: tauri::State<'_, SpotifyService>,
     offset: u64,
 ) -> Result<SpotifyPage<SpotifyPlaylist>, String> {
     background(service.inner().clone(), move |s| s.playlists(offset)).await
 }
-#[tauri::command]
 pub async fn spotify_liked_tracks(
+    app: tauri::AppHandle,
     service: tauri::State<'_, SpotifyService>,
     offset: u64,
 ) -> Result<SpotifyPage<SpotifyTrack>, String> {
-    background(service.inner().clone(), move |s| s.liked_tracks(offset)).await
+    let page = background(service.inner().clone(), move |s| s.liked_tracks(offset)).await?;
+    use tauri::Manager;
+    app.state::<crate::AppState>()
+        .library
+        .lock()
+        .map_err(|_| crate::poisoned())?
+        .remember_spotify_page("spotify:liked", &page)?;
+    Ok(page)
 }
-#[tauri::command]
 pub async fn spotify_playlist_tracks(
+    app: tauri::AppHandle,
     service: tauri::State<'_, SpotifyService>,
     playlist_id: String,
     offset: u64,
 ) -> Result<SpotifyPage<SpotifyTrack>, String> {
-    background(service.inner().clone(), move |s| {
+    let scope = format!("spotify:playlist:{playlist_id}");
+    let page = background(service.inner().clone(), move |s| {
         s.playlist_tracks(&playlist_id, offset)
     })
-    .await
+    .await?;
+    use tauri::Manager;
+    app.state::<crate::AppState>()
+        .library
+        .lock()
+        .map_err(|_| crate::poisoned())?
+        .remember_spotify_page(&scope, &page)?;
+    Ok(page)
 }
-#[tauri::command]
+// A new indexing request supersedes an older scan at the next page boundary.
+static MIX_INDEX_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+pub fn cancel_mix_scope_index() {
+    MIX_INDEX_GENERATION.fetch_add(1, Ordering::SeqCst);
+}
+
+/// Explicitly index a full provider collection without decoding or analysing audio.
+/// Each page is durable and emitted before the next network request, so partial progress
+/// remains inspectable after cancellation, rate limiting or a provider error.
+pub async fn index_mix_scope(
+    app: tauri::AppHandle,
+    scope: String,
+) -> Result<crate::library::PlannerCoverage, String> {
+    use tauri::{Emitter, Manager};
+    if scope != "spotify:liked"
+        && !scope
+            .strip_prefix("spotify:playlist:")
+            .is_some_and(valid_id)
+    {
+        return Err("Index scope must be spotify:liked or spotify:playlist:ID".into());
+    }
+    let generation = MIX_INDEX_GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+    let service = app.state::<SpotifyService>().inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let result = (|| {
+            let mut offset = 0;
+            for _ in 0..10_000 {
+                if MIX_INDEX_GENERATION.load(Ordering::SeqCst) != generation {
+                    return Err("Collection indexing cancelled".into());
+                }
+                let page = if scope == "spotify:liked" { service.liked_tracks(offset)? }
+                    else { service.playlist_tracks(scope.strip_prefix("spotify:playlist:").ok_or("Invalid playlist scope")?, offset)? };
+                if MIX_INDEX_GENERATION.load(Ordering::SeqCst) != generation {
+                    return Err("Collection indexing cancelled".into());
+                }
+                let coverage = {
+                    let state = app.state::<crate::AppState>();
+                    let library = state.library.lock().map_err(|_| crate::poisoned())?;
+                    if offset == 0 { library.refresh_spotify_scope(&scope, &page)?; }
+                    else { library.remember_spotify_page(&scope, &page)?; }
+                    library.planner_coverage(Some(&scope), None, None)?
+                };
+                let _ = app.emit("mix-index-progress", json!({"scope":scope,"status":"indexing","coverage":coverage}));
+                match page.next_offset {
+                    Some(next) if next > offset => offset = next,
+                    Some(_) => return Err("Spotify pagination did not advance".into()),
+                    None if coverage.complete => return Ok(coverage),
+                    None => return Err("Spotify ended pagination before the reported collection was fully indexed".into()),
+                }
+            }
+            Err("Collection indexing reached the 500,000 member limit".into())
+        })();
+        let _ = app.emit("mix-index-progress", json!({"scope":scope,"status":if result.is_ok(){"complete"}else{"stopped"},"error":result.as_ref().err()}));
+        result
+    }).await.map_err(|e|e.to_string())?
+}
+
 pub async fn spotify_album_tracks(
     service: tauri::State<'_, SpotifyService>,
     album_id: String,
@@ -1290,13 +1361,11 @@ pub async fn spotify_album_tracks(
     })
     .await
 }
-#[tauri::command]
 pub async fn spotify_devices(
     service: tauri::State<'_, SpotifyService>,
 ) -> Result<Vec<SpotifyDevice>, String> {
     background(service.inner().clone(), |s| s.devices()).await
 }
-#[tauri::command]
 pub async fn spotify_play(
     service: tauri::State<'_, SpotifyService>,
     uri: String,
@@ -1307,7 +1376,6 @@ pub async fn spotify_play(
     })
     .await
 }
-#[tauri::command]
 pub async fn spotify_pause(
     service: tauri::State<'_, SpotifyService>,
     device_id: Option<String>,
@@ -1588,6 +1656,13 @@ mod tests {
             });
         }
         assert_eq!(service.credential_account(&id), format!("native:{id}"));
+        // Streaming-only authorization has no /me account profile.
+        let status = service.status().unwrap();
+        assert!(status.account.is_none());
+        assert!(status.dj_streaming_available);
+        service.inner.lock().unwrap().token.as_mut().unwrap().scope = SCOPES.into();
+        assert!(!service.status().unwrap().dj_streaming_available);
+        service.inner.lock().unwrap().token.as_mut().unwrap().scope = "streaming".into();
         assert!(service
             .configure("0123456789abcdef0123456789abcdef")
             .is_err());

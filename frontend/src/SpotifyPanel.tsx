@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import {
   Check,
@@ -14,7 +15,9 @@ import {
   Settings2,
   X,
 } from "lucide-react";
-import { isDesktop, native } from "./api";
+import { isDesktop, control } from "./api";
+import VirtualTrackRows from "./VirtualTrackRows";
+import TrackArtwork from "./TrackArtwork";
 import { useControl } from "./control-bridge";
 import { controlString, controlBoolean, controlObject } from "./control-state";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -107,6 +110,8 @@ const formatTime = (ms: number) =>
     .padStart(2, "0")}`;
 
 function SpotifyPanel({
+  collectionHost,
+  onActivate,
   settingsOnly = false,
   compact = false,
   onLoadDeck,
@@ -115,6 +120,8 @@ function SpotifyPanel({
   controllerLayer,
   onBrowserPaneChange,
 }: {
+  collectionHost?: HTMLElement | null;
+  onActivate?: () => void;
   settingsOnly?: boolean;
   compact?: boolean;
   registerControllerBrowser?: (handle: ControllerBrowserHandle | null) => void;
@@ -212,6 +219,17 @@ function SpotifyPanel({
     updateCollectionSelection(id);
   }, []);
   const browserRoot = useRef<HTMLElement>(null);
+  const tracksPane = useRef<HTMLDivElement>(null);
+  const playlistsPane = useRef<HTMLElement>(null);
+  const playlistSentinel = useRef<HTMLDivElement>(null);
+  const playlistPending = useRef(false);
+  const trackPending = useRef<{ key: string; request: number } | null>(null);
+  const nextTrackPage = useRef<() => void>(() => {});
+  const loadMoreTracks = useCallback(() => nextTrackPage.current(), []);
+  const trackKey = useCallback(
+    (index: number) => `${tracks[index].uri}-${index}`,
+    [tracks],
+  );
   const browserHandler = useRef<
     (action: ControllerBrowserAction) => void | Promise<void>
   >(() => {});
@@ -233,7 +251,8 @@ function SpotifyPanel({
       controllerLayer === "home"
     )
       return;
-    const focusedId = collectionFocus ? collectionSelection : browserSelection;
+    if (!collectionFocus) return; // Virtual rows reveal off-screen track selections.
+    const focusedId = collectionSelection;
     if (!focusedId) {
       if (controllerLayer === "tracks")
         browserRoot.current
@@ -264,7 +283,7 @@ function SpotifyPanel({
   useEffect(() => {
     if (!isDesktop || !tracks.length) return;
     let disposed = false;
-    native<CachedAnalysis[]>("spotify_cached_analysis", {
+    control<CachedAnalysis[]>("spotify.analysis.get", {
       uris: tracks
         .slice(-100)
         .filter((t) => !t.is_local && t.available !== false)
@@ -298,7 +317,7 @@ function SpotifyPanel({
       })
       .catch(fail);
     const poll = () =>
-      native<BatchStatus>("spotify_analysis_status")
+      control<BatchStatus>("spotify.analysis.status")
         .then((status) => {
           if (!disposed) setBatch(status);
         })
@@ -318,7 +337,7 @@ function SpotifyPanel({
         .filter((t) => !t.is_local && t.available !== false)
         .map((t) => t.uri);
       if (!uris.length) return;
-      setBatch(await native<BatchStatus>("analyze_spotify_page", { uris }));
+      setBatch(await control<BatchStatus>("spotify.analysis.start", { uris }));
     } catch (e) {
       fail(e);
     }
@@ -326,9 +345,9 @@ function SpotifyPanel({
   const refreshStatus = useCallback(async () => {
     if (!isDesktop) return;
     try {
-      const next = await native<SpotifyStatus>("spotify_status");
+      const next = await control<SpotifyStatus>("spotify.status");
       setStatus(next);
-      const playback = await native<SpotifyStatus>("spotify_native_status");
+      const playback = await control<SpotifyStatus>("spotify.native.status");
       setNativeStatus(playback);
       if (next.client_id) setClientId((old) => old || next.client_id!);
       if (next.last_error) setError(next.last_error);
@@ -358,7 +377,7 @@ function SpotifyPanel({
   ]);
   const refreshDevices = useCallback(async () => {
     try {
-      const result = await native<SpotifyDevice[]>("spotify_devices");
+      const result = await control<SpotifyDevice[]>("spotify.devices");
       setDevices(result);
       setDeviceId((old) =>
         result.some((d) => d.id === old)
@@ -373,10 +392,12 @@ function SpotifyPanel({
   }, [fail]);
   const loadPlaylists = useCallback(
     async (offset = 0, throwErrors = false) => {
+      if (playlistPending.current) return;
+      playlistPending.current = true;
       setLoading(true);
       try {
-        const page = await native<SpotifyPage<SpotifyPlaylist>>(
-          "spotify_playlists",
+        const page = await control<SpotifyPage<SpotifyPlaylist>>(
+          "spotify.playlists",
           { offset },
         );
         setPlaylists((old) => (offset ? [...old, ...page.items] : page.items));
@@ -386,6 +407,7 @@ function SpotifyPanel({
         fail(e);
         if (throwErrors) throw e;
       } finally {
+        playlistPending.current = false;
         setLoading(false);
       }
     },
@@ -397,6 +419,24 @@ function SpotifyPanel({
       refreshDevices();
     }
   }, [status.connected, settingsOnly, loadPlaylists, refreshDevices]);
+  useEffect(() => {
+    const sentinel = playlistSentinel.current;
+    if (!sentinel || playlistOffset === null || loading || error) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting))
+          void loadPlaylists(playlistOffset);
+      },
+      {
+        root:
+          collectionHost?.closest(".controller-playlists-pane") ??
+          playlistsPane.current,
+        rootMargin: "300px",
+      },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [playlistOffset, loading, error, loadPlaylists, collectionHost]);
   async function openPlaylist(
     playlist: SpotifyPlaylist | "liked",
     offset = 0,
@@ -406,7 +446,10 @@ function SpotifyPanel({
     if (collectionFetchTimer.current !== null)
       clearTimeout(collectionFetchTimer.current);
     collectionFetchTimer.current = null;
+    const key = `${playlist === "liked" ? "liked" : playlist.id}:${offset}`;
+    if (offset && trackPending.current?.key === key) return;
     const request = ++generation.current;
+    trackPending.current = { key, request };
     if (!offset) {
       if (playlist === "liked" || !playlist.is_album)
         setCollectionSelection(playlist === "liked" ? "liked" : playlist.id);
@@ -422,17 +465,17 @@ function SpotifyPanel({
       setTrackTotal(0);
     }
     try {
-      const page = await native<SpotifyPage<SpotifyTrack>>(
+      const page = await control<SpotifyPage<SpotifyTrack>>(
         playlist === "liked"
-          ? "spotify_liked_tracks"
+          ? "spotify.liked"
           : playlist.is_album
-            ? "spotify_album_tracks"
-            : "spotify_playlist_tracks",
+            ? "spotify.album_tracks"
+            : "spotify.playlist_tracks",
         playlist === "liked"
           ? { offset }
           : playlist.is_album
-            ? { albumId: playlist.id, albumName: playlist.name, offset }
-            : { playlistId: playlist.id, offset },
+            ? { album_id: playlist.id, album_name: playlist.name, offset }
+            : { playlist_id: playlist.id, offset },
       );
       if (generation.current !== request) return;
       setTracks((old) => (offset ? [...old, ...page.items] : page.items));
@@ -448,9 +491,16 @@ function SpotifyPanel({
       if (generation.current === request) fail(e);
       if (throwErrors) throw e;
     } finally {
-      if (generation.current === request) setLoading(false);
+      if (generation.current === request) {
+        setLoading(false);
+        trackPending.current = null;
+      }
     }
   }
+  nextTrackPage.current = () => {
+    if (trackOffset !== null && selectedPlaylist && !loading && !error)
+      void openPlaylist(selectedPlaylist, trackOffset);
+  };
   useEffect(() => {
     if (!status.connected || settingsOnly || !collectionFocusRef.current)
       return;
@@ -552,7 +602,7 @@ function SpotifyPanel({
         else fail("This track has no browsable album.");
       } else if (!action.shifted) {
         if (!nativeStatus.connected) {
-          fail("Sign in to the native Spotify player before loading a deck.");
+          fail("Sign in to the control Spotify player before loading a deck.");
           return;
         }
         if (track.is_local || track.available === false) {
@@ -569,7 +619,7 @@ function SpotifyPanel({
     setBusy(true);
     setError("");
     try {
-      await native("spotify_configure", { clientId: clientId.trim() });
+      await control("spotify.configure", { client_id: clientId.trim() });
       await refreshStatus();
       setAuthorization(null);
     } catch (e) {
@@ -582,10 +632,10 @@ function SpotifyPanel({
     setBusy(true);
     setError("");
     try {
-      const result = await native<{
+      const result = await control<{
         authorization_url: string;
         redirect_uri: string;
-      }>("spotify_begin_login", { playback });
+      }>("spotify.login", { playback });
       setAuthorization(result);
       await refreshStatus();
     } catch (e) {
@@ -598,10 +648,10 @@ function SpotifyPanel({
     setBusy(true);
     setError("");
     try {
-      const result = await native<{
+      const result = await control<{
         authorization_url: string;
         redirect_uri: string;
-      }>("spotify_native_begin_login");
+      }>("spotify.native.login");
       setAuthorization(result);
       await refreshStatus();
     } catch (e) {
@@ -613,7 +663,7 @@ function SpotifyPanel({
   async function play(uri: string) {
     setError("");
     try {
-      await native("spotify_play", { uri, deviceId: deviceId || null });
+      await control("spotify.play", { uri, device_id: deviceId || null });
       setPlayingUri(uri);
     } catch (e) {
       fail(e);
@@ -622,7 +672,7 @@ function SpotifyPanel({
   async function pause() {
     setError("");
     try {
-      await native("spotify_pause", { deviceId: deviceId || null });
+      await control("spotify.pause", { device_id: deviceId || null });
       setPlayingUri("");
     } catch (e) {
       fail(e);
@@ -635,25 +685,23 @@ function SpotifyPanel({
       setup: (v) => setShowSetup(controlBoolean(v)),
       "client-id": (v) => setClientId(controlString(v)),
       configure: async () => {
-        await native("spotify_configure", { clientId: clientId.trim() });
+        await control("spotify.configure", { client_id: clientId.trim() });
         await refreshStatus();
       },
       login: async () => {
-        setAuthorization(
-          await native("spotify_begin_login", { playback: false }),
-        );
+        setAuthorization(await control("spotify.login", { playback: false }));
         await refreshStatus();
       },
-      "native-login": async () => {
-        setAuthorization(await native("spotify_native_begin_login"));
+      "control-login": async () => {
+        setAuthorization(await control("spotify.native.login"));
         await refreshStatus();
       },
       disconnect: async () => {
-        await native("spotify_disconnect");
+        await control("spotify.disconnect");
         await refreshStatus();
       },
-      "native-disconnect": async () => {
-        await native("spotify_native_disconnect");
+      "control-disconnect": async () => {
+        await control("spotify.native.disconnect");
         await refreshStatus();
       },
       "error-dismiss": () => setError(""),
@@ -717,9 +765,9 @@ function SpotifyPanel({
           .filter((t) => t.available && !t.is_local)
           .slice(0, 50)
           .map((t) => t.uri);
-        setBatch(await native("analyze_spotify_page", { uris }));
+        setBatch(await control("spotify.analysis.start", { uris }));
       },
-      "analysis-cancel": () => native("cancel_spotify_analysis"),
+      "analysis-cancel": () => control("spotify.analysis.cancel"),
       device: (v) => {
         const id = controlString(v);
         if (id && !devices.some((d) => d.id === id))
@@ -729,11 +777,11 @@ function SpotifyPanel({
       "devices-refresh": refreshDevices,
       play: async (v) => {
         const uri = controlString(v);
-        await native("spotify_play", { uri, deviceId: deviceId || null });
+        await control("spotify.play", { uri, device_id: deviceId || null });
         setPlayingUri(uri);
       },
       pause: async () => {
-        await native("spotify_pause", { deviceId: deviceId || null });
+        await control("spotify.pause", { device_id: deviceId || null });
         setPlayingUri("");
       },
       "widget-link": (v) => setWidgetLink(controlString(v)),
@@ -775,6 +823,68 @@ function SpotifyPanel({
       batch,
     },
   );
+  const collectionTree = (
+    <aside
+      className={`controller-playlists-pane ${collectionFocus && controllerLayer !== "close" ? "pane-active" : ""}`}
+      aria-label="Spotify playlists"
+      ref={playlistsPane}
+    >
+      <div className="browser-pane-heading">
+        COLLECTIONS{" "}
+        <button
+          className="subtle"
+          onClick={() => loadPlaylists()}
+          disabled={loading}
+        >
+          <RefreshCw size={12} />
+        </button>
+      </div>
+      <button
+        className={`spotify-playlist liked ${collectionSelection === "liked" ? "controller-selected" : ""}`}
+        data-browser-id="liked"
+        aria-pressed={collectionSelection === "liked"}
+        onClick={() => {
+          onActivate?.();
+          setCollectionFocus(true);
+          onBrowserPaneChange?.("playlists");
+          setCollectionSelection("liked");
+          void openPlaylist("liked", 0, false);
+        }}
+      >
+        <Heart size={16} />
+        <strong>Liked songs</strong>
+      </button>
+      {playlists.map((p) => (
+        <button
+          key={p.id}
+          className={`spotify-playlist ${collectionSelection === p.id ? "controller-selected" : ""}`}
+          title={
+            p.total !== null
+              ? `${p.name} · ${p.total} track${p.total === 1 ? "" : "s"}`
+              : p.name
+          }
+          data-browser-id={p.id}
+          aria-pressed={collectionSelection === p.id}
+          onClick={() => {
+            onActivate?.();
+            setCollectionFocus(true);
+            onBrowserPaneChange?.("playlists");
+            setCollectionSelection(p.id);
+            void openPlaylist(p, 0, false);
+          }}
+        >
+          <TrackArtwork url={p.artwork_url} />
+          <strong>{p.name}</strong>
+          <span>{p.total ?? ""}</span>
+        </button>
+      ))}
+      {playlistOffset !== null && (
+        <div ref={playlistSentinel} role="status" className="infinite-status">
+          {loading ? "Loading playlists…" : ""}
+        </div>
+      )}
+    </aside>
+  );
   return (
     <section
       ref={browserRoot}
@@ -788,7 +898,7 @@ function SpotifyPanel({
             </span>
             <div>
               <h2>Spotify library</h2>
-              <p>Experimental native deck loading · Spotify Connect</p>
+              <p>Experimental control deck loading · Spotify Connect</p>
             </div>
           </div>
           <div>
@@ -815,8 +925,8 @@ function SpotifyPanel({
       {!compact && (
         <p className="spotify-boundary">
           <Headphones size={14} />
-          Load A / B prepares a track for the native decks after a separate
-          native-player sign-in. Use the deck controls above once loading
+          Load A / B prepares a track for the control decks after a separate
+          control-player sign-in. Use the deck controls above once loading
           completes. Connect plays on the selected Spotify device.
         </p>
       )}
@@ -843,7 +953,7 @@ function SpotifyPanel({
                 }
                 onClick={loginNative}
               >
-                Sign in to native player
+                Sign in to control player
               </button>
             )}
             {nativeStatus.last_error && <span>{nativeStatus.last_error}</span>}
@@ -899,7 +1009,7 @@ function SpotifyPanel({
                   : "Connect your Spotify account"}
               </h3>
               <p>
-                OAuth with PKCE. Your account tokens stay in the native app.
+                OAuth with PKCE. Your account tokens stay in the control app.
               </p>
             </div>
           </div>
@@ -931,7 +1041,7 @@ function SpotifyPanel({
           {status.connected && (
             <p>
               Library account connected. Native playback uses a separate Spotify
-              consent through librespot's built-in native client and requests
+              consent through librespot's built-in control client and requests
               streaming permission. Use the same Premium account for both
               sign-ins. Native playback remains experimental.
             </p>
@@ -984,8 +1094,8 @@ function SpotifyPanel({
               >
                 <ExternalLink size={13} />
                 {nativeStatus.connected
-                  ? "Reauthorize native player"
-                  : "Sign in to native player"}
+                  ? "Reauthorize control player"
+                  : "Sign in to control player"}
               </button>
             )}
             {status.connected && (
@@ -993,7 +1103,7 @@ function SpotifyPanel({
                 className="secondary"
                 onClick={async () => {
                   try {
-                    await native("spotify_disconnect");
+                    await control("spotify.disconnect");
                     setPlayingUri("");
                     setTracks([]);
                     setPlaylists([]);
@@ -1017,19 +1127,19 @@ function SpotifyPanel({
               className="secondary"
               onClick={async () => {
                 try {
-                  await native("spotify_native_disconnect");
+                  await control("spotify.native.disconnect");
                   await refreshStatus();
                 } catch (e) {
                   fail(e);
                 }
               }}
             >
-              Disconnect native player
+              Disconnect control player
             </button>
           )}
           {nativeStatus.authorizing && (
             <p>
-              Complete the separate native-player Spotify consent in your
+              Complete the separate control-player Spotify consent in your
               browser, then return here.
             </p>
           )}
@@ -1083,7 +1193,7 @@ function SpotifyPanel({
           )}
           {!isDesktop && (
             <p className="help-text">
-              Open the native desktop app to connect your account.
+              Open the control desktop app to connect your account.
             </p>
           )}
         </div>
@@ -1137,70 +1247,13 @@ function SpotifyPanel({
           )}
 
           <div className="controller-browser-split">
-            <aside
-              className={`controller-playlists-pane ${collectionFocus && controllerLayer !== "close" ? "pane-active" : ""}`}
-              aria-label="Spotify playlists"
-            >
-              <div className="browser-pane-heading">
-                PLAYLISTS{" "}
-                <button
-                  className="subtle"
-                  onClick={() => loadPlaylists()}
-                  disabled={loading}
-                >
-                  <RefreshCw size={12} />
-                </button>
-              </div>
-              <button
-                className={`spotify-playlist liked ${collectionSelection === "liked" ? "controller-selected" : ""}`}
-                data-browser-id="liked"
-                aria-pressed={collectionSelection === "liked"}
-                onClick={() => {
-                  setCollectionFocus(true);
-                  onBrowserPaneChange?.("playlists");
-                  setCollectionSelection("liked");
-                  void openPlaylist("liked", 0, false);
-                }}
-              >
-                <Heart size={16} />
-                <strong>Liked songs</strong>
-              </button>
-              {playlists.map((p) => (
-                <button
-                  key={p.id}
-                  className={`spotify-playlist ${collectionSelection === p.id ? "controller-selected" : ""}`}
-                  title={
-                    p.total !== null
-                      ? `${p.name} · ${p.total} track${p.total === 1 ? "" : "s"}`
-                      : p.name
-                  }
-                  data-browser-id={p.id}
-                  aria-pressed={collectionSelection === p.id}
-                  onClick={() => {
-                    setCollectionFocus(true);
-                    onBrowserPaneChange?.("playlists");
-                    setCollectionSelection(p.id);
-                    void openPlaylist(p, 0, false);
-                  }}
-                >
-                  <Music2 size={16} />
-                  <strong>{p.name}</strong>
-                  <span>{p.total ?? ""}</span>
-                </button>
-              ))}
-              {playlistOffset !== null && (
-                <button
-                  className="secondary"
-                  disabled={loading}
-                  onClick={() => loadPlaylists(playlistOffset)}
-                >
-                  More playlists
-                </button>
-              )}
-            </aside>
+            {collectionHost
+              ? createPortal(collectionTree, collectionHost)
+              : collectionTree}
             <div
               className={`controller-tracks-pane ${!collectionFocus && controllerLayer !== "close" ? "pane-active" : ""}`}
               data-browser-pane="spotify-tracks"
+              ref={tracksPane}
               tabIndex={-1}
               onPointerDown={() => {
                 setCollectionFocus(false);
@@ -1246,10 +1299,11 @@ function SpotifyPanel({
                     {batch.active ? (
                       <span role="status">
                         <LoaderCircle size={12} className="spin" />{" "}
-                        {batch.completed} / {batch.total}
+                        {batch.completed} / {batch.total} processed
+                        {batch.cached > 0 ? ` · ${batch.cached} reused` : ""}
                         <button
                           onClick={() =>
-                            native("cancel_spotify_analysis").catch(fail)
+                            control("spotify.analysis.cancel").catch(fail)
                           }
                         >
                           Cancel
@@ -1259,12 +1313,15 @@ function SpotifyPanel({
                       <span role="status">
                         {batch.cancelled ? "Cancelled · " : ""}
                         {batch.completed} / {batch.total} processed
+                        {batch.cached > 0 ? ` · ${batch.cached} reused` : ""}
                         {batch.failed
                           ? ` · ${batch.failed} failed`
-                          : " · cached"}
+                          : " · analysis saved"}
                       </span>
                     ) : (
-                      <span>Analyzed songs are saved for next time</span>
+                      <span title="Loading a deck prepares playback audio and reuses current saved analysis.">
+                        Analysis saved between app launches
+                      </span>
                     )}
                   </div>
                   {batch.last_error && (
@@ -1273,178 +1330,204 @@ function SpotifyPanel({
                     </p>
                   )}
                   <div className="spotify-tracks">
-                    <table className="track-table">
+                    <table role="table" className="track-table">
                       <thead>
-                        <tr>
-                          <th>#</th>
-                          <th>TRACK / ARTIST</th>
-                          <th>ALBUM</th>
-                          <th>BPM</th>
-                          <th>KEY</th>
-                          <th>TIME</th>
-                          <th>PLAYBACK</th>
+                        <tr role="row">
+                          <th role="columnheader">#</th>
+                          <th role="columnheader">TRACK / ARTIST</th>
+                          <th role="columnheader">ALBUM</th>
+                          <th role="columnheader">BPM</th>
+                          <th role="columnheader">KEY</th>
+                          <th role="columnheader">TIME</th>
+                          <th role="columnheader">PLAYBACK</th>
                         </tr>
                       </thead>
-                      <tbody>
-                        {tracks.map((track, i) => (
-                          <tr
-                            key={`${track.id}-${i}`}
-                            data-browser-id={track.uri}
-                            tabIndex={-1}
-                            aria-selected={browserSelection === track.uri}
-                            onClick={() => {
-                              setBrowserSelection(track.uri);
-                              setCollectionFocus(false);
-                            }}
-                            draggable={
-                              nativeStatus.connected &&
-                              !!onLoadDeck &&
-                              track.available !== false &&
-                              !track.is_local
-                            }
-                            onDragStart={(e) => {
-                              e.dataTransfer.effectAllowed = "copy";
-                              e.dataTransfer.setData(
-                                "application/pulsedeck-spotify-track",
-                                JSON.stringify(track),
-                              );
-                            }}
-                            className={[
-                              browserSelection === track.uri
-                                ? "selected controller-selected"
-                                : "",
-                              playingUri === track.uri
-                                ? "spotify-commanded"
-                                : "",
-                            ]
-                              .filter(Boolean)
-                              .join(" ")}
-                          >
-                            <td className="track-number">{i + 1}</td>
-                            <td>
-                              <div className="track-cell">
-                                <Music2 size={15} />
-                                <div>
-                                  <strong>{track.title}</strong>
-                                  <span>{track.artists.join(", ")}</span>
+                      <VirtualTrackRows
+                        count={tracks.length}
+                        getKey={trackKey}
+                        scrollRef={tracksPane}
+                        selectedIndex={tracks.findIndex(
+                          (t) => t.uri === browserSelection,
+                        )}
+                        focusSelection={
+                          !collectionFocus && controllerLayer === "tracks"
+                        }
+                        queryKey={
+                          selectedPlaylist === "liked"
+                            ? "liked"
+                            : selectedPlaylist.id
+                        }
+                        hasMore={trackOffset !== null}
+                        loading={loading}
+                        onMore={loadMoreTracks}
+                      >
+                        {(i, measure) => {
+                          const track = tracks[i];
+                          return (
+                            <tr
+                              ref={measure}
+                              data-index={i}
+                              aria-rowindex={i + 2}
+                              key={`${track.id}-${i}`}
+                              data-browser-id={track.uri}
+                              tabIndex={-1}
+                              aria-selected={browserSelection === track.uri}
+                              onClick={() => {
+                                setBrowserSelection(track.uri);
+                                setCollectionFocus(false);
+                              }}
+                              draggable={
+                                nativeStatus.connected &&
+                                !!onLoadDeck &&
+                                track.available !== false &&
+                                !track.is_local
+                              }
+                              onDragStart={(e) => {
+                                e.dataTransfer.effectAllowed = "copy";
+                                e.dataTransfer.setData(
+                                  "application/pulsedeck-spotify-track",
+                                  JSON.stringify(track),
+                                );
+                              }}
+                              className={[
+                                browserSelection === track.uri
+                                  ? "selected controller-selected"
+                                  : "",
+                                playingUri === track.uri
+                                  ? "spotify-commanded"
+                                  : "",
+                              ]
+                                .filter(Boolean)
+                                .join(" ")}
+                            >
+                              <td className="track-number">{i + 1}</td>
+                              <td>
+                                <div className="track-cell">
+                                  <TrackArtwork url={track.artwork_url} />
+                                  <div>
+                                    <strong>{track.title}</strong>
+                                    <span>{track.artists.join(", ")}</span>
+                                  </div>
                                 </div>
-                              </div>
-                            </td>
-                            <td className="spotify-album">
-                              {track.album_id ? (
+                              </td>
+                              <td className="spotify-album">
+                                {track.album_id ? (
+                                  <button
+                                    className="album-link"
+                                    onClick={() =>
+                                      openPlaylist({
+                                        id: track.album_id!,
+                                        name: track.album,
+                                        total: null,
+                                        external_url: "",
+                                        is_album: true,
+                                        collaborative: false,
+                                      })
+                                    }
+                                  >
+                                    {track.album}
+                                  </button>
+                                ) : (
+                                  track.album
+                                )}
+                              </td>
+                              <td
+                                className="numeric cached-tempo"
+                                title={
+                                  cachedAnalysis[track.uri]?.bpm_ambiguous
+                                    ? "Estimated BPM; rhythm subdivisions are ambiguous"
+                                    : cachedAnalysis[track.uri]
+                                      ? "Cached analysis"
+                                      : "Load or analyze this song to detect BPM"
+                                }
+                              >
+                                {cachedAnalysis[track.uri]?.bpm?.toFixed(2) ||
+                                  "—"}
+                                {cachedAnalysis[track.uri]?.bpm_ambiguous && (
+                                  <small>~</small>
+                                )}
+                              </td>
+                              <td
+                                className="numeric cached-key"
+                                title={
+                                  cachedAnalysis[track.uri]?.key ||
+                                  "Load or analyze this song to detect key"
+                                }
+                              >
+                                {cachedAnalysis[track.uri]?.camelot ||
+                                  cachedAnalysis[track.uri]?.key ||
+                                  "—"}
+                              </td>
+                              <td className="numeric">
+                                {formatTime(track.duration_ms)}
+                              </td>
+                              <td className="spotify-track-actions">
                                 <button
-                                  className="album-link"
+                                  className="spotify-play load-a"
+                                  aria-label="Load on deck A"
+                                  disabled={
+                                    !nativeStatus.connected ||
+                                    !onLoadDeck ||
+                                    deckJobs[0]?.preparing ||
+                                    track.available === false ||
+                                    track.is_local
+                                  }
                                   onClick={() =>
-                                    openPlaylist({
-                                      id: track.album_id!,
-                                      name: track.album,
-                                      total: null,
-                                      external_url: "",
-                                      is_album: true,
-                                      collaborative: false,
+                                    onLoadDeck?.(0, track).catch(fail)
+                                  }
+                                  title="Prepare playback audio for deck A; reuse current saved analysis"
+                                >
+                                  A
+                                </button>
+                                <button
+                                  className="spotify-play load-b"
+                                  aria-label="Load on deck B"
+                                  disabled={
+                                    !nativeStatus.connected ||
+                                    !onLoadDeck ||
+                                    deckJobs[1]?.preparing ||
+                                    track.available === false ||
+                                    track.is_local
+                                  }
+                                  onClick={() =>
+                                    onLoadDeck?.(1, track).catch(fail)
+                                  }
+                                  title="Prepare playback audio for deck B; reuse current saved analysis"
+                                >
+                                  B
+                                </button>
+                                <button
+                                  className="spotify-play"
+                                  disabled={
+                                    !deviceId || track.available === false
+                                  }
+                                  onClick={() => play(track.uri)}
+                                  title="Play on selected Spotify device"
+                                >
+                                  <Play size={12} />
+                                  {playingUri === track.uri
+                                    ? "Sent"
+                                    : "Connect"}
+                                </button>
+                                <button
+                                  className="spotify-widget-button"
+                                  disabled={!spotifyWidgetUrl(track.id)}
+                                  title="Open the official Spotify player"
+                                  onClick={() =>
+                                    setWidgetTrack({
+                                      id: track.id,
+                                      title: `Spotify — ${track.title}`,
                                     })
                                   }
                                 >
-                                  {track.album}
+                                  <Play size={11} />
+                                  Widget
                                 </button>
-                              ) : (
-                                track.album
-                              )}
-                            </td>
-                            <td
-                              className="numeric cached-tempo"
-                              title={
-                                cachedAnalysis[track.uri]?.bpm_ambiguous
-                                  ? "Estimated BPM; rhythm subdivisions are ambiguous"
-                                  : cachedAnalysis[track.uri]
-                                    ? "Cached analysis"
-                                    : "Load or analyze this song to detect BPM"
-                              }
-                            >
-                              {cachedAnalysis[track.uri]?.bpm?.toFixed(2) ||
-                                "—"}
-                              {cachedAnalysis[track.uri]?.bpm_ambiguous && (
-                                <small>~</small>
-                              )}
-                            </td>
-                            <td
-                              className="numeric cached-key"
-                              title={
-                                cachedAnalysis[track.uri]?.key ||
-                                "Load or analyze this song to detect key"
-                              }
-                            >
-                              {cachedAnalysis[track.uri]?.camelot ||
-                                cachedAnalysis[track.uri]?.key ||
-                                "—"}
-                            </td>
-                            <td className="numeric">
-                              {formatTime(track.duration_ms)}
-                            </td>
-                            <td className="spotify-track-actions">
-                              <button
-                                className="spotify-play load-a"
-                                aria-label="Load on deck A"
-                                disabled={
-                                  !nativeStatus.connected ||
-                                  !onLoadDeck ||
-                                  deckJobs[0]?.preparing ||
-                                  track.available === false ||
-                                  track.is_local
-                                }
-                                onClick={() =>
-                                  onLoadDeck?.(0, track).catch(fail)
-                                }
-                                title="Prepare audio for native deck A"
-                              >
-                                A
-                              </button>
-                              <button
-                                className="spotify-play load-b"
-                                aria-label="Load on deck B"
-                                disabled={
-                                  !nativeStatus.connected ||
-                                  !onLoadDeck ||
-                                  deckJobs[1]?.preparing ||
-                                  track.available === false ||
-                                  track.is_local
-                                }
-                                onClick={() =>
-                                  onLoadDeck?.(1, track).catch(fail)
-                                }
-                                title="Prepare audio for native deck B"
-                              >
-                                B
-                              </button>
-                              <button
-                                className="spotify-play"
-                                disabled={
-                                  !deviceId || track.available === false
-                                }
-                                onClick={() => play(track.uri)}
-                                title="Play on selected Spotify device"
-                              >
-                                <Play size={12} />
-                                {playingUri === track.uri ? "Sent" : "Connect"}
-                              </button>
-                              <button
-                                className="spotify-widget-button"
-                                disabled={!spotifyWidgetUrl(track.id)}
-                                title="Open the official Spotify player"
-                                onClick={() =>
-                                  setWidgetTrack({
-                                    id: track.id,
-                                    title: `Spotify — ${track.title}`,
-                                  })
-                                }
-                              >
-                                <Play size={11} />
-                                Widget
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
+                              </td>
+                            </tr>
+                          );
+                        }}
+                      </VirtualTrackRows>
                     </table>
                     {!tracks.length && !loading && (
                       <p className="spotify-empty">
@@ -1452,17 +1535,6 @@ function SpotifyPanel({
                       </p>
                     )}
                   </div>
-                  {trackOffset !== null && (
-                    <button
-                      className="spotify-more secondary"
-                      disabled={loading}
-                      onClick={() =>
-                        openPlaylist(selectedPlaylist, trackOffset)
-                      }
-                    >
-                      Load more tracks
-                    </button>
-                  )}
                 </>
               ) : (
                 <p className="spotify-empty">

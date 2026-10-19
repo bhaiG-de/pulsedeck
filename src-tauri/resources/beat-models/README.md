@@ -16,7 +16,7 @@ contains both model files. These assets are not downloaded during playback.
 `PULSEDECK_BEAT_MODEL_DIR` overrides the asset directory. The development fallback
 is this folder, resolved from the audio-analysis crate. The packaged app must set
 the override to its resolved resource folder before initializing neural analysis.
-`PULSEDECK_BEAT_THREADS` sets a private RTen model pool (1–8 threads, default 2).
+`PULSEDECK_BEAT_THREADS` sets a private RTen model pool (1–16 threads; default available cores minus six, clamped to 1–12).
 It does not change process-global Rayon/RTen configuration. Loading and inference
 must run on background workers; successful loading is retained and inference is
 serialized across decks. Missing assets are retryable after installation.

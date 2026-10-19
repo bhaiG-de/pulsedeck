@@ -4,24 +4,44 @@
 mod automation_tests;
 mod decode;
 mod dsp;
+mod effects;
+mod embedded_metadata;
 mod grid;
 mod model;
+mod processor;
+mod protection;
+#[cfg(test)]
+mod quality_tests;
+#[cfg(test)]
+mod real_library_tests;
 mod recording;
+mod scheduled;
+#[cfg(test)]
+mod scheduled_tests;
 mod snapshot;
-mod stretch;
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
     SampleFormat, StreamConfig,
 };
 use decode::TrackData;
 pub use decode::{
-    analyze_beats_and_sections, analyze_file, analyze_file_cached_with_sections,
-    analyze_file_with_beat_model, apply_beat_model, refresh_sections, AudioSourceInfo,
+    analysis_cache_counts, analysis_current, analyze_beats, analyze_file, analyze_file_cached,
+    analyze_file_with_beat_model, analyze_pcm_cached as analyze_decoded_audio_cached,
+    apply_beat_model, beat_stage_current, embedded_artwork, playback_analysis_ready, probe_file,
+    take_analysis_diagnostics, AnalysisDiagnostics, AudioSourceInfo,
 };
 use dsp::Mixer;
+pub use embedded_metadata::{read_file_metadata, write_file_metadata, EmbeddedTag};
 pub use model::*;
 pub use recording::RecordingStatus;
 use rtrb::{Consumer, Producer, RingBuffer};
+pub use scheduled::{
+    command_decks, command_queue_supported, event_seconds, validate_command_group,
+    validate_queue_timing, BatchEventReceipt, BatchLifecycle, BatchPatchReceipt, BatchPrerequisite,
+    BatchQueuePatch, BatchReason, BatchRecovery, BatchSchedule, CommandFailure,
+    CommandFailureCause, CommandQueuePatch, QueueTiming, QueuedCommand, ScheduledBatchSnapshot,
+    ScheduledCommand, ScheduledQueueAction,
+};
 use snapshot::SnapshotAtoms;
 use std::{
     path::Path,
@@ -35,7 +55,18 @@ use std::{
 pub use symphonia::core::io::MediaSource as EncodedAudioSource;
 
 const QUEUE_CAPACITY: usize = 1024;
+/// Validate a complete scheduled transition against a captured engine state.
+/// This performs the same compilation checks as arming, without an audio device.
+pub fn validate_scheduled_plan(
+    schedule: &BatchSchedule,
+    commands: Vec<ScheduledCommand>,
+    snapshot: &EngineSnapshot,
+) -> Result<(), String> {
+    scheduled::compile(0, schedule, commands, snapshot).map(|_| ())
+}
+
 /// Opaque generation captured before an asynchronous provider begins preparing.
+#[derive(Clone)]
 pub struct SourceLoadTicket {
     deck: usize,
     generation: u64,
@@ -45,21 +76,34 @@ enum Retired {
     Grid(Arc<audio_analysis::NeuralRhythm>),
     Track(Arc<TrackData>),
     Recorder(recording::Recorder),
+    Batch(Box<scheduled::NativeBatch>),
+    BatchPatch(Box<scheduled::CompiledQueuePatch>),
 }
 // Cue arrays stay inline so the audio callback allocates and frees nothing.
 #[allow(clippy::large_enum_variant)]
 enum RenderCommand {
-    AutoCues {
-        deck: usize,
-        revision: u64,
-        hot: ([Option<f64>; 8], [Option<f64>; 8]),
-        memory: ([Option<f64>; 10], [Option<f64>; 10]),
+    ArmBatch(Box<scheduled::NativeBatch>),
+    PatchBatch(Box<scheduled::CompiledQueuePatch>),
+    CancelBatch {
+        id: u64,
+        stabilize: bool,
     },
     Fence(u64),
     UpdateGrid {
         deck: usize,
         revision: u64,
         grid: Arc<audio_analysis::NeuralRhythm>,
+    },
+    AnalysisComplete {
+        deck: usize,
+        revision: u64,
+    },
+    UpdateBaseGrid {
+        deck: usize,
+        revision: u64,
+        bpm: Option<f64>,
+        offset: Option<f64>,
+        valid: bool,
     },
     Unload {
         revision: u64,
@@ -70,6 +114,13 @@ enum RenderCommand {
         command: EngineCommand,
         deck: usize,
         revision: u64,
+        control_revision: Option<u64>,
+        receipt_ticket: Option<u64>,
+    },
+    SessionEndpoint {
+        engine_epoch: u64,
+        control_revision: u64,
+        receipt_ticket: u64,
     },
     Load {
         revision: u64,
@@ -80,20 +131,9 @@ enum RenderCommand {
         revision: u64,
         deck: usize,
         track: Arc<TrackData>,
-        generation: u64,
     },
     LoadSample {
         slot: usize,
-        track: Arc<TrackData>,
-    },
-    PreparationTarget {
-        deck: usize,
-        generation: u64,
-    },
-    Prepared {
-        deck: usize,
-        generation: u64,
-        rate: f64,
         track: Arc<TrackData>,
     },
     StartRecording(recording::Recorder),
@@ -119,25 +159,17 @@ impl RenderState {
                 break;
             };
             match command {
-                RenderCommand::AutoCues {
-                    deck,
-                    revision,
-                    hot,
-                    memory,
-                } => {
-                    if self.mixer.load_revisions[deck] == revision {
-                        let d = &mut self.mixer.decks[deck];
-                        for i in 0..8 {
-                            if d.hot_cues[i] == hot.0[i] {
-                                d.hot_cues[i] = hot.1[i];
-                            }
-                        }
-                        // A memory edit can reorder all slots. Skip this update when
-                        // any slot changed, preserving the DJ's whole memory list.
-                        if d.memory_cues == memory.0 {
-                            d.memory_cues = memory.1;
-                        }
+                RenderCommand::ArmBatch(batch) => {
+                    if let Some(old) = self.mixer.arm_batch(batch) {
+                        let _ = self.retired.push(Retired::Batch(old));
                     }
+                }
+                RenderCommand::PatchBatch(patch) => {
+                    let patch = self.mixer.patch_batch(patch);
+                    let _ = self.retired.push(Retired::BatchPatch(patch));
+                }
+                RenderCommand::CancelBatch { id, stabilize } => {
+                    self.mixer.cancel_batch(id, stabilize)
                 }
                 RenderCommand::UpdateGrid {
                     deck,
@@ -150,6 +182,22 @@ impl RenderState {
                         }
                     } else {
                         let _ = self.retired.push(Retired::Grid(grid));
+                    }
+                }
+                RenderCommand::AnalysisComplete { deck, revision } => {
+                    if self.mixer.load_revisions[deck] == revision {
+                        self.mixer.decks[deck].analysis_pending = false;
+                    }
+                }
+                RenderCommand::UpdateBaseGrid {
+                    deck,
+                    revision,
+                    bpm,
+                    offset,
+                    valid,
+                } => {
+                    if self.mixer.load_revisions[deck] == revision {
+                        self.mixer.update_base_grid(deck, bpm, offset, valid);
                     }
                 }
                 RenderCommand::Fence(sequence) => self.mixer.applied_fence = sequence,
@@ -167,10 +215,36 @@ impl RenderState {
                     command,
                     deck,
                     revision,
+                    control_revision,
+                    receipt_ticket,
                 } => {
-                    if self.mixer.load_revisions[deck] == revision {
+                    let mut accepted = self.mixer.load_revisions[deck] == revision
+                        && control_revision.is_none_or(|r| r == self.mixer.control_revision);
+                    if accepted {
+                        let before = self.mixer.control_revision;
                         self.mixer.command(command);
+                        accepted = self.mixer.control_revision == before.wrapping_add(1);
                     }
+                    if let Some(ticket) = receipt_ticket {
+                        self.mixer.guarded_control_receipts[ticket as usize % 64] =
+                            (ticket << 2) | if accepted { 1 } else { 2 };
+                    }
+                }
+                RenderCommand::SessionEndpoint {
+                    engine_epoch,
+                    control_revision,
+                    receipt_ticket,
+                } => {
+                    let accepted = self.mixer.engine_epoch == engine_epoch
+                        && self.mixer.control_revision == control_revision;
+                    if accepted {
+                        for deck in 0..2 {
+                            self.mixer.command(EngineCommand::CancelLaunch { deck });
+                            self.mixer.command(EngineCommand::Pause { deck });
+                        }
+                    }
+                    self.mixer.guarded_control_receipts[receipt_ticket as usize % 64] =
+                        (receipt_ticket << 2) | if accepted { 1 } else { 2 };
                 }
                 RenderCommand::Load {
                     deck,
@@ -187,9 +261,6 @@ impl RenderState {
                             let _ = self.retired.push(Retired::Recorder(old));
                         }
                     }
-                    if let Some(previous) = self.mixer.decks[deck].prepared.take() {
-                        let _ = self.retired.push(Retired::Track(previous));
-                    }
                     if let Some(previous) = self.mixer.load(deck, track) {
                         let _ = self.retired.push(Retired::Track(previous));
                     }
@@ -198,7 +269,6 @@ impl RenderState {
                     revision,
                     deck,
                     track,
-                    generation,
                 } => {
                     if let Some(old) = self.mixer.decks[deck].grid.take() {
                         let _ = self.retired.push(Retired::Grid(old));
@@ -210,21 +280,18 @@ impl RenderState {
                         }
                     }
                     self.mixer.load_revisions[deck] = revision;
-                    for old in self
-                        .mixer
-                        .instant_double(deck, track, generation)
-                        .into_iter()
-                        .flatten()
-                    {
+                    for old in self.mixer.instant_double(deck, track).into_iter().flatten() {
                         let _ = self.retired.push(Retired::Track(old));
                     }
                 }
                 RenderCommand::StartRecording(recorder) => {
-                    if self.mixer.decks.iter().any(|d| {
-                        d.track
-                            .as_ref()
-                            .is_some_and(|t| !t.analysis.recording_allowed)
-                    }) {
+                    if self.mixer.main_fx.iter().any(|fx| fx.restricted)
+                        || self.mixer.decks.iter().any(|d| {
+                            d.track
+                                .as_ref()
+                                .is_some_and(|t| !t.analysis.recording_allowed)
+                        })
+                    {
                         recorder.stats.active.store(false, Ordering::Release);
                         let _ = self.retired.push(Retired::Recorder(recorder));
                         continue;
@@ -245,27 +312,6 @@ impl RenderState {
                     self.mixer.sample_positions[slot] = None;
                     let _ = self.retired.push(Retired::Track(previous));
                 }
-                RenderCommand::PreparationTarget { deck, generation } => {
-                    self.mixer.decks[deck].preparation_generation = generation
-                }
-                RenderCommand::Prepared {
-                    deck,
-                    generation,
-                    rate,
-                    track,
-                } => {
-                    let d = &mut self.mixer.decks[deck];
-                    if d.preparation_generation == generation {
-                        if let Some(old) = d.prepared.replace(track) {
-                            let _ = self.retired.push(Retired::Track(old));
-                        }
-                        d.prepared_generation = generation;
-                        d.prepared_rate = rate;
-                        d.fade_in();
-                    } else {
-                        let _ = self.retired.push(Retired::Track(track));
-                    }
-                }
             }
         }
     }
@@ -274,19 +320,39 @@ impl RenderState {
         output: &mut [T],
         atoms: &SnapshotAtoms,
     ) {
+        let started = std::time::Instant::now();
         self.drain();
+        self.mixer.quality.master_input_peak = [0.; 2];
+        self.mixer.quality.cue_input_peak = [0.; 2];
         let channels = self.channels as usize;
         let mut master_peak = [0.0_f32; 2];
         let mut cue_peak = [0.0_f32; 2];
         let mut deck_peak = [[0.0_f32; 2]; 2];
         for frame in output.chunks_exact_mut(channels) {
-            let (master, cue) = self.mixer.frame();
+            let (raw_master, raw_cue) = self.mixer.frame();
+            let master_input = raw_master.map(|v| v * protection::HEADROOM);
+            let cue_input = raw_cue.map(|v| v * protection::HEADROOM);
+            for c in 0..2 {
+                if master_input[c].is_finite() {
+                    self.mixer.quality.master_input_peak[c] =
+                        self.mixer.quality.master_input_peak[c].max(master_input[c].abs());
+                }
+                if cue_input[c].is_finite() {
+                    self.mixer.quality.cue_input_peak[c] =
+                        self.mixer.quality.cue_input_peak[c].max(cue_input[c].abs());
+                }
+            }
+            let master = self
+                .mixer
+                .master_protection
+                .frame(master_input, self.mixer.sample_rate);
+            let cue = self
+                .mixer
+                .cue_protection
+                .frame(cue_input, self.mixer.sample_rate);
             if let Some(recorder) = self.recording.as_mut() {
                 if recorder.stats.active.load(Ordering::Relaxed)
-                    && recorder
-                        .producer
-                        .push([master[0].clamp(-1.0, 1.0), master[1].clamp(-1.0, 1.0)])
-                        .is_err()
+                    && recorder.producer.push(master).is_err()
                 {
                     recorder.stats.dropped.fetch_add(1, Ordering::Relaxed);
                 }
@@ -312,6 +378,25 @@ impl RenderState {
         }
         for (deck, peak) in deck_peak.iter().enumerate() {
             self.mixer.decks[deck].peak = *peak;
+        }
+        let quality = &mut self.mixer.quality;
+        quality.headroom_db = 6.;
+        quality.output_latency_frames = self.mixer.master_protection.latency_frames() as u32;
+        quality.master_gain_reduction_db = self.mixer.master_protection.reduction_db();
+        quality.cue_gain_reduction_db = self.mixer.cue_protection.reduction_db();
+        quality.master_limited_frames = self.mixer.master_protection.overloaded_frames;
+        quality.cue_limited_frames = self.mixer.cue_protection.overloaded_frames;
+        quality.invalid_signal_frames =
+            self.mixer.master_protection.invalid_frames + self.mixer.cue_protection.invalid_frames;
+        quality.processor_resets = self.mixer.decks.each_ref().map(|d| d.processor.resets);
+        quality.processor_blocks = self.mixer.decks.each_ref().map(|d| d.processor.blocks);
+        let elapsed = started.elapsed().as_nanos() as u64;
+        quality.callback_count += 1;
+        quality.callback_max_ns = quality.callback_max_ns.max(elapsed);
+        let budget =
+            (output.len() / channels) as u64 * 1_000_000_000 / self.mixer.sample_rate as u64;
+        if elapsed > budget {
+            quality.callback_deadline_exceeded += 1;
         }
         atoms.publish(
             &self.mixer,
@@ -360,27 +445,15 @@ impl Drop for StateCell {
         }
     }
 }
-#[derive(Clone)]
-struct PreparationSettings {
-    source: Option<Arc<TrackData>>,
-    rate: f64,
-    pitch: f64,
-    keylock: bool,
-    generation: u64,
-}
-struct PreparationControl {
-    settings: Mutex<[PreparationSettings; 2]>,
-    generation: [AtomicU64; 2],
-    wake: mpsc::SyncSender<()>,
-    shutdown: AtomicBool,
-}
 struct Shared {
     next_fence: AtomicU64,
+    next_control_receipt: AtomicU64,
+    analysis_pending: [AtomicBool; 2],
     metadata_revision: AtomicU64,
     committed_load_revision: [AtomicU64; 2],
     load_generation: [AtomicU64; 2],
     recording: Mutex<Option<recording::RecordingJob>>,
-    preparation: Arc<PreparationControl>,
+    sources: Mutex<[Option<Arc<TrackData>>; 2]>,
     producer: Mutex<Producer<RenderCommand>>,
     tracks: Mutex<[Option<TrackAnalysis>; 2]>,
     samples: Mutex<[Option<TrackAnalysis>; 16]>,
@@ -401,6 +474,18 @@ enum Lifecycle {
 }
 /// Safe to keep in application state. CPAL's non-Send native stream lives on its
 /// own lifecycle thread, never in a Tauri command or in the webview.
+pub(crate) fn analysis_gated_command(command: &EngineCommand) -> bool {
+    matches!(
+        command,
+        EngineCommand::Play { .. }
+            | EngineCommand::TogglePlay { .. }
+            | EngineCommand::PlayQuantized { .. }
+            | EngineCommand::TriggerHotCue { .. }
+            | EngineCommand::CuePress { .. }
+            | EngineCommand::Jog { .. }
+            | EngineCommand::ScrubTo { .. }
+    )
+}
 pub struct EngineHandle {
     shared: Arc<Shared>,
 }
@@ -409,8 +494,13 @@ impl EngineHandle {
         let (producer, consumer) = RingBuffer::new(QUEUE_CAPACITY);
         let (retired, mut retire_consumer) = RingBuffer::new(QUEUE_CAPACITY * 2);
         let atoms = Arc::new(SnapshotAtoms::new());
+        let epoch = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(1, |t| t.as_micros() as u64);
+        atoms.stream_revision.store(epoch, Ordering::Release);
         let (render_tx, render_rx) = mpsc::channel();
-        let mixer = Mixer::new();
+        let mut mixer = Mixer::new();
+        mixer.engine_epoch = epoch;
         let samples = std::array::from_fn(|i| Some(mixer.samples[i].analysis.clone()));
         let state = Arc::new(StateCell::new(Box::new(RenderState {
             mixer,
@@ -430,6 +520,8 @@ impl EngineHandle {
                         Retired::Track(track) => drop(track),
                         Retired::Grid(grid) => drop(grid),
                         Retired::Recorder(recorder) => drop(recorder),
+                        Retired::Batch(batch) => drop(batch),
+                        Retired::BatchPatch(patch) => drop(patch),
                     }
                 }
                 if retire_shutdown.load(Ordering::Acquire) {
@@ -443,37 +535,21 @@ impl EngineHandle {
             .name("dj-audio-device".into())
             .spawn(move || audio_thread(render_rx, state, lifecycle_atoms, shutdown))
             .map_err(|e| format!("Cannot start audio worker: {e}"))?;
-        let (wake, wake_rx) = mpsc::sync_channel(1);
-        let preparation = Arc::new(PreparationControl {
-            settings: Mutex::new(std::array::from_fn(|_| PreparationSettings {
-                source: None,
-                rate: 1.0,
-                pitch: 0.0,
-                keylock: false,
-                generation: 0,
-            })),
-            generation: std::array::from_fn(|_| AtomicU64::new(0)),
-            wake,
-            shutdown: AtomicBool::new(false),
-        });
         let shared = Arc::new(Shared {
             next_fence: AtomicU64::new(1),
+            next_control_receipt: AtomicU64::new(1),
+            analysis_pending: std::array::from_fn(|_| AtomicBool::new(false)),
             metadata_revision: AtomicU64::new(0),
             committed_load_revision: std::array::from_fn(|_| AtomicU64::new(0)),
             load_generation: std::array::from_fn(|_| AtomicU64::new(0)),
             recording: Mutex::new(None),
-            preparation: preparation.clone(),
+            sources: Mutex::new([None, None]),
             producer: Mutex::new(producer),
             tracks: Mutex::new([None, None]),
             samples: Mutex::new(samples),
             atoms,
             lifecycle: render_tx,
         });
-        let weak = Arc::downgrade(&shared);
-        thread::Builder::new()
-            .name("dj-time-stretch".into())
-            .spawn(move || preparation_worker(weak, preparation, wake_rx))
-            .map_err(|e| format!("Cannot start time-stretch worker: {e}"))?;
         Ok(Self { shared })
     }
     pub fn devices(&self) -> Result<Vec<AudioDeviceInfo>, String> {
@@ -517,6 +593,16 @@ impl EngineHandle {
         {
             return Err(
                 "Recording is unavailable while a streaming-service track is loaded".into(),
+            );
+        }
+        if self
+            .transport_snapshot()
+            .decks
+            .iter()
+            .any(|d| d.restricted_tail_active)
+        {
+            return Err(
+                "Recording is unavailable while a streaming-service effect tail is active".into(),
             );
         }
         let mut current = self
@@ -602,6 +688,79 @@ impl EngineHandle {
         }
         Ok(job.stats.status())
     }
+    pub fn scheduled_snapshot(&self) -> Result<EngineSnapshot, String> {
+        let metadata = self.metadata_snapshot();
+        let mut snapshot = self.transport_snapshot();
+        if metadata.load_revisions != snapshot.load_revisions {
+            return Err(
+                "Loaded source revision conflict: source metadata is still being applied".into(),
+            );
+        }
+        for (d, track) in snapshot.decks.iter_mut().zip(metadata.tracks) {
+            d.track = track;
+        }
+        Ok(snapshot)
+    }
+    pub fn validate_scheduled_batch(
+        &self,
+        schedule: &BatchSchedule,
+        commands: Vec<ScheduledCommand>,
+    ) -> Result<(), String> {
+        validate_scheduled_plan(schedule, commands, &self.scheduled_snapshot()?)
+    }
+    pub fn arm_scheduled_batch(
+        &self,
+        id: u64,
+        schedule: &BatchSchedule,
+        commands: Vec<ScheduledCommand>,
+    ) -> Result<(), String> {
+        let batch = scheduled::compile(id, schedule, commands, &self.scheduled_snapshot()?)?;
+        self.enqueue(RenderCommand::ArmBatch(batch))
+    }
+    pub fn arm_command_queue(&self, id: u64) -> Result<(), String> {
+        self.enqueue(RenderCommand::ArmBatch(scheduled::compile_command_queue(
+            id,
+            &self.transport_snapshot(),
+        )?))
+    }
+    pub fn validate_command_queue_patch(
+        &self,
+        id: u64,
+        patch: &CommandQueuePatch,
+    ) -> Result<(), String> {
+        scheduled::compile_command_patch(id, patch.clone(), &self.command_queue_snapshot(patch)?)
+            .map(|_| ())
+    }
+    pub fn patch_command_queue(&self, id: u64, patch: CommandQueuePatch) -> Result<(), String> {
+        let snapshot = self.command_queue_snapshot(&patch)?;
+        self.enqueue(RenderCommand::PatchBatch(scheduled::compile_command_patch(
+            id, patch, &snapshot,
+        )?))
+    }
+    fn command_queue_snapshot(&self, patch: &CommandQueuePatch) -> Result<EngineSnapshot, String> {
+        if patch.append.iter().any(|a| {
+            matches!(
+                a.when,
+                QueueTiming::AtEvent { .. }
+                    | QueueTiming::AtSeconds { .. }
+                    | QueueTiming::AfterBeats { .. }
+            )
+        }) {
+            self.scheduled_snapshot()
+        } else {
+            Ok(self.transport_snapshot())
+        }
+    }
+    pub fn validate_scheduled_patch(&self, id: u64, patch: &BatchQueuePatch) -> Result<(), String> {
+        scheduled::compile_patch(id, patch.clone(), &self.scheduled_snapshot()?).map(|_| ())
+    }
+    pub fn patch_scheduled_batch(&self, id: u64, patch: BatchQueuePatch) -> Result<(), String> {
+        let patch = scheduled::compile_patch(id, patch, &self.scheduled_snapshot()?)?;
+        self.enqueue(RenderCommand::PatchBatch(patch))
+    }
+    pub fn cancel_scheduled_batch(&self, id: u64, stabilize: bool) -> Result<(), String> {
+        self.enqueue(RenderCommand::CancelBatch { id, stabilize })
+    }
     pub fn stop_audio(&self) {
         let (tx, rx) = mpsc::channel();
         if self
@@ -614,7 +773,7 @@ impl EngineHandle {
         }
     }
     /// A fence acknowledges preceding control application, including while
-    /// audio is stopped. Asynchronous pitch preparation has its own status.
+    /// audio is stopped. Native continuous pitch processing needs no asynchronous preparation.
     pub fn fence(&self) -> Result<u64, String> {
         let mut producer = self
             .shared
@@ -640,12 +799,113 @@ impl EngineHandle {
     pub fn command(&self, command: EngineCommand) -> Result<(), String> {
         self.command_for_revision(command, None)
     }
+    /// Check preparation before native command side effects (such as manual
+    /// takeover cancellation). The renderer repeats this gate for queued races.
+    pub fn ensure_prepared(&self, command: &EngineCommand) -> Result<(), String> {
+        if analysis_gated_command(command)
+            && command
+                .deck()
+                .is_some_and(|deck| self.shared.analysis_pending[deck].load(Ordering::Acquire))
+        {
+            return Err(
+                "Track analysis is not complete; wait for BPM, key and waveform preparation".into(),
+            );
+        }
+        Ok(())
+    }
     pub fn command_for_revision(
+        &self,
+        command: EngineCommand,
+        expected: Option<u64>,
+    ) -> Result<(), String> {
+        self.command_with_revisions(command, expected, None)
+    }
+    /// Apply a preparation control only while the observed controls still belong
+    /// to the caller. The render thread repeats the check so queued manual input
+    /// wins over preparation that was computed from an older snapshot.
+    pub fn command_for_control_revision(
+        &self,
+        command: EngineCommand,
+        expected_load_revision: Option<u64>,
+        expected_control_revision: u64,
+    ) -> Result<u64, String> {
+        if command.deck().is_none() {
+            return Err("Preparation control guards require a deck command".into());
+        }
+        let ticket = self
+            .shared
+            .next_control_receipt
+            .fetch_add(1, Ordering::Relaxed);
+        self.command_with_revisions(
+            command,
+            expected_load_revision,
+            Some((expected_control_revision, ticket)),
+        )?;
+        Ok(ticket)
+    }
+    /// Atomically finish an application-owned session. Source loads may change,
+    /// but manual controls and audio restarts revoke this queued endpoint.
+    /// Consume the returned ticket with `wait_for_control_receipt`.
+    pub fn pause_transports_for_session(
+        &self,
+        expected_engine_epoch: u64,
+        expected_control_revision: u64,
+    ) -> Result<u64, String> {
+        let snapshot = self.transport_snapshot();
+        if snapshot.engine_epoch != expected_engine_epoch
+            || snapshot.control_revision != expected_control_revision
+        {
+            return Err("Session endpoint ownership changed".into());
+        }
+        let ticket = self
+            .shared
+            .next_control_receipt
+            .fetch_add(1, Ordering::Relaxed);
+        self.enqueue(RenderCommand::SessionEndpoint {
+            engine_epoch: expected_engine_epoch,
+            control_revision: expected_control_revision,
+            receipt_ticket: ticket,
+        })?;
+        Ok(ticket)
+    }
+    /// Wait for the render-thread decision, rather than inferring acceptance from
+    /// a revision that unrelated manual input could also have incremented.
+    /// Receipts are bounded; callers must consume them before 64 newer controls.
+    pub fn wait_for_control_receipt(&self, ticket: u64, timeout: Duration) -> Result<(), String> {
+        if ticket == 0 || ticket >= (1 << 62) {
+            return Err("Invalid control receipt ticket".into());
+        }
+        let started = std::time::Instant::now();
+        loop {
+            let receipt = self.shared.atoms.guarded_control_receipts[ticket as usize % 64]
+                .load(Ordering::Acquire);
+            if receipt >> 2 == ticket {
+                return if receipt & 3 == 1 {
+                    Ok(())
+                } else {
+                    Err(
+                        "Control revision conflict: guarded command rejected before application"
+                            .into(),
+                    )
+                };
+            }
+            if receipt >> 2 > ticket {
+                return Err("Control receipt expired".into());
+            }
+            if started.elapsed() >= timeout {
+                return Err("Timed out waiting for guarded command application".into());
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
+    }
+    fn command_with_revisions(
         &self,
         mut command: EngineCommand,
         expected: Option<u64>,
+        guard: Option<(u64, u64)>,
     ) -> Result<(), String> {
         command.validate()?;
+        self.ensure_prepared(&command)?;
         let transport = if matches!(
             command,
             EngineCommand::Play { .. }
@@ -656,13 +916,19 @@ impl EngineHandle {
         } else {
             self.transport_snapshot()
         };
+        if guard.is_some_and(|(r, _)| r != transport.control_revision) {
+            return Err("Control revision conflict: manual controls changed".into());
+        }
         if let EngineCommand::Play { deck } | EngineCommand::TogglePlay { deck } = command {
             let d = &transport.decks[deck];
             if d.launch_pending {
                 if matches!(command, EngineCommand::TogglePlay { .. }) {
                     command = EngineCommand::CancelLaunch { deck };
                 } else {
-                    return Ok(());
+                    if guard.is_none() {
+                        return Ok(());
+                    }
+                    return Err("Launch already pending; guarded control was not applied".into());
                 }
             } else if !d.playing && d.sync_enabled {
                 let clock = transport
@@ -681,6 +947,18 @@ impl EngineHandle {
                 }
             }
         }
+        if let EngineCommand::SetPlaybackBpm { deck, bpm } = command {
+            playback_tempo_percent(transport.decks[deck].local_bpm, bpm).map_err(str::to_owned)?;
+        }
+        if let EngineCommand::SetSyncRateLimits {
+            deck,
+            limits: Some(limits),
+        } = command
+        {
+            if !limits.contains(transport.decks[deck].actual_playback_rate) {
+                return Err("Prepare the deck's actual playback rate inside the Sync limits before applying them".into());
+            }
+        }
         if let EngineCommand::Sync { deck }
         | EngineCommand::SetSync {
             deck,
@@ -692,7 +970,17 @@ impl EngineHandle {
                 .iter()
                 .position(|d| d.is_master)
                 .unwrap_or(0);
-            let clock = if master == deck { 1 - deck } else { master };
+            if master == deck {
+                return Err("The master deck cannot sync to itself; select the playing leader as master first".into());
+            }
+            let clock = master;
+            if transport.decks[deck].playing
+                && (!transport.decks[clock].playing || transport.decks[clock].jog_touch)
+            {
+                return Err(
+                    "Live beat sync requires a playing master with its jog released".into(),
+                );
+            }
             if !transport.decks[deck].beatgrid_valid || !transport.decks[clock].beatgrid_valid {
                 return Err(
                     "Beat sync requires detected or manually aligned grids on both decks".into(),
@@ -733,14 +1021,6 @@ impl EngineHandle {
                     "Wait for incoming tempo/pitch preparation before scheduling a launch".into(),
                 );
             }
-            let (Some(a_bpm), Some(b_bpm)) = (a.bpm, b.bpm) else {
-                return Err("Quantized launch requires BPM on both decks".into());
-            };
-            if !(b.sync_enabled && a.is_master)
-                && (a_bpm * a.playback_rate - b_bpm * b.playback_rate).abs() > 0.01
-            {
-                return Err("Match effective BPM within 0.01 before scheduling a launch".into());
-            }
             let beat = a
                 .grid_position(a.position_seconds)
                 .ok_or("Clock grid is unavailable")?;
@@ -776,91 +1056,29 @@ impl EngineHandle {
             // resolve inside the renderer so queue latency cannot miss a beat.
         }
         let command_deck = command.deck();
-        let preparation_deck = match &command {
-            EngineCommand::SetTempo { deck, .. }
-            | EngineCommand::SetPitch { deck, .. }
-            | EngineCommand::SetKeylock { deck, .. } => Some(*deck),
-            _ => None,
-        };
-        if let Some(deck) = preparation_deck {
-            let mut producer = self
-                .shared
-                .producer
-                .lock()
-                .map_err(|_| "Command queue poisoned")?;
-            if producer.slots() < 2 {
-                return Err("Audio command queue is full; retry shortly".into());
-            }
-            if expected.is_some_and(|r| self.load_revision(deck) != r) {
+        let mut producer = self
+            .shared
+            .producer
+            .lock()
+            .map_err(|_| "Command queue poisoned")?;
+        let render = if let Some(deck) = command_deck {
+            let revision = self.load_revision(deck);
+            if expected.is_some_and(|r| r != revision) {
                 return Err("Loaded source revision conflict".into());
             }
-            let revision = self.load_revision(deck);
-            let mut settings = self
-                .shared
-                .preparation
-                .settings
-                .lock()
-                .map_err(|_| "Preparation settings poisoned")?;
-            let setting = &mut settings[deck];
-            let mut next = setting.clone();
-            match &command {
-                EngineCommand::SetTempo { percent, .. } => next.rate = 1.0 + percent / 100.0,
-                EngineCommand::SetPitch { semitones, .. } => next.pitch = *semitones,
-                EngineCommand::SetKeylock { enabled, .. } => next.keylock = *enabled,
-                _ => {}
+            RenderCommand::GuardedControl {
+                command,
+                deck,
+                revision,
+                control_revision: guard.map(|(r, _)| r),
+                receipt_ticket: guard.map(|(_, ticket)| ticket),
             }
-            if next.source.as_ref().is_some_and(|source| {
-                !stretch::within_memory_budget(
-                    source.samples.len(),
-                    next.rate,
-                    next.pitch,
-                    next.keylock,
-                )
-            }) {
-                return Err(
-                    "Tempo/pitch preparation exceeds the 512 MiB cache-work budget for this track"
-                        .into(),
-                );
-            }
-            *setting = next;
-            setting.generation += 1;
-            let generation = setting.generation;
-            self.shared.preparation.generation[deck].store(generation, Ordering::Release);
-            producer
-                .push(RenderCommand::GuardedControl {
-                    command,
-                    deck,
-                    revision,
-                })
-                .map_err(|_| "Audio command queue full")?;
-            producer
-                .push(RenderCommand::PreparationTarget { deck, generation })
-                .map_err(|_| "Audio command queue full")?;
-            let _ = self.shared.preparation.wake.try_send(());
-            Ok(())
         } else {
-            let mut producer = self
-                .shared
-                .producer
-                .lock()
-                .map_err(|_| "Command queue poisoned")?;
-            let render = if let Some(deck) = command_deck {
-                let revision = self.load_revision(deck);
-                if expected.is_some_and(|r| r != revision) {
-                    return Err("Loaded source revision conflict".into());
-                }
-                RenderCommand::GuardedControl {
-                    command,
-                    deck,
-                    revision,
-                }
-            } else {
-                RenderCommand::Control(command)
-            };
-            producer
-                .push(render)
-                .map_err(|_| "Audio command queue is full; retry shortly".into())
-        }
+            RenderCommand::Control(command)
+        };
+        producer
+            .push(render)
+            .map_err(|_| "Audio command queue is full; retry shortly".into())
     }
     fn enqueue(&self, command: RenderCommand) -> Result<(), String> {
         self.shared
@@ -873,8 +1091,9 @@ impl EngineHandle {
     pub fn load_track(&self, deck: usize, path: &Path) -> Result<TrackAnalysis, String> {
         self.load_track_cached(deck, path, None)
     }
-    /// Load a file, reusing a stored analysis when it still matches the decoded
-    /// audio (same path, rate, duration and waveform shape); otherwise analyze.
+    /// Load local audio for playback, reusing content-verified stored analysis.
+    /// Missing analysis is completed separately with `complete_loaded_analysis`;
+    /// transport commands remain gated until that completion commits.
     pub fn load_track_cached(
         &self,
         deck: usize,
@@ -885,8 +1104,43 @@ impl EngineHandle {
             return Err("Deck must be 0 or 1".into());
         }
         let generation = self.begin_load(deck)?;
-        let track = decode::decode_file_cached(path, cached)?;
+        let track = decode::decode_file_playable(path, cached)?;
         self.load_data(deck, track, generation)
+    }
+    /// A named application preparation retains the ticket so stop/deadline can
+    /// invalidate only this generation while decoding happens off-thread.
+    pub fn load_track_cached_for_ticket(
+        &self,
+        ticket: SourceLoadTicket,
+        path: &Path,
+        cached: Option<TrackAnalysis>,
+    ) -> Result<TrackAnalysis, String> {
+        if ticket.owner != Arc::as_ptr(&self.shared) as usize {
+            return Err("Source load belongs to another engine".into());
+        }
+        if self.shared.load_generation[ticket.deck].load(Ordering::Acquire) != ticket.generation {
+            return Err("A newer load request replaced this source".into());
+        }
+        let track = decode::decode_file_playable(path, cached)?;
+        self.load_data(ticket.deck, track, ticket.generation)
+    }
+    pub fn cancel_source_load(&self, ticket: &SourceLoadTicket) -> Result<bool, String> {
+        if ticket.owner != Arc::as_ptr(&self.shared) as usize {
+            return Err("Source load belongs to another engine".into());
+        }
+        let _tracks = self
+            .shared
+            .tracks
+            .lock()
+            .map_err(|_| "Track cache poisoned")?;
+        Ok(self.shared.load_generation[ticket.deck]
+            .compare_exchange(
+                ticket.generation,
+                ticket.generation.wrapping_add(1),
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok())
     }
     /// Load the other deck's RAM asset without decoding, then copy its actual
     /// position and transport atomically at the render callback boundary.
@@ -911,41 +1165,33 @@ impl EngineHandle {
         if producer.slots() == 0 {
             return Err("Audio command queue is full; retry shortly".into());
         }
-        let mut settings = self
+        let mut sources = self
             .shared
-            .preparation
-            .settings
+            .sources
             .lock()
-            .map_err(|_| "Preparation settings poisoned")?;
-        let source = settings[source_deck]
-            .source
+            .map_err(|_| "Source cache poisoned")?;
+        let source = sources[source_deck]
             .clone()
             .ok_or("Other deck audio source is unavailable")?;
-        let mut next = settings[source_deck].clone();
-        let transport = self.shared.atoms.read([None, None]);
-        if transport.decks[source_deck].sync_enabled {
-            next.rate = transport.decks[source_deck].playback_rate;
-        }
-        next.generation = settings[deck].generation.wrapping_add(1);
-        let generation = next.generation;
         // Producer lock makes the asset plus transport command a single queue item.
         producer
             .push(RenderCommand::InstantDouble {
                 revision: self.load_revision(deck) + 1,
                 deck,
                 track: source,
-                generation,
             })
             .map_err(|_| "Audio command queue is full; retry shortly")?;
         self.shared.load_generation[deck].fetch_add(1, Ordering::AcqRel);
-        self.shared.preparation.generation[deck].store(generation, Ordering::Release);
-        settings[deck] = next;
+        sources[deck] = sources[source_deck].clone();
+        self.shared.analysis_pending[deck].store(
+            self.shared.analysis_pending[source_deck].load(Ordering::Acquire),
+            Ordering::Release,
+        );
         tracks[deck] = Some(metadata);
         self.shared.committed_load_revision[deck].fetch_add(1, Ordering::Release);
         self.shared
             .metadata_revision
             .fetch_add(1, Ordering::Release);
-        let _ = self.shared.preparation.wake.try_send(());
         Ok(())
     }
     /// Feed an authorized provider's Read/Seek source into the native deck.
@@ -992,17 +1238,14 @@ impl EngineHandle {
         if producer.slots() == 0 {
             return Err("Audio command queue is full; retry shortly".into());
         }
-        let mut settings = self
+        let mut sources = self
             .shared
-            .preparation
-            .settings
+            .sources
             .lock()
-            .map_err(|_| "Preparation settings poisoned")?;
+            .map_err(|_| "Source cache poisoned")?;
         self.shared.load_generation[deck].fetch_add(1, Ordering::AcqRel);
-        let setting = &mut settings[deck];
-        setting.source = None;
-        setting.generation += 1;
-        self.shared.preparation.generation[deck].store(setting.generation, Ordering::Release);
+        sources[deck] = None;
+        self.shared.analysis_pending[deck].store(false, Ordering::Release);
         tracks[deck] = None;
         self.shared.committed_load_revision[deck].fetch_add(1, Ordering::Release);
         self.shared
@@ -1101,13 +1344,11 @@ impl EngineHandle {
         if producer.slots() == 0 {
             return Err("Audio command queue is full; retry shortly".into());
         }
-        let mut settings = self
+        let mut sources = self
             .shared
-            .preparation
-            .settings
+            .sources
             .lock()
-            .map_err(|_| "Preparation settings poisoned")?;
-        let setting = &mut settings[deck];
+            .map_err(|_| "Source cache poisoned")?;
         producer
             .push(RenderCommand::Load {
                 revision: self.load_revision(deck) + 1,
@@ -1115,12 +1356,8 @@ impl EngineHandle {
                 track: track.clone(),
             })
             .map_err(|_| "Audio command queue is full")?;
-        setting.source = Some(track);
-        setting.rate = 1.0;
-        setting.pitch = 0.0;
-        setting.keylock = false;
-        setting.generation += 1;
-        self.shared.preparation.generation[deck].store(setting.generation, Ordering::Release);
+        self.shared.analysis_pending[deck].store(track.analysis_pending, Ordering::Release);
+        sources[deck] = Some(track);
         tracks[deck] = Some(analysis.clone());
         self.shared.committed_load_revision[deck].fetch_add(1, Ordering::Release);
         self.shared
@@ -1133,75 +1370,38 @@ impl EngineHandle {
     /// still current. Transport, BPM and grid commands are left to the caller.
     pub fn beat_model_loaded(&self, deck: usize) -> Result<TrackAnalysis, String> {
         let (source, mut analysis, generation) = self.loaded_source(deck)?;
+        if decode::beat_stage_current(&analysis)
+            && (analysis.beat_model.is_some() || analysis.neural_rhythm.is_none())
+        {
+            return Ok(analysis);
+        }
         let replaced = || self.shared.load_generation[deck].load(Ordering::Acquire) != generation;
-        decode::analyze_beats_and_sections(
+        let result = decode::analyze_beats(
             &source.samples,
             source.sample_rate,
             &mut analysis,
             &replaced,
-        )?;
+        );
+        if replaced() {
+            return Err("Track changed during analysis".into());
+        }
+        // A terminal stage failure is committed once; passive loads do not retry it.
+        let _ = result; // Persist the terminal rhythm error with its stage stamp.
         self.replace_loaded_metadata(deck, generation, analysis)
     }
-    /// Re-cut the loaded deck's sections on the given grid (a fraction of a
-    /// second per track; no model) and replace its metadata.
-    pub fn sections_loaded(
-        &self,
-        deck: usize,
-        bpm: f64,
-        offset_seconds: f64,
-    ) -> Result<TrackAnalysis, String> {
-        let (source, mut analysis, generation) = self.loaded_source(deck)?;
-        let transport = self.transport_snapshot();
-        let d = &transport.decks[deck];
-        analysis.bpm = Some(bpm);
-        if d.beatgrid_uniform {
-            analysis.bpm_source = Some("manual".into());
-        }
-        if d.beatgrid_manual {
-            analysis.beatgrid_source = Some("manual".into());
-            analysis.beatgrid_confidence = None;
-            analysis.manual_grid_anchor_index = d.beatgrid_anchor_index;
-        }
-        analysis.beatgrid_offset_seconds = Some(offset_seconds);
-        decode::refresh_sections(
-            &source.samples,
-            source.sample_rate,
-            &mut analysis,
-            bpm,
-            offset_seconds,
-        )?;
-        self.replace_loaded_metadata(deck, generation, analysis)
-    }
-    /// Merge generated cues only where the DJ has not edited the observed slots.
-    pub fn merge_auto_cues(
-        &self,
-        deck: usize,
-        revision: u64,
-        hot: ([Option<f64>; 8], [Option<f64>; 8]),
-        memory: ([Option<f64>; 10], [Option<f64>; 10]),
-    ) -> Result<(), String> {
-        EngineCommand::RestoreHotCues { deck, cues: hot.1 }.validate()?;
-        EngineCommand::RestoreMemoryCues {
-            deck,
-            cues: memory.1,
-        }
-        .validate()?;
-        if self.load_revision(deck) != revision {
-            return Err("Track changed during cue analysis".into());
-        }
-        self.enqueue(RenderCommand::AutoCues {
-            deck,
-            revision,
-            hot,
-            memory,
-        })
-    }
-    /// Change the loaded deck's metadata in place (vocabulary choice, auto-cue
-    /// record) if the same track is still loaded.
     pub fn update_loaded_analysis(
         &self,
         deck: usize,
         track_id: &str,
+        change: impl FnOnce(&mut TrackAnalysis),
+    ) -> Result<TrackAnalysis, String> {
+        self.update_loaded_analysis_for_revision(deck, track_id, None, change)
+    }
+    pub fn update_loaded_analysis_for_revision(
+        &self,
+        deck: usize,
+        track_id: &str,
+        expected: Option<u64>,
         change: impl FnOnce(&mut TrackAnalysis),
     ) -> Result<TrackAnalysis, String> {
         if deck > 1 {
@@ -1212,6 +1412,9 @@ impl EngineHandle {
             .tracks
             .lock()
             .map_err(|_| "Track cache poisoned")?;
+        if expected.is_some_and(|r| r != self.load_revision(deck)) {
+            return Err("Loaded source revision conflict".into());
+        }
         let analysis = tracks[deck].as_mut().ok_or("Deck has no loaded track")?;
         if analysis.id != track_id {
             return Err("Track changed".into());
@@ -1233,14 +1436,12 @@ impl EngineHandle {
             .lock()
             .map_err(|_| "Track cache poisoned")?;
         let current = tracks[deck].clone().ok_or("Deck has no loaded track")?;
-        let settings = self
+        let sources = self
             .shared
-            .preparation
-            .settings
+            .sources
             .lock()
-            .map_err(|_| "Preparation settings poisoned")?;
-        let source = settings[deck]
-            .source
+            .map_err(|_| "Source cache poisoned")?;
+        let source = sources[deck]
             .clone()
             .ok_or("Deck audio source is unavailable")?;
         Ok((
@@ -1277,15 +1478,7 @@ impl EngineHandle {
             return Err("Track changed during analysis".into());
         }
         if let Some(current) = tracks[deck].as_ref() {
-            // Section workers do not own cue edits or a vocabulary choice made
-            // while their spectrogram was being computed.
-            analysis.auto_cues = current.auto_cues.clone();
-            if let Some(sections) = analysis.sections.as_mut() {
-                if let Some(previous) = current.sections.as_ref() {
-                    sections.vocabulary_override = previous.vocabulary_override;
-                    sections.relabel();
-                }
-            }
+            analysis.cue_points = current.cue_points.clone();
         }
         if update_grid {
             if let Some(grid) = analysis.neural_rhythm.clone() {
@@ -1294,7 +1487,22 @@ impl EngineHandle {
                     revision: self.load_revision(deck),
                     grid: Arc::new(grid),
                 })?;
+            } else {
+                self.enqueue(RenderCommand::UpdateBaseGrid {
+                    deck,
+                    revision: self.load_revision(deck),
+                    bpm: analysis.bpm,
+                    offset: analysis.beatgrid_offset_seconds,
+                    valid: analysis.rhythm_error.is_none(),
+                })?;
             }
+        }
+        if update_grid && decode::playback_analysis_ready(&analysis) {
+            self.enqueue(RenderCommand::AnalysisComplete {
+                deck,
+                revision: self.load_revision(deck),
+            })?;
+            self.shared.analysis_pending[deck].store(false, Ordering::Release);
         }
         tracks[deck] = Some(analysis.clone());
         self.shared
@@ -1306,8 +1514,20 @@ impl EngineHandle {
     /// the beat model. Native position, playback and cues are untouched; the
     /// caller decides whether the new BPM and grid reach the deck.
     pub fn reanalyze_loaded(&self, deck: usize) -> Result<TrackAnalysis, String> {
+        self.analyze_loaded(deck, true)
+    }
+    /// Complete missing analysis from the deck's existing PCM, without decoding
+    /// again or retrying compatible persisted terminal stages.
+    pub fn complete_loaded_analysis(&self, deck: usize) -> Result<TrackAnalysis, String> {
+        self.analyze_loaded(deck, false)
+    }
+    fn analyze_loaded(&self, deck: usize, force: bool) -> Result<TrackAnalysis, String> {
         let (source, current, generation) = self.loaded_source(deck)?;
-        let mut analysis = decode::analyze_pcm(
+        let mut retry = current.clone();
+        if force {
+            decode::retry_neural(&mut retry);
+        }
+        let mut analysis = decode::analyze_pcm_cached(
             &source.samples,
             source.sample_rate,
             &AudioSourceInfo {
@@ -1316,9 +1536,12 @@ impl EngineHandle {
                 title: current.title.clone(),
                 artist: current.artist.clone(),
                 extension: None,
+                release_identity: current.source_release.clone(),
             },
             current.recording_allowed,
+            Some(retry),
         );
+        analysis.analysis_stages.source_file = current.analysis_stages.source_file.clone();
         // Embedded BPM tags are provenance-bearing metadata, never replaced by
         // a statistical reanalysis. The candidate list still describes the PCM.
         if current.bpm_source.as_deref() == Some("tag") {
@@ -1345,10 +1568,9 @@ impl EngineHandle {
             }
         }
         let replaced = || self.shared.load_generation[deck].load(Ordering::Acquire) != generation;
-        // Keep the DJ's vocabulary choice and auto-cue record across reanalysis.
-        analysis.sections = current.sections.clone();
-        analysis.auto_cues = current.auto_cues.clone();
-        match decode::analyze_beats_and_sections(
+        // Reanalysis never owns the DJ’s saved cue edits.
+        analysis.cue_points = current.cue_points.clone();
+        match decode::analyze_beats(
             &source.samples,
             source.sample_rate,
             &mut analysis,
@@ -1383,19 +1605,40 @@ impl EngineHandle {
     }
     /// Return track analysis only when the caller observes a new revision.
     pub fn metadata_snapshot(&self) -> EngineMetadataSnapshot {
+        self.project_metadata(Clone::clone)
+    }
+    /// Transport identity fields, without copying derived analysis arrays.
+    pub fn metadata_summary_snapshot(&self) -> EngineMetadataSnapshot {
+        self.project_metadata(|track| TrackAnalysis {
+            id: track.id.clone(),
+            path: track.path.clone(),
+            title: track.title.clone(),
+            artist: track.artist.clone(),
+            duration_seconds: track.duration_seconds,
+            bpm: track.bpm,
+            key: track.key.clone(),
+            recording_allowed: track.recording_allowed,
+            ..Default::default()
+        })
+    }
+    fn project_metadata(
+        &self,
+        project: impl Fn(&TrackAnalysis) -> TrackAnalysis,
+    ) -> EngineMetadataSnapshot {
         let tracks = self.shared.tracks.lock().unwrap_or_else(|e| e.into_inner());
         EngineMetadataSnapshot {
             load_revisions: std::array::from_fn(|i| {
                 self.shared.committed_load_revision[i].load(Ordering::Acquire)
             }),
             revision: self.shared.metadata_revision.load(Ordering::Acquire),
-            tracks: tracks.clone(),
+            tracks: tracks.each_ref().map(|track| track.as_ref().map(&project)),
             samples: self
                 .shared
                 .samples
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
-                .clone(),
+                .each_ref()
+                .map(|track| track.as_ref().map(&project)),
         }
     }
     pub fn load_revision(&self, deck: usize) -> u64 {
@@ -1452,99 +1695,7 @@ impl Drop for EngineHandle {
         if self.recording_status().active {
             let _ = self.stop_recording();
         }
-        self.shared
-            .preparation
-            .shutdown
-            .store(true, Ordering::Release);
-        let _ = self.shared.preparation.wake.try_send(());
         let _ = self.shared.lifecycle.send(Lifecycle::Shutdown);
-    }
-}
-
-fn preparation_worker(
-    shared: std::sync::Weak<Shared>,
-    control: Arc<PreparationControl>,
-    wake: mpsc::Receiver<()>,
-) {
-    let mut completed = [0_u64; 2];
-    while !control.shutdown.load(Ordering::Acquire) {
-        let _ = wake.recv_timeout(Duration::from_millis(25));
-        for deck in 0..2 {
-            if let Some(shared) = shared.upgrade() {
-                let current = shared.atoms.read([None, None]);
-                let d = &current.decks[deck];
-                if d.sync_enabled {
-                    let mut producer = shared.producer.lock().unwrap_or_else(|e| e.into_inner());
-                    let mut settings = control.settings.lock().unwrap_or_else(|e| e.into_inner());
-                    let target = &mut settings[deck];
-                    if (target.keylock || target.pitch.abs() > 0.0001)
-                        && (target.rate - d.playback_rate).abs() > 1e-6
-                        && producer.slots() > 0
-                    {
-                        target.rate = d.playback_rate;
-                        target.generation += 1;
-                        control.generation[deck].store(target.generation, Ordering::Release);
-                        let _ = producer.push(RenderCommand::PreparationTarget {
-                            deck,
-                            generation: target.generation,
-                        });
-                    }
-                }
-            }
-            let setting = control.settings.lock().unwrap_or_else(|e| e.into_inner())[deck].clone();
-            if setting.generation == completed[deck] {
-                continue;
-            }
-            completed[deck] = setting.generation;
-            if !(setting.keylock || setting.pitch.abs() > 0.0001) {
-                continue;
-            }
-            let Some(source) = setting.source else {
-                continue;
-            };
-            let result = stretch::prepare(
-                &source,
-                setting.rate,
-                setting.pitch,
-                setting.keylock,
-                || {
-                    control.shutdown.load(Ordering::Relaxed)
-                        || control.generation[deck].load(Ordering::Relaxed) != setting.generation
-                },
-            );
-            let Some(track) = result else {
-                continue;
-            };
-            if control.generation[deck].load(Ordering::Acquire) != setting.generation {
-                continue;
-            }
-            let Some(shared) = shared.upgrade() else {
-                return;
-            };
-            let command = RenderCommand::Prepared {
-                deck,
-                generation: setting.generation,
-                rate: setting.rate,
-                track,
-            };
-            let mut command = Some(command);
-            while let Some(next) = command.take() {
-                if control.shutdown.load(Ordering::Acquire)
-                    || control.generation[deck].load(Ordering::Acquire) != setting.generation
-                {
-                    break;
-                }
-                let result = shared
-                    .producer
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .push(next);
-                if let Err(rtrb::PushError::Full(next)) = result {
-                    command = Some(next);
-                    thread::sleep(Duration::from_millis(2));
-                }
-            }
-        }
     }
 }
 
@@ -1592,20 +1743,48 @@ fn audio_thread(
     shutdown: Arc<AtomicBool>,
 ) {
     let mut stream: Option<cpal::Stream> = None;
+    // Explicit debug integration harness: the actual renderer, no device/driver.
+    let null_test = cfg!(debug_assertions)
+        && std::env::var("PULSEDECK_ISOLATED").as_deref() == Ok("1")
+        && std::env::var("PULSEDECK_TEST_NULL_AUDIO").as_deref() == Ok("1")
+        && std::env::var_os("PULSEDECK_DATA_DIR").is_some()
+        && std::env::var_os("PULSEDECK_SOCKET").is_some();
+    let mut null_running = null_test;
+    let null_started = std::time::Instant::now();
+    let mut null_output = if null_test {
+        vec![0_f32; 8192 * 2]
+    } else {
+        Vec::new()
+    };
+    if null_test {
+        atoms.running.store(true, Ordering::Release);
+    }
     loop {
-        match receiver.recv_timeout(Duration::from_millis(10)) {
+        match receiver.recv_timeout(Duration::from_millis(if null_running { 6 } else { 10 })) {
             Ok(Lifecycle::Start {
                 device,
                 buffer,
                 routing,
                 reply,
             }) => {
+                if null_test {
+                    let _ = reply.send(Err(
+                        "Hardware audio is disabled in the isolated null-renderer harness".into(),
+                    ));
+                    continue;
+                }
                 atoms.stream_revision.fetch_add(1, Ordering::AcqRel);
                 if let Some(old_stream) = stream.take() {
                     let _ = old_stream.pause();
                     drop(old_stream);
                 }
                 atoms.running.store(false, Ordering::Release);
+                if let Some(mut render) = state.take() {
+                    render.mixer.engine_epoch = atoms.stream_revision.load(Ordering::Acquire);
+                    render.mixer.interrupt_batch();
+                    atoms.publish(&render.mixer, render.channels, 0, [0.; 2], [0.; 2]);
+                    state.put(render);
+                }
                 let result = start_stream(device, buffer, routing, state.clone(), atoms.clone());
                 match result {
                     Ok((new_stream, status)) => {
@@ -1619,21 +1798,64 @@ fn audio_thread(
                 }
             }
             Ok(Lifecycle::Stop { reply }) => {
+                null_running = false;
                 atoms.stream_revision.fetch_add(1, Ordering::AcqRel);
                 if let Some(old_stream) = stream.take() {
                     let _ = old_stream.pause();
                     drop(old_stream);
                 }
                 atoms.running.store(false, Ordering::Release);
+                if let Some(mut render) = state.take() {
+                    render.mixer.engine_epoch = atoms.stream_revision.load(Ordering::Acquire);
+                    render.mixer.interrupt_batch();
+                    atoms.publish(&render.mixer, render.channels, 0, [0.; 2], [0.; 2]);
+                    state.put(render);
+                }
                 let _ = reply.send(());
             }
             Ok(Lifecycle::Shutdown) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
             Err(mpsc::RecvTimeoutError::Timeout) => {}
         }
+        if stream.is_some() && !atoms.running.load(Ordering::Acquire) {
+            if let Some(failed) = stream.take() {
+                let _ = failed.pause();
+                drop(failed);
+            }
+            atoms.stream_revision.fetch_add(1, Ordering::AcqRel);
+            if let Some(mut render) = state.take() {
+                render.mixer.engine_epoch = atoms.stream_revision.load(Ordering::Acquire);
+                render.mixer.interrupt_batch();
+                atoms.publish(&render.mixer, render.channels, 0, [0.; 2], [0.; 2]);
+                state.put(render);
+            }
+        }
         if stream.is_none() {
             if let Some(mut render) = state.take() {
-                render.drain();
-                atoms.publish(&render.mixer, render.channels, 0, [0.0; 2], [0.0; 2]);
+                if null_running && null_started.elapsed() < Duration::from_secs(900) {
+                    render.mixer.sample_rate = 48000;
+                    render.channels = 2;
+                    render.routing = AudioRouting::default();
+                    // Accelerate only native schedules; preparation has a paced clock.
+                    let frames = if render
+                        .mixer
+                        .scheduled
+                        .as_ref()
+                        .is_some_and(|b| b.state.active())
+                    {
+                        8192
+                    } else {
+                        256
+                    };
+                    render.render(&mut null_output[..frames * 2], &atoms);
+                } else {
+                    if null_running {
+                        null_running = false;
+                        atoms.running.store(false, Ordering::Release);
+                        render.mixer.interrupt_batch();
+                    }
+                    render.drain();
+                    atoms.publish(&render.mixer, render.channels, 0, [0.0; 2], [0.0; 2]);
+                }
                 state.put(render);
             }
         }
@@ -1887,6 +2109,40 @@ mod tests {
             .all(Option::is_none));
     }
     #[test]
+    fn named_cue_metadata_updates_are_guarded_even_on_same_source_reload_and_both_copies() {
+        let engine = EngineHandle::new().unwrap();
+        let track = engine.load_demo(0).unwrap();
+        engine.instant_double(1).unwrap();
+        let revisions = engine.metadata_snapshot().load_revisions;
+        let point = audio_analysis::CuePoint::manual("user:1".into(), 2., "Entry".into());
+        for (deck, revision) in revisions.iter().enumerate() {
+            engine
+                .update_loaded_analysis_for_revision(deck, &track.id, Some(*revision), |a| {
+                    a.cue_points = vec![point.clone()]
+                })
+                .unwrap();
+        }
+        assert!(engine
+            .metadata_snapshot()
+            .tracks
+            .iter()
+            .all(|a| a.as_ref().unwrap().cue_points[0].name == "Entry"));
+        engine.load_demo(0).unwrap();
+        assert!(engine
+            .update_loaded_analysis_for_revision(0, &track.id, Some(revisions[0]), |a| a
+                .cue_points
+                .clear())
+            .is_err());
+        assert_eq!(
+            engine.metadata_snapshot().tracks[1]
+                .as_ref()
+                .unwrap()
+                .cue_points[0]
+                .name,
+            "Entry"
+        );
+    }
+    #[test]
     fn invalid_routes_are_rejected() {
         assert!(validate_routing(
             &AudioRouting {
@@ -1947,6 +2203,137 @@ mod tests {
                 high: 1.0
             })
             .is_err());
+    }
+    #[test]
+    fn queued_manual_takeover_rejects_preparation_before_any_mixer_change() {
+        let (mut producer, consumer) = RingBuffer::new(8);
+        let (retired, _reclaimed) = RingBuffer::new(8);
+        let mut render = RenderState {
+            mixer: Mixer::new(),
+            commands: consumer,
+            retired,
+            recording: None,
+            routing: Default::default(),
+            channels: 2,
+        };
+        producer
+            .push(RenderCommand::Control(EngineCommand::SetChannelFader {
+                deck: 1,
+                value: 0.8,
+            }))
+            .unwrap();
+        producer
+            .push(RenderCommand::GuardedControl {
+                command: EngineCommand::SetChannelFader { deck: 1, value: 0. },
+                deck: 1,
+                revision: 0,
+                control_revision: Some(0),
+                receipt_ticket: Some(1),
+            })
+            .unwrap();
+        render.drain();
+        assert_eq!(render.mixer.decks[1].channel_fader.target, 0.8);
+        assert_eq!(render.mixer.control_revision, 1);
+        assert_eq!(render.mixer.guarded_control_receipts[1], (1 << 2) | 2);
+        producer
+            .push(RenderCommand::GuardedControl {
+                command: EngineCommand::SetChannelFader { deck: 1, value: 0. },
+                deck: 1,
+                revision: 0,
+                control_revision: Some(1),
+                receipt_ticket: Some(2),
+            })
+            .unwrap();
+        render.drain();
+        assert_eq!(render.mixer.decks[1].channel_fader.target, 0.);
+        assert_eq!(render.mixer.guarded_control_receipts[2], (2 << 2) | 1);
+    }
+    #[test]
+    fn session_endpoint_survives_source_changes_but_yields_to_manual_input_and_restart() {
+        for scenario in [
+            "source_load",
+            "manual_before",
+            "manual_after",
+            "audio_restart",
+        ] {
+            let (mut producer, consumer) = RingBuffer::new(8);
+            let (retired, _reclaimed) = RingBuffer::new(8);
+            let mut mixer = Mixer::new();
+            mixer.load(0, decode::demo_track(0));
+            mixer.load(1, decode::demo_track(1));
+            mixer.decks[0].playing = true;
+            mixer.decks[1].playing = true;
+            mixer.engine_epoch = if scenario == "audio_restart" { 8 } else { 7 };
+            mixer.load_revisions = [17, 30];
+            let mut render = RenderState {
+                mixer,
+                commands: consumer,
+                retired,
+                recording: None,
+                routing: Default::default(),
+                channels: 2,
+            };
+            if scenario == "manual_before" {
+                producer
+                    .push(RenderCommand::Control(EngineCommand::SetChannelFader {
+                        deck: 0,
+                        value: 0.8,
+                    }))
+                    .unwrap();
+            }
+            producer
+                .push(RenderCommand::SessionEndpoint {
+                    engine_epoch: 7,
+                    control_revision: 0,
+                    receipt_ticket: 1,
+                })
+                .unwrap();
+            if scenario == "manual_after" {
+                producer
+                    .push(RenderCommand::Control(EngineCommand::Play { deck: 0 }))
+                    .unwrap();
+            }
+            render.drain();
+            let applied = render.mixer.guarded_control_receipts[1] & 3 == 1;
+            if scenario == "manual_before" || scenario == "audio_restart" {
+                assert!(!applied, "{scenario}");
+                assert!(render.mixer.decks.iter().all(|d| d.playing), "{scenario}");
+            } else {
+                assert!(applied, "{scenario}");
+                assert!(!render.mixer.decks[1].playing, "{scenario}");
+                assert_eq!(
+                    render.mixer.decks[0].playing,
+                    scenario == "manual_after",
+                    "{scenario}"
+                );
+            }
+        }
+    }
+    #[test]
+    fn guarded_control_receipts_confirm_application_without_an_audio_device() {
+        let engine = EngineHandle::new().unwrap();
+        let revision = engine.transport_snapshot().control_revision;
+        let ticket = engine
+            .command_for_control_revision(
+                EngineCommand::SetChannelFader { deck: 1, value: 0. },
+                Some(0),
+                revision,
+            )
+            .unwrap();
+        engine
+            .wait_for_control_receipt(ticket, Duration::from_secs(2))
+            .unwrap();
+        assert!(engine
+            .command_for_control_revision(
+                EngineCommand::Seek {
+                    deck: 1,
+                    seconds: 0.
+                },
+                Some(0),
+                revision,
+            )
+            .is_err());
+        assert!(engine.wait_for_control_receipt(0, Duration::ZERO).is_err());
     }
     #[test]
     fn assets_are_retired_outside_render() {
@@ -2023,6 +2410,13 @@ mod realtime_audit {
     }
     #[global_allocator]
     static ALLOCATOR: AuditedAllocator = AuditedAllocator;
+    pub(crate) fn allocation_counts(f: impl FnOnce()) -> [usize; 3] {
+        COUNTS.with(|x| x.set([0; 3]));
+        ENABLED.with(|x| x.set(true));
+        f();
+        ENABLED.with(|x| x.set(false));
+        COUNTS.with(Cell::get)
+    }
     #[test]
     fn slim_transport_snapshot_does_not_allocate_or_free_metadata() {
         let engine = EngineHandle::new().unwrap();
@@ -2037,6 +2431,60 @@ mod realtime_audit {
         ENABLED.with(|x| x.set(false));
         let counts = COUNTS.with(Cell::get);
         assert_eq!(counts, [0; 3]);
+    }
+    #[test]
+    fn continuous_pitch_render_seek_and_rate_changes_allocate_nothing() {
+        let (mut producer, consumer) = RingBuffer::new(128);
+        let (retired, _reclaim) = RingBuffer::new(256);
+        let atoms = SnapshotAtoms::new();
+        let mut state = RenderState {
+            mixer: Mixer::new(),
+            commands: consumer,
+            retired,
+            recording: None,
+            routing: AudioRouting::default(),
+            channels: 2,
+        };
+        for deck in 0..2 {
+            state.mixer.load(deck, decode::demo_track(deck));
+            state.mixer.command(EngineCommand::Play { deck });
+            state.mixer.command(EngineCommand::SetKeylock {
+                deck,
+                enabled: true,
+            });
+        }
+        let mut output = [0f32; 256];
+        COUNTS.with(|x| x.set([0; 3]));
+        ENABLED.with(|x| x.set(true));
+        for step in 0..256 {
+            producer
+                .push(RenderCommand::Control(EngineCommand::SetTempo {
+                    deck: 1,
+                    percent: 4. + step as f64 * 0.001,
+                }))
+                .ok()
+                .unwrap();
+            if step % 64 == 0 {
+                producer
+                    .push(RenderCommand::Control(EngineCommand::Seek {
+                        deck: 0,
+                        seconds: step as f64 / 256.,
+                    }))
+                    .ok()
+                    .unwrap();
+            }
+            state.render(&mut output, &atoms);
+        }
+        ENABLED.with(|x| x.set(false));
+        assert_eq!(
+            COUNTS.with(Cell::get),
+            [0; 3],
+            "Rust render allocations/reallocations/frees"
+        );
+        assert_eq!(
+            state.mixer.decks[1].processor.resets, 1,
+            "tempo automation keeps continuous DSP state"
+        );
     }
     #[test]
     fn callback_allocates_and_frees_nothing_including_asset_changes() {
@@ -2169,7 +2617,6 @@ mod realtime_audit {
                 revision: 0,
                 deck: 1,
                 track: state.mixer.decks[0].track.as_ref().unwrap().clone(),
-                generation: 17,
             })
             .ok()
             .unwrap();
@@ -2237,6 +2684,7 @@ mod preparation_and_loading_tests {
             title: "Generated provider output".into(),
             artist: None,
             extension: None,
+            release_identity: None,
         }
     }
     #[test]
@@ -2314,6 +2762,25 @@ mod preparation_and_loading_tests {
                 .is_err());
         }
     }
+    #[test]
+    fn scoped_source_cancellation_cannot_cancel_a_newer_load_owner() {
+        let engine = EngineHandle::new().unwrap();
+        let old = engine.begin_source_load(0).unwrap();
+        let newer = engine.begin_source_load(0).unwrap();
+        assert!(!engine.cancel_source_load(&old).unwrap());
+        assert!(engine.cancel_source_load(&newer).unwrap());
+        assert!(!engine.cancel_source_load(&newer).unwrap());
+        assert!(engine
+            .load_track_cached_for_ticket(old, Path::new("/must-not-be-opened.mp3"), None)
+            .unwrap_err()
+            .contains("newer load"));
+        let other = EngineHandle::new().unwrap();
+        assert!(other
+            .cancel_source_load(&newer)
+            .unwrap_err()
+            .contains("another engine"));
+        assert!(!engine.transport_snapshot().running);
+    }
 
     #[test]
     fn a_completed_old_decode_cannot_replace_the_newest_load() {
@@ -2339,7 +2806,7 @@ mod preparation_and_loading_tests {
         assert_eq!(engine.snapshot().decks[0].bpm, Some(124.0));
     }
     #[test]
-    fn keylock_preparation_survives_target_changes() {
+    fn continuous_keylock_accepts_target_changes_without_preparation() {
         let engine = EngineHandle::new().unwrap();
         let generation = engine.begin_load(0).unwrap();
         let mut source = decode::demo_track(0);
@@ -2502,6 +2969,7 @@ mod cached_source_tests {
             title: "Fixture".into(),
             artist: None,
             extension: None,
+            release_identity: None,
         };
         let mut cached = analyze_decoded_audio(&samples, 8000, &info(), false).unwrap();
         cached.bpm = Some(127.8);
@@ -2638,7 +3106,7 @@ mod instant_double_handle_tests {
         assert_eq!(engine.track_duration(0), None);
     }
     #[test]
-    fn instant_double_cancels_destination_preparation_and_preserves_source_capability() {
+    fn instant_double_replaces_destination_source_and_preserves_source_capability() {
         let engine = EngineHandle::new().unwrap();
         assert!(engine.instant_double(0).is_err());
         assert!(engine.instant_double(2).is_err());
@@ -2657,10 +3125,10 @@ mod instant_double_handle_tests {
         assert_eq!(copied.id, source.analysis.id);
         assert_eq!(copied.bpm_source.as_deref(), Some("manual"));
         assert!(!copied.recording_allowed);
-        let settings = engine.shared.preparation.settings.lock().unwrap();
+        let settings = engine.shared.sources.lock().unwrap();
         assert!(Arc::ptr_eq(
-            settings[0].source.as_ref().unwrap(),
-            settings[1].source.as_ref().unwrap()
+            settings[0].as_ref().unwrap(),
+            settings[1].as_ref().unwrap()
         ));
         drop(settings);
         assert!(engine
@@ -2673,7 +3141,8 @@ mod instant_double_handle_tests {
                     location: "outdated".into(),
                     title: "outdated".into(),
                     artist: None,
-                    extension: None
+                    extension: None,
+                    release_identity: None
                 },
                 true
             )
@@ -2682,53 +3151,56 @@ mod instant_double_handle_tests {
 }
 
 #[cfg(test)]
-mod auto_cue_merge_tests {
+mod playback_bpm_public_control_tests {
     use super::*;
     #[test]
-    fn generated_cues_preserve_live_edits_and_reject_replaced_sources() {
-        let (mut producer, consumer) = RingBuffer::new(8);
-        let (retired, _reclamation) = RingBuffer::new(16);
-        let mut state = RenderState {
-            mixer: Mixer::new(),
-            commands: consumer,
-            retired,
-            recording: None,
-            routing: AudioRouting::default(),
-            channels: 2,
-        };
-        state.mixer.load(0, decode::demo_track(0));
-        state.mixer.load_revisions[0] = 7;
-        let before = [None; 8];
-        let mut after = before;
-        after[0] = Some(2.0);
-        after[1] = Some(4.0);
-        state.mixer.decks[0].hot_cues[0] = Some(1.5);
-        state.mixer.decks[0].memory_cues[0] = Some(3.0);
-        producer
-            .push(RenderCommand::AutoCues {
+    fn public_playback_bpm_errors_are_clear_and_offline_control_preserves_source() {
+        let e = EngineHandle::new().unwrap();
+        assert!(e
+            .command(EngineCommand::SetPlaybackBpm { deck: 0, bpm: 124. })
+            .unwrap_err()
+            .contains("requires a valid"));
+        e.load_demo(0).unwrap();
+        let loaded = e.fence().unwrap();
+        e.wait_for_fence(loaded, Duration::from_secs(2)).unwrap();
+        let before = e.snapshot();
+        let base = before.decks[0].bpm.unwrap();
+        assert!(e
+            .command(EngineCommand::SetSync {
                 deck: 0,
-                revision: 7,
-                hot: (before, after),
-                memory: ([None; 10], [Some(5.0); 10]),
+                enabled: true
             })
-            .ok()
-            .unwrap();
-        state.drain();
-        assert_eq!(state.mixer.decks[0].hot_cues[0], Some(1.5));
-        assert_eq!(state.mixer.decks[0].hot_cues[1], Some(4.0));
-        assert_eq!(state.mixer.decks[0].memory_cues[0], Some(3.0));
-        state.mixer.load_revisions[0] = 8;
-        producer
-            .push(RenderCommand::AutoCues {
+            .unwrap_err()
+            .contains("master deck cannot sync"));
+        e.command(EngineCommand::SetPlaybackBpm {
+            deck: 0,
+            bpm: base * 1.03,
+        })
+        .unwrap();
+        let fence = e.fence().unwrap();
+        e.wait_for_fence(fence, Duration::from_secs(2)).unwrap();
+        let after = e.snapshot();
+        assert!((after.decks[0].playback_bpm.unwrap() - base * 1.03).abs() < 1e-10);
+        assert_eq!(after.decks[0].bpm, before.decks[0].bpm);
+        assert_eq!(after.decks[0].grid_revision, before.decks[0].grid_revision);
+        assert_eq!(
+            after.decks[0].track.as_ref().unwrap().bpm,
+            before.decks[0].track.as_ref().unwrap().bpm
+        );
+        assert!(e
+            .command(EngineCommand::SetSyncRateLimits {
                 deck: 0,
-                revision: 7,
-                hot: (state.mixer.decks[0].hot_cues, [Some(9.0); 8]),
-                memory: (state.mixer.decks[0].memory_cues, [Some(9.0); 10]),
+                limits: Some(SyncRateLimits {
+                    min_rate: 0.98,
+                    max_rate: 1.02,
+                    max_slew_per_second: 0.01,
+                }),
             })
-            .ok()
-            .unwrap();
-        state.drain();
-        assert_eq!(state.mixer.decks[0].hot_cues[0], Some(1.5));
-        assert_eq!(state.mixer.decks[0].memory_cues[0], Some(3.0));
+            .unwrap_err()
+            .contains("inside the Sync limits"));
+        assert!(e
+            .command(EngineCommand::SetPlaybackBpm { deck: 0, bpm: 300. })
+            .unwrap_err()
+            .contains("outside -90..100"));
     }
 }

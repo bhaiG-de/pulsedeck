@@ -1,4 +1,0 @@
-interface:
-  display_name: "Recording and Export"
-  short_description: "Record eligible mixes and migrate library metadata"
-  default_prompt: "Use $pulsedeck-recording-and-export to handle the requested PulseDeck task through the CLI and verify the result."

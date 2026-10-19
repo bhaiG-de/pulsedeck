@@ -201,3 +201,83 @@ test("three-band bars fill the view using shared gain, leave comb gaps and never
     "silent band data cannot grow a gray outline from a separate peak array",
   );
 });
+
+test("cold tiles are queued outside paint and stale worker results are released", () => {
+  const prior = {
+    window: globalThis.window,
+    Worker: globalThis.Worker,
+    OffscreenCanvas: globalThis.OffscreenCanvas,
+  };
+  const messages: any[] = [];
+  let worker: any;
+  let closed = 0,
+    drawn = 0,
+    ready = 0;
+  class FakeWorker {
+    onmessage: ((event: any) => void) | null = null;
+    onerror: (() => void) | null = null;
+    constructor() {
+      worker = this;
+    }
+    postMessage(value: any) {
+      messages.push(value);
+    }
+    terminate() {
+      messages.push({ type: "terminated" });
+    }
+  }
+  Object.assign(globalThis, {
+    window: {},
+    Worker: FakeWorker,
+    OffscreenCanvas: class {},
+  });
+  try {
+    const raster = new WaveformRaster(undefined, () => ready++);
+    raster.configure(source());
+    const target = {
+      ...ctx,
+      drawImage() {
+        drawn++;
+      },
+    } as unknown as CanvasRenderingContext2D;
+    raster.draw(target, 0, 500);
+    assert.equal(raster.tileBuilds, 0);
+    assert.equal(drawn, 0);
+    const first = messages.find((m) => m.type === "tile");
+    raster.configure(source({ samples: [...samples] }));
+    raster.draw(target, 0, 500);
+    worker.onmessage({
+      data: {
+        generation: first.generation,
+        number: 0,
+        bitmap: {
+          close() {
+            closed++;
+          },
+        },
+      },
+    });
+    assert.equal(closed, 1);
+    assert.equal(ready, 0);
+    const latest = messages.filter((m) => m.type === "tile").at(-1);
+    worker.onmessage({
+      data: {
+        generation: latest.generation,
+        number: 0,
+        bitmap: {
+          close() {
+            closed++;
+          },
+        },
+      },
+    });
+    raster.draw(target, 0, 500);
+    assert.equal(drawn, 1);
+    assert.equal(raster.tileBuilds, 1);
+    assert.equal(ready, 1);
+    raster.dispose();
+    assert.equal(closed, 2);
+  } finally {
+    Object.assign(globalThis, prior);
+  }
+});

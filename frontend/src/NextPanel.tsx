@@ -1,7 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { ArrowLeftRight, Music2, RotateCcw, SkipForward } from "lucide-react";
-import { isDesktop, native } from "./api";
+import { isDesktop, control } from "./api";
 import type { EngineSnapshot } from "./types";
+import { engineStore } from "./engine-state";
 import SpotifyLogo from "./SpotifyLogo";
 import {
   browseIndex,
@@ -32,7 +39,7 @@ import "./styles/next.css";
  * energy; the browse knob steers both panes like the playlist browser.
  */
 export default function NextPanel({
-  engine,
+  engine: initialEngine,
   active,
   libraryRevision,
   controllerLayer,
@@ -52,6 +59,12 @@ export default function NextPanel({
   onLoad: (deck: number, suggestion: Suggestion) => void | Promise<void>;
   onError: (error: unknown) => void;
 }) {
+  const controls = useSyncExternalStore(
+    engineStore.subscribeControls,
+    engineStore.getControls,
+  );
+  const engine =
+    controls.running === initialEngine.running ? controls : initialEngine;
   const [direction, updateDirection] = useState<EnergyDirection>("keep");
   const directionRef = useRef(direction);
   const setDirection = useCallback((value: EnergyDirection) => {
@@ -101,10 +114,11 @@ export default function NextPanel({
       while (fetched.current !== wanted.current.key) {
         const { key, direction } = wanted.current;
         fetched.current = key;
-        const result = await native<SuggestionList>("suggest_next", {
+        const result = await control<SuggestionList>("library.suggest_next", {
           energy_direction: direction,
         });
-        // Shown even if the inputs moved on meanwhile; the loop fetches again.
+        // Never make a stale result selectable while a fresh request is pending.
+        if (key !== wanted.current.key) continue;
         listRef.current = result;
         updateList(result);
         if (
@@ -183,7 +197,7 @@ export default function NextPanel({
 
   async function forgetPlayed() {
     try {
-      await native("clear_play_history");
+      await control("library.history.clear");
       setRefreshes((n) => n + 1);
     } catch (error) {
       onError(error);

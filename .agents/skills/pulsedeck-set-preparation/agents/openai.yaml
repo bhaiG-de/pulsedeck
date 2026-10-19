@@ -1,4 +1,0 @@
-interface:
-  display_name: "Set Preparation"
-  short_description: "Select and order tracks for a requested DJ set"
-  default_prompt: "Use $pulsedeck-set-preparation to handle the requested PulseDeck task through the CLI and verify the result."

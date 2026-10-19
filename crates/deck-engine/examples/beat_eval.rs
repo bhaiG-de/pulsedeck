@@ -195,9 +195,8 @@ fn main() {
     }
 }
 
-/// Side-by-side estimates without annotations, then each track's sections.
+/// Side-by-side tempo and timing estimates without annotations.
 fn report(files: &[String]) {
-    let mut sections = Vec::new();
     println!("| File | DSP BPM | DSP offset | Model BPM | Model beat 1 | On grid | Bar agreement | Seconds |");
     println!("| --- | --- | --- | --- | --- | --- | --- | --- |");
     for file in files {
@@ -227,23 +226,8 @@ fn report(files: &[String]) {
                 if let Some(w) = warning {
                     eprintln!("{file}: beat model failed: {w}");
                 }
-                sections.push((name, model.sections));
             }
             Err(e) => eprintln!("{file}: {e}"),
-        }
-    }
-    for (name, stage) in sections {
-        let Some(stage) = stage else {
-            println!("\n{name}: no sections");
-            continue;
-        };
-        println!("\n{name} ({:?}):", stage.vocabulary);
-        for s in &stage.sections {
-            let label = s.label.map_or("section".to_string(), |l| format!("{l:?}"));
-            println!(
-                "  {:>6.1}s  {:>3} bars  {:<9}  energy {:.2}  groove {:.2}  rise {:+.2}  group {}",
-                s.start_seconds, s.bars, label, s.energy, s.groove, s.rise, s.group
-            );
         }
     }
 }

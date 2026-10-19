@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { native, isDesktop } from "./api";
 import {
   ControlRegistry,
+  waitForUiCommit,
   ControlInputError,
   type ControlHandlers,
 } from "./control-state";
@@ -24,9 +25,7 @@ function ensureListener() {
       );
       // React state commits before a subsequent display frame. Acknowledgment
       // includes the published post-commit view state, not the requested value.
-      await new Promise<void>((resolve) =>
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-      );
+      await waitForUiCommit();
       const snapshot = registry.snapshot(payload.target);
       await native("ui_publish", { target: payload.target, snapshot });
       await native("ui_reply", {

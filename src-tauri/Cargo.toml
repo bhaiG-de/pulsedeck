@@ -1,6 +1,6 @@
 [package]
 name = "pulsedeck"
-version = "0.1.0"
+version = "0.2.0"
 description = "Native Rust DJ performance engine and Tauri desktop interface"
 edition = "2021"
 
@@ -13,7 +13,8 @@ schemars = "0.8.22"
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# Preserve beat-event/grid precision when hydrating durable analysis records.
+serde_json = { version = "1", features = ["float_roundtrip"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 quick-xml = { version = "0.37", features = ["serialize"] }
 url = "2"
@@ -24,6 +25,7 @@ spotify-playback = { path = "../crates/spotify-playback" }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 sha2 = "0.10"
 base64 = "0.22"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 rand = "0.8"
 keyring = { version = "3", features = ["apple-native"] }
 open = "5"

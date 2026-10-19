@@ -146,6 +146,28 @@ pub fn probe_client_identity(developer_id: &str) -> Result<ClientIdentityProbe, 
     })
 }
 
+fn parse_track_uri(value: &str) -> Result<SpotifyUri, String> {
+    let id = value.strip_prefix("spotify:track:").ok_or_else(|| {
+        "Expected a Spotify catalog track URI: spotify:track:<22-character ID>; copy the complete URI from the library result".to_string()
+    })?;
+    if id.len() != 22 || !id.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+        return Err(format!("Spotify track IDs must contain exactly 22 ASCII letters or digits; received {} characters. Copy the complete URI from the library result rather than reconstructing the ID", id.chars().count()));
+    }
+    let uri = SpotifyUri::from_uri(value).map_err(|_| {
+        "Invalid Spotify catalog track ID; copy the complete URI from the library result"
+            .to_string()
+    })?;
+    if !matches!(uri, SpotifyUri::Track { .. }) {
+        return Err("Only Spotify catalog track URIs can be prepared for these decks".into());
+    }
+    Ok(uri)
+}
+
+/// Validate the same source identity before queuing, source mutation or network access.
+pub fn validate_track_uri(value: &str) -> Result<(), String> {
+    parse_track_uri(value).map(|_| ())
+}
+
 fn validate_request(request: &PrepareRequest) -> Result<SpotifyUri, String> {
     if request.client_id != native_client_id() {
         return Err("Native Spotify playback requires a separate native login for this platform's librespot identity; a Web API application grant cannot be substituted".into());
@@ -153,11 +175,7 @@ fn validate_request(request: &PrepareRequest) -> Result<SpotifyUri, String> {
     if request.access_token.is_empty() || request.access_token.len() > 8192 {
         return Err("Your Spotify session has no usable playback token; sign in again".into());
     }
-    let uri = SpotifyUri::from_uri(&request.track_uri)
-        .map_err(|_| "Select a valid Spotify catalog track".to_string())?;
-    if !matches!(uri, SpotifyUri::Track { .. }) {
-        return Err("Only Spotify catalog tracks can be prepared for these decks".into());
-    }
+    let uri = parse_track_uri(&request.track_uri)?;
     if let Some(duration) = request.expected_duration_ms {
         validate_duration(duration)?;
     }
@@ -726,7 +744,7 @@ fn read_output(
                     return Err("Prepared Spotify source did not match the selected track".into());
                 }
                 if let Some(uri) = &info.resolved_uri {
-                    if !matches!(SpotifyUri::from_uri(uri), Ok(SpotifyUri::Track { .. })) {
+                    if validate_track_uri(uri).is_err() {
                         return Err("Worker returned an invalid resolved Spotify source".into());
                     }
                 }
@@ -928,6 +946,26 @@ mod tests {
         let mut wrong = MAGIC.to_vec();
         record_json(&mut wrong, METADATA, &selected);
         assert!(read_output(&mut Cursor::new(wrong), &request(1000)).is_err());
+    }
+    #[test]
+    fn catalog_uri_validation_explains_truncated_ids_without_network_or_credentials() {
+        let error = validate_track_uri("spotify:track:5u4hhtZ7f4rWkMZEZcTKr").unwrap_err();
+        assert!(error.contains("22 ASCII"), "{error}");
+        assert!(error.contains("received 21 characters"), "{error}");
+        assert!(error.contains("complete URI"), "{error}");
+        assert!(validate_track_uri("spotify:track:4uLU6hMCjMI75M1A2tKUQC").is_ok());
+        for value in [
+            "spotify:episode:4uLU6hMCjMI75M1A2tKUQC",
+            "https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC",
+            "spotify:track:4uLU6hMCjMI75M1A2tKUQ!",
+            "spotify:track:4uLU6hMCjMI75M1A2tKUQC ",
+        ] {
+            assert!(validate_track_uri(value).is_err(), "{value}");
+        }
+        // Accepted identity parsing is shared with the worker request path.
+        let mut valid = request(1000);
+        valid.track_uri = "spotify:track:5u4hhtZ7f4rWkMZEZcTKr".into();
+        assert_eq!(validate_request(&valid).unwrap_err(), error);
     }
     #[test]
     fn request_and_memory_bounds_are_enforced_before_network() {

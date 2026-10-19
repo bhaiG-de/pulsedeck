@@ -1,0 +1,4 @@
+interface:
+  display_name: "Manage Library"
+  short_description: "Manage collections, track analysis and saved cues"
+  default_prompt: "Use $pulsedeck-library to manage the requested PulseDeck library and verify saved changes."

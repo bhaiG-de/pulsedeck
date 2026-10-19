@@ -1,7 +1,7 @@
 {
   "name": "pulsedeck",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "scripts": {
     "dev": "npm --prefix frontend run dev",
     "build": "npm --prefix frontend run build",
@@ -9,7 +9,10 @@
     "desktop": "tauri dev",
     "package": "tauri build",
     "test": "bash tools/test-all.sh",
-    "cli": "bash tools/rust-env.sh cargo run --quiet -p pulsedeck-cli --"
+    "cli": "bash tools/rust-env.sh cargo run --quiet -p pulsedeck-cli --",
+    "package:macos": "tauri build --bundles app && cargo build --release -p pulsedeck-cli && python3 tools/build-dmg.py"
   },
-  "devDependencies": {"@tauri-apps/cli": "^2.9.0"}
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.9.0"
+  }
 }

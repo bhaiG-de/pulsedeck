@@ -63,7 +63,7 @@ The final version-11 sweep covers twelve preselected Spotify style cases spannin
 - [Fixed split](labeled-rhythm-split.json), [policy history/source hashes](labeled-rhythm-policy.json).
 - [Development results](labeled-rhythm-development.json), [780-clip regression results](labeled-rhythm-evaluation.json), [80-clip full PCM results](labeled-rhythm-pcm-evaluation.json).
 - [Packaged-app results](labeled-rhythm-native-evaluation.json), [controlled audio failures](labeled-rhythm-controlled-fixtures.json).
-- [Decoder implementation/provenance](../crates/audio-analysis/src/dbn/README.md), [manual-grid agent workflow](../.agents/skills/pulsedeck-track-inspection/SKILL.md).
+- [Decoder implementation/provenance](../crates/audio-analysis/src/dbn/README.md), [manual-grid agent workflow](../.agents/skills/pulsedeck-library/references/track-knowledge.md#correct-a-requested-grid).
 
 Build verified model assets and benchmark workers with `python3 tools/ensure-beat-models.py` and `bash tools/rust-env.sh cargo build -p audio-analysis --release --examples`. Use a Python environment containing NumPy and mir_eval 0.8.2. Download the official spectra and annotations separately; source audio, raw spectra and activations are not checked into this repository.
 

@@ -1,5 +1,5 @@
 import { gridBeatPosition, type BeatGrid } from "./beat-grid.ts";
-import type { SectionLabel, SectionStage, WaveformBands } from "./types";
+import type { CueRole, CuePoint, WaveformBands } from "./types";
 
 /* OP-1 screen palette: blue lows, green mids, white highs. The mixer's EQ
    caps use the same three colours, so a knob points at its band. */
@@ -70,6 +70,21 @@ export function getWaveformWindow({
     end: playhead + span / 2,
     span,
     playheadFraction: 0.5,
+  };
+}
+
+/** Add offscreen pixels without changing the waveform's time-to-pixel scale. */
+export function expandWaveformWindow(
+  view: WaveformWindow,
+  width: number,
+  padding: number,
+): WaveformWindow {
+  const extra = width > 0 ? (padding * view.span) / width : 0;
+  return {
+    ...view,
+    start: view.start - extra,
+    end: view.end + extra,
+    span: view.span + 2 * extra,
   };
 }
 
@@ -205,7 +220,7 @@ export const HOT_CUE_COLORS = [
   "#c58adc",
 ] as const;
 
-export const SECTION_COLORS: Record<SectionLabel, string> = {
+export const CUE_ROLE_COLORS: Record<CueRole, string> = {
   intro: "#8b95a7",
   build_up: "#e8b339",
   drop: "#ff5a4f",
@@ -214,8 +229,8 @@ export const SECTION_COLORS: Record<SectionLabel, string> = {
   hook: "#ff7ad9",
   outro: "#8b95a7",
 };
-export const UNLABELLED_SECTION = "#5a5a60";
-export const SECTION_NAMES: Record<SectionLabel, string> = {
+export const UNLABELLED_CUE = "#5a5a60";
+export const CUE_ROLE_NAMES: Record<CueRole, string> = {
   intro: "Intro",
   build_up: "Build-up",
   drop: "Drop",
@@ -225,60 +240,54 @@ export const SECTION_NAMES: Record<SectionLabel, string> = {
   outro: "Outro",
 };
 
-export interface DisplaySection {
+export interface DisplayCue {
+  id: string;
   start: number;
   end: number;
-  bars: number;
-  label: SectionLabel | null;
+  label: CueRole | null;
+  name: string;
 }
-
-/** Sections as drawn: neighbours with the same label merge, as the cue planner does. */
-export function displaySections(
-  stage: SectionStage | null | undefined,
+/** Render the canonical source anchors. No frontend section merging or cue planning. */
+export function displayCuePoints(
+  points: CuePoint[] | null | undefined,
   duration: number,
-): DisplaySection[] {
-  if (!stage?.sections?.length || !(stage.bpm > 0)) return [];
-  const bar = (stage.beats_per_bar ?? 4) * 60 / stage.bpm;
-  const merged: DisplaySection[] = [];
-  for (const s of stage.sections) {
-    const last = merged[merged.length - 1];
-    if (last && last.label !== null && last.label === s.label) {
-      last.bars += s.bars;
-    } else {
-      merged.push({
-        start: s.start_seconds,
-        end: s.start_seconds,
-        bars: s.bars,
-        label: s.label,
-      });
-    }
-  }
-  const times = stage.bar_times ?? [];
-  const sectionEnd = (s: DisplaySection) => {
-    const start = times.findIndex(t => Math.abs(t - s.start) < 0.001);
-    return start >= 0 ? times[start + s.bars] ?? s.start + s.bars * bar : s.start + s.bars * bar;
-  };
-  return merged.map((s, i) => ({
-    ...s,
-    end: Math.min(
-      Number.isFinite(duration) && duration > 0 ? duration : Infinity,
-      merged[i + 1]?.start ?? sectionEnd(s),
-    ),
-  }));
+): DisplayCue[] {
+  return (points ?? [])
+    .filter(
+      (p) =>
+        Number.isFinite(p.start_seconds) &&
+        p.start_seconds >= 0 &&
+        p.start_seconds <= duration,
+    )
+    .map((p) => ({
+      id: p.id,
+      start: p.start_seconds,
+      end: Math.min(
+        duration,
+        Math.max(p.start_seconds, p.end_seconds ?? p.start_seconds),
+      ),
+      label: p.role,
+      name: p.name,
+    }))
+    .sort((a, b) => a.start - b.start);
 }
 
 /** The next section after `position`, with whole bars left until it starts. */
-export function nextSection(
-  sections: DisplaySection[],
+export function nextCue(
+  points: DisplayCue[],
   position: number,
   bpm: number,
   grid?: BeatGrid,
-): { label: SectionLabel | null; bars: number } | null {
+): { label: CueRole | null; name: string; bars: number } | null {
   if (!Number.isFinite(position) || !(bpm > 0)) return null;
-  const next = sections.find((s) => s.start > position + 1e-3);
+  const next = points.find((s) => s.start > position + 1e-3);
   if (!next) return null;
   const from = grid ? gridBeatPosition(grid, position) : null;
   const to = grid ? gridBeatPosition(grid, next.start) : null;
-  const bars = Math.ceil((from !== null && to !== null ? (to - from) / grid!.meter : (next.start - position) / (240 / bpm)) - 1e-6);
-  return { label: next.label, bars: Math.max(1, bars) };
+  const bars = Math.ceil(
+    (from !== null && to !== null
+      ? (to - from) / grid!.meter
+      : (next.start - position) / (240 / bpm)) - 1e-6,
+  );
+  return { label: next.label, name: next.name, bars: Math.max(1, bars) };
 }

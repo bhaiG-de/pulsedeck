@@ -1,10 +1,14 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod analysis_preferences;
+mod artwork;
 mod audio_preferences;
 mod control;
 mod controller;
+mod import_scan;
 mod library;
+mod manual_cue_migration;
+mod metadata_index;
+mod next_move;
 mod spotify;
 mod spotify_analysis;
 mod spotify_decks;
@@ -38,6 +42,7 @@ struct AnalysisProgress {
     current_path: Option<String>,
     errors: Vec<String>,
     cancelled: bool,
+    analyzing: bool,
 }
 
 struct AppState {
@@ -48,15 +53,9 @@ struct AppState {
     import_busy: AtomicBool,
     /// Set to stop an import or library analysis between (and inside) tracks.
     import_cancel: AtomicBool,
-    /// Whether the beat model also runs on Spotify sources.
-    beat_model_spotify: AtomicBool,
-    /// Whether song sections fill empty hot cue pads and memory cues.
-    auto_hot_cues: AtomicBool,
-    auto_memory_cues: AtomicBool,
-    /// Debounces section refreshes after manual grid edits, per deck.
-    section_refresh: [AtomicU64; 2],
-    analysis_settings_path: std::path::PathBuf,
+    data_dir: std::path::PathBuf,
     loading: [AtomicU64; 2],
+    local_preparation: [Mutex<()>; 2],
     source_jobs: spotify_decks::SourceJobs,
     spotify_analysis: spotify_analysis::BatchService,
     messages: Mutex<Vec<String>>,
@@ -93,7 +92,6 @@ struct SmartModes {
 
 type PersistedDeckState = (String, [Option<f64>; 8], [Option<f64>; 10], f64, f64, f64);
 /// A deck's hot cue pads and memory cues.
-type DeckCues = ([Option<f64>; 8], [Option<f64>; 10]);
 #[derive(Serialize)]
 struct AppSnapshot {
     engine: EngineSnapshot,
@@ -107,35 +105,28 @@ struct AppSnapshot {
     messages: Vec<String>,
     smart_modes: SmartModes,
     spotify_decks: [spotify_decks::DeckSourceStatus; 2],
-    analysis_settings: analysis_preferences::AnalysisSettings,
 }
 
 fn poisoned() -> String {
     "Internal state is unavailable".into()
 }
 
-fn analysis_settings(state: &AppState) -> analysis_preferences::AnalysisSettings {
-    analysis_preferences::AnalysisSettings {
-        beat_model_spotify: state.beat_model_spotify.load(Ordering::Acquire),
-        auto_hot_cues: state.auto_hot_cues.load(Ordering::Acquire),
-        auto_memory_cues: state.auto_memory_cues.load(Ordering::Acquire),
-    }
+/// Whether all persisted source stages are current, including terminal failures.
+pub(crate) fn source_analysis_current(analysis: &TrackAnalysis) -> bool {
+    deck_engine::analysis_current(analysis)
 }
 
-/// Whether an analysis already has the current beat and section stage.
-pub(crate) fn beat_stage_current(analysis: &TrackAnalysis) -> bool {
-    analysis
-        .beat_model
-        .as_ref()
-        .is_some_and(|stage| stage.version >= audio_analysis::BEAT_MODEL_VERSION)
-        && analysis.neural_rhythm.is_some()
-}
-
-#[tauri::command]
-fn get_app_state(state: State<'_, AppState>) -> Result<AppSnapshot, String> {
+fn get_app_state(state: State<'_, AppState>, include_library: bool) -> Result<AppSnapshot, String> {
     let (library, playlists) = {
         let lib = state.library.lock().map_err(|_| poisoned())?;
-        (lib.tracks()?, lib.playlists()?)
+        (
+            if include_library {
+                lib.tracks()?
+            } else {
+                Vec::new()
+            },
+            lib.playlists()?,
+        )
     };
     let modes = {
         let control = state.controller.lock().map_err(|_| poisoned())?;
@@ -156,31 +147,9 @@ fn get_app_state(state: State<'_, AppState>) -> Result<AppSnapshot, String> {
         messages: state.messages.lock().map_err(|_| poisoned())?.clone(),
         smart_modes: modes,
         spotify_decks: state.source_jobs.snapshot(),
-        analysis_settings: analysis_settings(&state),
     })
 }
 
-#[tauri::command]
-fn get_engine_snapshot(state: State<'_, AppState>) -> EngineSnapshot {
-    state.engine.snapshot()
-}
-
-#[derive(Serialize)]
-struct EngineTransport {
-    engine: EngineSnapshot,
-    metadata_revision: u64,
-}
-#[tauri::command]
-fn get_engine_transport(state: State<'_, AppState>) -> EngineTransport {
-    EngineTransport {
-        engine: state.engine.transport_snapshot(),
-        metadata_revision: state.engine.metadata_revision(),
-    }
-}
-#[tauri::command]
-fn get_engine_metadata(state: State<'_, AppState>) -> deck_engine::EngineMetadataSnapshot {
-    state.engine.metadata_snapshot()
-}
 #[derive(Serialize)]
 struct ActivitySnapshot {
     midi: MidiStatus,
@@ -191,7 +160,6 @@ struct ActivitySnapshot {
     audio_status: Option<AudioStatus>,
     audio_devices: Vec<AudioDeviceInfo>,
 }
-#[tauri::command]
 fn get_activity_state(state: State<'_, AppState>) -> Result<ActivitySnapshot, String> {
     let smart_modes = {
         let control = state.controller.lock().map_err(|_| poisoned())?;
@@ -211,7 +179,6 @@ fn get_activity_state(state: State<'_, AppState>) -> Result<ActivitySnapshot, St
     })
 }
 
-#[tauri::command]
 async fn list_audio_devices(app: tauri::AppHandle) -> Result<Vec<AudioDeviceInfo>, String> {
     let state = app.state::<AppState>();
     if state.audio_discovering.swap(true, Ordering::AcqRel) {
@@ -256,7 +223,6 @@ async fn list_audio_devices(app: tauri::AppHandle) -> Result<Vec<AudioDeviceInfo
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command(rename_all = "snake_case")]
 async fn start_audio(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -286,7 +252,6 @@ async fn start_audio(
     .await
     .map_err(|e| e.to_string())?
 }
-#[tauri::command]
 async fn stop_audio(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let generation = state.audio_generation.fetch_add(1, Ordering::AcqRel) + 1;
     tauri::async_runtime::spawn_blocking(move || {
@@ -305,7 +270,6 @@ async fn stop_audio(app: tauri::AppHandle, state: State<'_, AppState>) -> Result
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
 async fn choose_tracks(app: tauri::AppHandle) -> Result<Vec<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         Ok(app
@@ -328,6 +292,18 @@ async fn choose_tracks(app: tauri::AppHandle) -> Result<Vec<String>, String> {
     .map_err(|e| e.to_string())?
 }
 
+async fn choose_folder(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(folder) = app.dialog().file().blocking_pick_folder() else {
+            return Ok(Vec::new());
+        };
+        let folder = folder.into_path().map_err(|error| error.to_string())?;
+        import_scan::audio_paths(&folder)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 fn analysis_record(analysis: TrackAnalysis) -> TrackRecord {
     TrackRecord {
         id: 0,
@@ -335,6 +311,7 @@ fn analysis_record(analysis: TrackAnalysis) -> TrackRecord {
         title: analysis.title,
         artist: analysis.artist.unwrap_or_default(),
         tags: Vec::new(),
+        file_metadata: Vec::new(),
         duration_seconds: analysis.duration_seconds,
         bpm: analysis.bpm.unwrap_or(0.),
         key: analysis.key,
@@ -358,8 +335,12 @@ fn analysis_record(analysis: TrackAnalysis) -> TrackRecord {
             beatgrid_confidence: analysis.beatgrid_confidence,
             beatgrid_source: analysis.beatgrid_source,
             beat_model: analysis.beat_model,
-            sections: analysis.sections,
-            auto_cues: analysis.auto_cues,
+
+            cue_points: analysis.cue_points,
+            source_fingerprint: analysis.source_fingerprint,
+            source_release: analysis.source_release,
+            audio_measurements: analysis.audio_measurements,
+            analysis_stages: analysis.analysis_stages,
             neural_rhythm: analysis.neural_rhythm,
             rhythm_error: analysis.rhythm_error,
             manual_grid_anchor_index: analysis.manual_grid_anchor_index,
@@ -398,8 +379,12 @@ fn record_analysis(record: TrackRecord) -> TrackAnalysis {
         rhythm_error: record.analysis.rhythm_error,
         manual_grid_anchor_index: record.analysis.manual_grid_anchor_index,
         beat_model: record.analysis.beat_model,
-        sections: record.analysis.sections,
-        auto_cues: record.analysis.auto_cues,
+
+        cue_points: record.analysis.cue_points,
+        source_fingerprint: record.analysis.source_fingerprint,
+        source_release: record.analysis.source_release,
+        audio_measurements: record.analysis.audio_measurements,
+        analysis_stages: record.analysis.analysis_stages,
     }
 }
 
@@ -448,14 +433,11 @@ fn apply_grid(
 
 /// Save a loaded track's analysis: the library for local files (manual BPM and
 /// grid kept by `upsert`), the Spotify cache otherwise (manual edits merged).
-/// Returns the grid the track should use and whether it places beat 1.
 fn persist_analysis(
     app: &tauri::AppHandle,
     state: &AppState,
     analysis: &TrackAnalysis,
-) -> Result<(Option<f64>, Option<f64>, bool), String> {
-    let knows_beat_one =
-        |source: Option<&str>| matches!(source, Some("beat_this" | "model" | "manual"));
+) -> Result<(), String> {
     if analysis.path.starts_with("spotify:") {
         let stored = state
             .library
@@ -464,208 +446,40 @@ fn persist_analysis(
             .spotify_analysis(&analysis.path)?;
         let merged = keep_spotify_manual(analysis.clone(), stored);
         spotify_analysis::store(app, &merged)?;
-        Ok((
-            merged.bpm,
-            merged.beatgrid_offset_seconds,
-            knows_beat_one(merged.beatgrid_source.as_deref()),
-        ))
+        Ok(())
     } else {
-        let record = state
+        state
             .library
             .lock()
             .map_err(|_| poisoned())?
             .upsert(&analysis_record(analysis.clone()))?;
-        Ok((
-            Some(record.bpm),
-            Some(record.beatgrid_offset_seconds),
-            knows_beat_one(record.analysis.beatgrid_source.as_deref()),
-        ))
+        Ok(())
     }
-}
-
-/// Re-cut the loaded deck's sections when they were cut from a different grid
-/// than the one the track uses.
-fn sections_for_grid(
-    state: &AppState,
-    deck: usize,
-    analysis: TrackAnalysis,
-    grid: (Option<f64>, Option<f64>, bool),
-) -> Result<TrackAnalysis, String> {
-    match grid {
-        (Some(bpm), Some(offset), true)
-            if (30.0..=300.0).contains(&bpm)
-                && analysis
-                    .sections
-                    .as_ref()
-                    .is_none_or(|s| !s.matches_grid(bpm, offset)) =>
-        {
-            state.engine.sections_loaded(deck, bpm, offset)
-        }
-        _ => Ok(analysis),
-    }
-}
-
-/// Fill the loaded deck's empty cue slots from its sections and save which cues
-/// were placed automatically. `cues` overrides the deck's current cues when the
-/// engine has not applied a just-restored set yet. Spotify cues are not stored
-/// between loads, so an older auto-cue record from the cache is ignored.
-pub(crate) fn place_auto_cues(
-    app: &tauri::AppHandle,
-    state: &AppState,
-    deck: usize,
-    analysis: TrackAnalysis,
-    cues: Option<DeckCues>,
-    fresh_load: bool,
-) -> Result<TrackAnalysis, String> {
-    let Some(stage) = analysis.sections.as_ref() else {
-        return Ok(analysis);
-    };
-    let (hot, memory) = cues.unwrap_or_else(|| {
-        let deck = &state.engine.transport_snapshot().decks[deck];
-        (deck.hot_cues, deck.memory_cues)
-    });
-    let previous = if fresh_load {
-        None
-    } else {
-        analysis.auto_cues.as_ref()
-    };
-    let plan = audio_analysis::plan_auto_cues(
-        stage,
-        hot,
-        memory,
-        previous,
-        state.auto_hot_cues.load(Ordering::Acquire),
-        state.auto_memory_cues.load(Ordering::Acquire),
-    );
-    let metadata = state.engine.metadata_snapshot();
-    if metadata.tracks[deck]
-        .as_ref()
-        .is_none_or(|t| t.id != analysis.id)
-    {
-        return Err("Track changed during cue analysis".into());
-    }
-    if plan.hot != hot || plan.memory != memory {
-        state.engine.merge_auto_cues(
-            deck,
-            metadata.load_revisions[deck],
-            (hot, plan.hot),
-            (memory, plan.memory),
-        )?;
-    }
-    let record = plan.record;
-    let updated = state
-        .engine
-        .update_loaded_analysis(deck, &analysis.id, |a| a.auto_cues = Some(record))?;
-    persist_analysis(app, state, &updated)?;
-    Ok(updated)
-}
-
-/// Run the beat model and sections on a freshly loaded deck in the background
-/// and persist the result. The deck's grid moves only when that cannot disturb
-/// a synced mix; otherwise the new grid applies on the track's next load. Empty
-/// cue slots are filled from the sections either way.
-pub(crate) fn spawn_beat_model(app: &tauri::AppHandle, deck: usize, request: u64) {
-    let app = app.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let current = || state.loading[deck].load(Ordering::Acquire) == request;
-        if !current() {
-            return;
-        }
-        let analysis = match state.engine.beat_model_loaded(deck) {
-            Ok(analysis) if current() => analysis,
-            Ok(_) => return,
-            Err(e) => {
-                if current() {
-                    state.message(format!("Beat analysis failed: {e}"));
-                }
-                return;
-            }
-        };
-        let result = (|| -> Result<(), String> {
-            persist_analysis(&app, &state, &analysis)?;
-            if !current() {
-                return Ok(());
-            }
-            let transport = state.engine.transport_snapshot();
-            let d = &transport.decks[deck];
-            let grid = (d.bpm, Some(d.beatgrid_offset_seconds), d.beatgrid_downbeat);
-            let analysis = sections_for_grid(&state, deck, analysis.clone(), grid)?;
-            let spotify = analysis.path.starts_with("spotify:");
-            place_auto_cues(&app, &state, deck, analysis, None, spotify).map(|_| ())
-        })();
-        if let Err(e) = result {
-            if current() {
-                state.message(format!("Beat analysis could not be saved: {e}"));
-            }
-        }
-    });
-}
-
-/// After a manual grid edit, re-cut the loaded deck's sections on the new grid
-/// and move its untouched auto cues. Rapid edits collapse into one refresh.
-fn spawn_sections_refresh(app: &tauri::AppHandle, deck: usize) {
-    let app = app.clone();
-    let state = app.state::<AppState>();
-    let ticket = state.section_refresh[deck].fetch_add(1, Ordering::AcqRel) + 1;
-    tauri::async_runtime::spawn_blocking(move || {
-        std::thread::sleep(std::time::Duration::from_millis(250));
-        let state = app.state::<AppState>();
-        if state.section_refresh[deck].load(Ordering::Acquire) != ticket {
-            return;
-        }
-        let deck_state = state.engine.transport_snapshot().decks[deck].clone();
-        let Some(bpm) = deck_state.bpm.filter(|b| (30.0..=300.0).contains(b)) else {
-            return;
-        };
-        let result = state
-            .engine
-            .sections_loaded(deck, bpm, deck_state.beatgrid_offset_seconds)
-            .and_then(|analysis| {
-                let spotify = analysis.path.starts_with("spotify:");
-                place_auto_cues(&app, &state, deck, analysis, None, spotify)
-            });
-        // A track loaded meanwhile makes the refresh moot, not an error.
-        if let Err(Some(e)) = result.map_err(|e| (!e.starts_with("Track changed")).then_some(e)) {
-            state.message(format!("Sections could not be updated: {e}"));
-        }
-    });
-}
-
-/// Choose the vocabulary for the loaded track's section labels (`None` returns
-/// to the detected one) and re-place untouched auto cues by the new labels.
-#[tauri::command(rename_all = "snake_case")]
-async fn set_section_vocabulary(
-    app: tauri::AppHandle,
-    deck: usize,
-    vocabulary: Option<audio_analysis::Vocabulary>,
-) -> Result<TrackAnalysis, String> {
-    if deck > 1 {
-        return Err("Deck must be 0 or 1".into());
-    }
-    tauri::async_runtime::spawn_blocking(move || {
-        let state = app.state::<AppState>();
-        let id = state.engine.metadata_snapshot().tracks[deck]
-            .as_ref()
-            .map(|t| t.id.clone())
-            .ok_or("Deck has no loaded track")?;
-        let analysis = state.engine.update_loaded_analysis(deck, &id, |a| {
-            if let Some(stage) = a.sections.as_mut() {
-                stage.vocabulary_override = vocabulary;
-                stage.relabel();
-            }
-        })?;
-        if analysis.sections.is_none() {
-            return Err("This track has no sections yet".into());
-        }
-        let spotify = analysis.path.starts_with("spotify:");
-        place_auto_cues(&app, &state, deck, analysis, None, spotify)
-    })
-    .await
-    .map_err(|_| "Section worker failed".to_string())?
 }
 
 fn import_one(state: &AppState, path: &str) -> Result<TrackRecord, String> {
+    let path = std::fs::canonicalize(path).map_err(|e| format!("{path}: {e}"))?;
+    let path_string = path.to_string_lossy().into_owned();
+    let existing = state
+        .library
+        .lock()
+        .map_err(|_| poisoned())?
+        .track_by_path(&path_string)?;
+    let mut record = if let Some(existing) = existing {
+        existing
+    } else {
+        let record = analysis_record(deck_engine::probe_file(&path)?);
+        state
+            .library
+            .lock()
+            .map_err(|_| poisoned())?
+            .import_metadata(&record)?
+    };
+    metadata_index::refresh(state, &mut record)?;
+    Ok(record)
+}
+
+fn analyze_one(state: &AppState, path: &str) -> Result<TrackRecord, String> {
     let path = std::fs::canonicalize(path).map_err(|e| format!("{path}: {e}"))?;
     if !path.is_file() {
         return Err("Select a music file".into());
@@ -689,61 +503,15 @@ fn import_one(state: &AppState, path: &str) -> Result<TrackRecord, String> {
         }
     }
     let cancel = || state.import_cancel.load(Ordering::Acquire);
-    let (mut analysis, warning) = deck_engine::analyze_file_cached_with_sections(
-        &path,
-        existing.map(record_analysis),
-        &cancel,
-    )?;
+    let (analysis, warning) =
+        deck_engine::analyze_file_cached(&path, existing.map(record_analysis), &cancel)?;
     if let Some(warning) = warning {
         if let Ok(mut p) = state.analysis.lock() {
             p.errors.push(format!("{path_string}: {warning}"));
         }
     }
     let lib = state.library.lock().map_err(|_| poisoned())?;
-    let existing = lib.track_by_path(&path_string)?;
-    // A loaded deck owns its cues; they are filled when it next loads.
-    let loaded = state
-        .engine
-        .metadata_snapshot()
-        .tracks
-        .iter()
-        .flatten()
-        .any(|t| t.path == path_string);
-    let plan = analysis.sections.as_ref().filter(|_| !loaded).map(|stage| {
-        let (hot, memory) = existing.as_ref().map_or(([None; 8], [None; 10]), |r| {
-            (
-                r.hot_cues.clone().try_into().unwrap_or([None; 8]),
-                r.memory_cues.clone().try_into().unwrap_or([None; 10]),
-            )
-        });
-        let previous = existing
-            .as_ref()
-            .and_then(|r| r.analysis.auto_cues.as_ref());
-        let plan = audio_analysis::plan_auto_cues(
-            stage,
-            hot,
-            memory,
-            previous,
-            state.auto_hot_cues.load(Ordering::Acquire),
-            state.auto_memory_cues.load(Ordering::Acquire),
-        );
-        (plan, hot, memory)
-    });
-    if let Some((plan, _, _)) = &plan {
-        analysis.auto_cues = Some(plan.record.clone());
-    }
     let record = lib.upsert(&analysis_record(analysis))?;
-    if let Some((plan, hot, memory)) = plan {
-        if plan.hot != hot {
-            lib.metadata(&record.path, None, Some(plan.hot.to_vec()), None)?;
-        }
-        if plan.memory != memory {
-            lib.memory(&record.path, &plan.memory, record.cue_seconds)?;
-        }
-        return lib
-            .track_by_path(&record.path)?
-            .ok_or_else(|| "Imported track was not found".to_string());
-    }
     Ok(record)
 }
 
@@ -758,7 +526,12 @@ impl Drop for ImportGuard<'_> {
     }
 }
 
-fn import_batch(app: &tauri::AppHandle, paths: Vec<String>) -> Result<Vec<TrackRecord>, String> {
+fn import_batch<T>(
+    app: &tauri::AppHandle,
+    paths: Vec<String>,
+    analyzing: bool,
+    project: impl Fn(TrackRecord) -> T,
+) -> Result<Vec<T>, String> {
     let state = app.state::<AppState>();
     if state.import_busy.swap(true, Ordering::AcqRel) {
         return Err("A library import is already running".into());
@@ -768,6 +541,7 @@ fn import_batch(app: &tauri::AppHandle, paths: Vec<String>) -> Result<Vec<TrackR
     *state.analysis.lock().map_err(|_| poisoned())? = AnalysisProgress {
         active: true,
         total: paths.len(),
+        analyzing,
         ..Default::default()
     };
     let mut results = Vec::new();
@@ -781,10 +555,16 @@ fn import_batch(app: &tauri::AppHandle, paths: Vec<String>) -> Result<Vec<TrackR
         if let Ok(mut p) = state.analysis.lock() {
             p.current_path = Some(path.clone());
         }
-        match import_one(&state, &path) {
-            Ok(record) => results.push(record),
+        let result = if analyzing {
+            analyze_one(&state, &path)
+        } else {
+            import_one(&state, &path)
+        };
+        match result {
+            Ok(record) => results.push(project(record)),
             Err(_) if state.import_cancel.load(Ordering::Acquire) => continue,
             Err(e) => {
+                let e = format!("{path}: {e}");
                 state.message(e.clone());
                 if let Ok(mut p) = state.analysis.lock() {
                     p.errors.push(e);
@@ -798,55 +578,71 @@ fn import_batch(app: &tauri::AppHandle, paths: Vec<String>) -> Result<Vec<TrackR
     Ok(results)
 }
 
-#[tauri::command]
 async fn import_tracks(
     app: tauri::AppHandle,
     paths: Vec<String>,
-) -> Result<Vec<TrackRecord>, String> {
+    summary: Option<bool>,
+) -> Result<serde_json::Value, String> {
     if paths.len() > 10_000 {
         return Err("Import at most 10,000 tracks in one batch".into());
     }
-    tauri::async_runtime::spawn_blocking(move || import_batch(&app, paths))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        if summary.unwrap_or(false) {
+            import_batch(
+                &app,
+                paths,
+                false,
+                |record| serde_json::json!({"id":record.id}),
+            )
+            .map(serde_json::Value::Array)
+        } else {
+            serde_json::to_value(import_batch(&app, paths, false, std::convert::identity)?)
+                .map_err(|e| e.to_string())
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Re-analyze local tracks that lack the current beat-model stage, through the
 /// same cancellable worker and progress as an import.
-#[tauri::command]
 async fn update_library_analysis(app: tauri::AppHandle) -> Result<Vec<TrackRecord>, String> {
     let paths = app
         .state::<AppState>()
         .library
         .lock()
         .map_err(|_| poisoned())?
-        .paths_needing_beat_model()?;
-    tauri::async_runtime::spawn_blocking(move || import_batch(&app, paths))
-        .await
-        .map_err(|e| e.to_string())?
+        .paths_needing_analysis()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        import_batch(&app, paths, true, std::convert::identity)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
 fn cancel_library_analysis(state: State<'_, AppState>) {
     state.import_cancel.store(true, Ordering::Release);
 }
 
-#[tauri::command]
-fn set_analysis_settings(
-    state: State<'_, AppState>,
-    settings: analysis_preferences::AnalysisSettings,
-) -> Result<analysis_preferences::AnalysisSettings, String> {
-    analysis_preferences::save(&state.analysis_settings_path, &settings)?;
-    state
-        .beat_model_spotify
-        .store(settings.beat_model_spotify, Ordering::Release);
-    state
-        .auto_hot_cues
-        .store(settings.auto_hot_cues, Ordering::Release);
-    state
-        .auto_memory_cues
-        .store(settings.auto_memory_cues, Ordering::Release);
-    Ok(settings)
+fn apply_library_names(engine: &EngineHandle, path: &str, title: &str, artist: &str) {
+    let snapshot = engine.metadata_summary_snapshot();
+    for (deck, track) in snapshot.tracks.iter().enumerate() {
+        if let Some(track) = track.as_ref().filter(|track| {
+            track.path == path
+                && (track.title != title || track.artist.as_deref().unwrap_or("") != artist)
+        }) {
+            // A source switch after the snapshot must not rename the new deck.
+            let _ = engine.update_loaded_analysis_for_revision(
+                deck,
+                &track.id,
+                Some(snapshot.load_revisions[deck]),
+                |analysis| {
+                    analysis.title = title.into();
+                    analysis.artist = (!artist.is_empty()).then(|| artist.to_owned());
+                },
+            );
+        }
+    }
 }
 
 fn load_into_deck(
@@ -854,12 +650,37 @@ fn load_into_deck(
     deck: usize,
     path: &Path,
 ) -> Result<TrackAnalysis, String> {
+    load_into_deck_owned(app, deck, path, None, None)
+}
+fn load_into_deck_owned(
+    app: &tauri::AppHandle,
+    deck: usize,
+    path: &Path,
+    owner: Option<&str>,
+    ticket: Option<deck_engine::SourceLoadTicket>,
+) -> Result<TrackAnalysis, String> {
     if deck > 1 {
         return Err("Deck must be 0 or 1".into());
     }
     let state = app.state::<AppState>();
-    state.source_jobs.cancel(deck);
+    if owner.is_none() {
+        state.source_jobs.cancel(deck);
+    }
+    let check_owner = || -> Result<(), String> {
+        if owner.is_some_and(|owner| control::request_owner_cancelled(app, owner)) {
+            Err("Queued local source preparation was cancelled".into())
+        } else {
+            Ok(())
+        }
+    };
+    check_owner()?;
     let request = state.loading[deck].fetch_add(1, Ordering::AcqRel) + 1;
+    let _preparation = state.local_preparation[deck]
+        .lock()
+        .map_err(|_| poisoned())?;
+    if state.loading[deck].load(Ordering::Acquire) != request {
+        return Err("Track load was replaced by a newer request".into());
+    }
     let path = path.canonicalize().map_err(|e| e.to_string())?;
     let cached = state
         .library
@@ -869,7 +690,15 @@ fn load_into_deck(
         .map(record_analysis);
     // The engine's own generation checks protect late decode results. Parent
     // generation also avoids applying persisted metadata for a superseded load.
-    let analysis = state.engine.load_track_cached(deck, &path, cached)?;
+    check_owner()?;
+    let analysis = if let Some(ticket) = ticket {
+        state
+            .engine
+            .load_track_cached_for_ticket(ticket, &path, cached)?
+    } else {
+        state.engine.load_track_cached(deck, &path, cached)?
+    };
+    check_owner()?;
     let record = state
         .library
         .lock()
@@ -878,6 +707,18 @@ fn load_into_deck(
     if state.loading[deck].load(Ordering::Acquire) != request {
         return Err("Track load was replaced by a newer request".into());
     }
+    let analysis = if analysis.title != record.title
+        || analysis.artist.as_deref().unwrap_or("") != record.artist
+    {
+        state
+            .engine
+            .update_loaded_analysis(deck, &analysis.id, |current| {
+                current.title = record.title.clone();
+                current.artist = (!record.artist.is_empty()).then(|| record.artist.clone());
+            })?
+    } else {
+        analysis
+    };
     if matches!(
         record.analysis.bpm_source.as_deref(),
         Some("manual" | "import")
@@ -909,40 +750,56 @@ fn load_into_deck(
         deck,
         seconds: record.cue_seconds,
     })?;
-    if !beat_stage_current(&analysis) {
-        spawn_beat_model(app, deck, request);
-        return Ok(analysis);
-    }
-    // Cheap: fill any cue slots left empty since the sections were found. The
-    // just-restored cues are passed in because the engine may not show them yet.
-    match place_auto_cues(
-        app,
-        &state,
-        deck,
-        analysis.clone(),
-        Some((cues, memory_cues)),
-        false,
-    ) {
-        Ok(updated) => Ok(updated),
-        Err(e) => {
-            state.message(format!("Auto cues could not be placed: {e}"));
-            Ok(analysis)
+    if !deck_engine::playback_analysis_ready(&analysis) {
+        check_owner()?;
+        let completed = state.engine.complete_loaded_analysis(deck)?;
+        check_owner()?;
+        if state.loading[deck].load(Ordering::Acquire) != request {
+            return Err("Track load was replaced during analysis".into());
         }
+        persist_analysis(app, &state, &completed)?;
+        state
+            .engine
+            .wait_for_fence(state.engine.fence()?, std::time::Duration::from_secs(2))?;
+        if !deck_engine::playback_analysis_ready(&completed) {
+            return Err(
+                "Analysis could not prepare a usable BPM and waveform; inspect analysis or retry"
+                    .into(),
+            );
+        }
+        return Ok(completed);
     }
+    Ok(analysis)
 }
 
-#[tauri::command]
-async fn load_track(
+async fn load_track_owned(
     app: tauri::AppHandle,
     deck: usize,
     path: String,
+    owner: String,
 ) -> Result<TrackAnalysis, String> {
-    tauri::async_runtime::spawn_blocking(move || load_into_deck(&app, deck, Path::new(&path)))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<AppState>();
+        if control::request_owner_cancelled(&app, &owner) {
+            return Err("Queued local source preparation was cancelled".into());
+        }
+        let ticket = state.engine.begin_source_load(deck)?;
+        let cancel = state
+            .source_jobs
+            .start(deck, path.clone(), Some(owner.clone()))?;
+        state
+            .source_jobs
+            .attach_ticket(deck, &cancel, ticket.clone());
+        let result = load_into_deck_owned(&app, deck, Path::new(&path), Some(&owner), Some(ticket));
+        state
+            .source_jobs
+            .finish(deck, &cancel, result.as_ref().err().cloned());
+        result
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
 async fn reanalyze_loaded_track(
     app: tauri::AppHandle,
     deck: usize,
@@ -1001,22 +858,12 @@ async fn reanalyze_loaded_track(
         if let Some(bpm) = chosen_bpm {
             apply_grid(&state, deck, Some(bpm), None)?;
         }
-        let transport = state.engine.transport_snapshot();
-        let d = &transport.decks[deck];
-        let analysis = sections_for_grid(
-            &state,
-            deck,
-            analysis,
-            (d.bpm, Some(d.beatgrid_offset_seconds), d.beatgrid_downbeat),
-        )?;
-        let spotify = analysis.path.starts_with("spotify:");
-        place_auto_cues(&app, &state, deck, analysis, None, spotify)
+        Ok(analysis)
     })
     .await
     .map_err(|_| "Track analysis worker failed".to_string())?
 }
 
-#[tauri::command]
 async fn load_demo(app: tauri::AppHandle, deck: usize) -> Result<TrackAnalysis, String> {
     if deck > 1 {
         return Err("Deck must be 0 or 1".into());
@@ -1028,14 +875,6 @@ async fn load_demo(app: tauri::AppHandle, deck: usize) -> Result<TrackAnalysis, 
         .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
-fn engine_command(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-    command: EngineCommand,
-) -> Result<(), String> {
-    engine_command_inner(app, state, command, true, None)
-}
 fn engine_command_inner(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -1112,18 +951,10 @@ fn engine_command_inner(
     } else {
         None
     };
-    // A manual grid edit on a loaded track re-cuts its sections afterwards.
-    let edited_deck = match &command {
-        EngineCommand::SetBpm { deck, .. } | EngineCommand::SetBeatgrid { deck, .. }
-            if manual_bpm.is_some() || manual_grid.is_some() =>
-        {
-            Some(*deck)
-        }
-        _ => None,
-    };
     state
         .engine
         .command_for_revision(command.clone(), expected_revision)?;
+    control::manual_mix_session_takeover(&app, &command);
     state
         .controller
         .lock()
@@ -1189,18 +1020,19 @@ fn engine_command_inner(
             )?;
         }
     }
-    if let Some(deck) = edited_deck {
-        spawn_sections_refresh(&app, deck);
-    }
     Ok(())
 }
 
-#[tauri::command(rename_all = "snake_case")]
 fn set_controller_selection(state: State<'_, AppState>, track_id: i64) -> Result<(), String> {
-    let tracks = state.library.lock().map_err(|_| poisoned())?.tracks()?;
     let mut control = state.controller.lock().map_err(|_| poisoned())?;
     let index = if control.browse_context.is_empty() {
-        tracks.iter().position(|t| t.id == track_id)
+        state
+            .library
+            .lock()
+            .map_err(|_| poisoned())?
+            .track_ids()?
+            .iter()
+            .position(|id| *id == track_id)
     } else {
         control.browse_context.iter().position(|id| *id == track_id)
     };
@@ -1208,23 +1040,15 @@ fn set_controller_selection(state: State<'_, AppState>, track_id: i64) -> Result
     Ok(())
 }
 
-#[tauri::command(rename_all = "snake_case")]
 fn set_controller_browse_context(
     state: State<'_, AppState>,
     track_ids: Vec<i64>,
+    selected_track_id: Option<i64>,
 ) -> Result<(), String> {
-    if track_ids.len() > 100_000 {
-        return Err("Browser context exceeds 100,000 tracks".into());
-    }
     let mut control = state.controller.lock().map_err(|_| poisoned())?;
-    control.browse_context = track_ids;
-    control.selected = control
-        .selected
-        .min(control.browse_context.len().saturating_sub(1));
-    Ok(())
+    control.set_browse_context(track_ids, selected_track_id)
 }
 
-#[tauri::command]
 fn get_controller_surface(state: State<'_, AppState>) -> controller::ControllerSurface {
     state
         .controller
@@ -1232,7 +1056,6 @@ fn get_controller_surface(state: State<'_, AppState>) -> controller::ControllerS
         .unwrap_or_else(|e| e.into_inner())
         .surface()
 }
-#[tauri::command(rename_all = "snake_case")]
 fn set_controller_tempo_range(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
@@ -1252,7 +1075,6 @@ fn set_controller_tempo_range(
     );
     Ok(())
 }
-#[tauri::command(rename_all = "snake_case")]
 fn set_controller_browser_active(state: State<'_, AppState>, active: bool) -> Result<(), String> {
     state
         .controller
@@ -1261,7 +1083,6 @@ fn set_controller_browser_active(state: State<'_, AppState>, active: bool) -> Re
         .browser_ui_active = active;
     Ok(())
 }
-#[tauri::command]
 async fn instant_double(app: tauri::AppHandle, deck: usize) -> Result<(), String> {
     if deck > 1 {
         return Err("Deck must be 0 or 1".into());
@@ -1276,7 +1097,6 @@ async fn instant_double(app: tauri::AppHandle, deck: usize) -> Result<(), String
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
 fn set_smart_modes(
     state: State<'_, AppState>,
     fader: bool,
@@ -1288,12 +1108,10 @@ fn set_smart_modes(
     Ok(SmartModes { fader, cfx })
 }
 
-#[tauri::command]
 fn list_midi_ports() -> Result<MidiPorts, String> {
     flx4_midi::list_ports()
 }
 
-#[tauri::command(rename_all = "snake_case")]
 fn connect_midi(
     state: State<'_, AppState>,
     input_name: String,
@@ -1316,7 +1134,6 @@ fn connect_midi(
     Ok(midi.status())
 }
 
-#[tauri::command]
 fn disconnect_midi(state: State<'_, AppState>) -> Result<MidiStatus, String> {
     state.midi_autoconnect.store(false, Ordering::Release);
     let mut m = state.midi.lock().map_err(|_| poisoned())?;
@@ -1331,12 +1148,10 @@ fn disconnect_midi(state: State<'_, AppState>) -> Result<MidiStatus, String> {
     Ok(status)
 }
 
-#[tauri::command]
 fn get_midi_history(state: State<'_, AppState>) -> Result<Vec<flx4_midi::RawMidiEvent>, String> {
     Ok(state.midi.lock().map_err(|_| poisoned())?.history())
 }
 
-#[tauri::command]
 fn create_playlist(state: State<'_, AppState>, name: String) -> Result<Playlist, String> {
     state
         .library
@@ -1345,7 +1160,6 @@ fn create_playlist(state: State<'_, AppState>, name: String) -> Result<Playlist,
         .create_playlist(&name)
 }
 
-#[tauri::command(rename_all = "snake_case")]
 fn add_to_playlist(
     state: State<'_, AppState>,
     playlist_id: i64,
@@ -1358,7 +1172,6 @@ fn add_to_playlist(
         .add_to_playlist(playlist_id, track_id)
 }
 
-#[tauri::command]
 fn delete_track(state: State<'_, AppState>, id: i64) -> Result<(), String> {
     state
         .library
@@ -1367,61 +1180,66 @@ fn delete_track(state: State<'_, AppState>, id: i64) -> Result<(), String> {
         .delete_track(id)
 }
 
-#[tauri::command]
-fn get_recording_status(state: State<'_, AppState>) -> RecordingStatus {
-    state.engine.recording_status()
-}
-
-#[tauri::command]
-async fn start_recording(app: tauri::AppHandle) -> Result<Option<RecordingStatus>, String> {
+async fn start_recording_at(
+    app: tauri::AppHandle,
+    path: Option<String>,
+    overwrite: bool,
+) -> Result<Option<RecordingStatus>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let Some(file) = app
-            .dialog()
-            .file()
-            .add_filter("WAV recording", &["wav"])
-            .set_file_name("PulseDeck-mix.wav")
-            .blocking_save_file()
-        else {
-            return Ok(None);
+        let path = if let Some(path) = path {
+            std::path::PathBuf::from(path)
+        } else {
+            let Some(file) = app
+                .dialog()
+                .file()
+                .add_filter("WAV recording", &["wav"])
+                .set_file_name("PulseDeck-mix.wav")
+                .blocking_save_file()
+            else {
+                return Ok(None);
+            };
+            file.into_path().map_err(|e| e.to_string())?
         };
-        let path = file.into_path().map_err(|e| e.to_string())?;
         app.state::<AppState>()
             .engine
-            .start_recording(&path)
+            .start_recording_with_policy(&path, overwrite)
             .map(Some)
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
 async fn stop_recording(app: tauri::AppHandle) -> Result<RecordingStatus, String> {
     tauri::async_runtime::spawn_blocking(move || app.state::<AppState>().engine.stop_recording())
         .await
         .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
-async fn choose_sample(
+async fn load_sample_at(
     app: tauri::AppHandle,
     slot: usize,
+    path: Option<String>,
 ) -> Result<Option<TrackAnalysis>, String> {
     if slot >= 16 {
         return Err("Sample slot must be 0 through 15".into());
     }
     tauri::async_runtime::spawn_blocking(move || {
-        let Some(file) = app
-            .dialog()
-            .file()
-            .add_filter(
-                "Audio sample",
-                &["wav", "aiff", "aif", "mp3", "flac", "m4a", "aac", "ogg"],
-            )
-            .blocking_pick_file()
-        else {
-            return Ok(None);
+        let path = if let Some(path) = path {
+            std::path::PathBuf::from(path)
+        } else {
+            let Some(file) = app
+                .dialog()
+                .file()
+                .add_filter(
+                    "Audio sample",
+                    &["wav", "aiff", "aif", "mp3", "flac", "m4a", "aac", "ogg"],
+                )
+                .blocking_pick_file()
+            else {
+                return Ok(None);
+            };
+            file.into_path().map_err(|e| e.to_string())?
         };
-        let path = file.into_path().map_err(|e| e.to_string())?;
         app.state::<AppState>()
             .engine
             .load_sample(slot, &path)
@@ -1431,11 +1249,28 @@ async fn choose_sample(
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
+async fn write_library_metadata(
+    app: tauri::AppHandle,
+    id: i64,
+    revision: i64,
+) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move||{
+        let state=app.state::<AppState>();
+        if state.import_busy.swap(true,Ordering::AcqRel){return Err("A library import or metadata write is already running".into());}
+        let _guard=ImportGuard(&state);
+        let (path,edits)=state.library.lock().map_err(|_|poisoned())?.metadata_write_edits(id,revision)?;
+        let backup=deck_engine::write_file_metadata(std::path::Path::new(&path),&edits)?;
+        let mut record=state.library.lock().map_err(|_|poisoned())?.track_by_path(&path)?.ok_or("Track no longer exists")?;
+        metadata_index::refresh(&state,&mut record)?;
+        Ok(serde_json::json!({"backup":backup,"details":state.library.lock().map_err(|_|poisoned())?.track_details(id)?}))
+    }).await.map_err(|e|e.to_string())?
+}
+
 async fn import_rekordbox_xml(
     app: tauri::AppHandle,
     path: Option<String>,
-) -> Result<Vec<TrackRecord>, String> {
+    summary: Option<bool>,
+) -> Result<serde_json::Value, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let path = if let Some(path) = path {
             std::path::PathBuf::from(path)
@@ -1446,7 +1281,7 @@ async fn import_rekordbox_xml(
                 .add_filter("rekordbox XML", &["xml"])
                 .blocking_pick_file()
             else {
-                return Ok(vec![]);
+                return Ok(serde_json::json!([]));
             };
             file.into_path().map_err(|e| e.to_string())?
         };
@@ -1456,98 +1291,62 @@ async fn import_rekordbox_xml(
             return Err("An import is already running".into());
         }
         let _guard = ImportGuard(&state);
+        state.import_cancel.store(false, Ordering::Release);
         *state.analysis.lock().map_err(|_| poisoned())? = AnalysisProgress {
             active: true,
             total: xml.collection.tracks.len(),
             ..Default::default()
         };
+        if let Some(taxonomy) = &xml.taxonomy {
+            state
+                .library
+                .lock()
+                .map_err(|_| poisoned())?
+                .import_taxonomy_json(taxonomy)?;
+        }
         let mut records = Vec::new();
         let mut track_ids = HashMap::new();
         for (i, entry) in xml.collection.tracks.into_iter().enumerate() {
+            if state.import_cancel.load(Ordering::Acquire) {
+                if let Ok(mut p) = state.analysis.lock() {
+                    p.cancelled = true;
+                }
+                break;
+            }
             if let Ok(mut p) = state.analysis.lock() {
                 p.current_path = Some(entry.location.clone());
             }
             let result = (|| {
                 let path = library::xml_path(&entry.location)?;
                 let mut record = import_one(&state, &path.to_string_lossy())?;
-                if let Some(bpm) = entry
-                    .bpm
-                    .or_else(|| entry.tempos.first().map(|t| t.bpm))
-                    .filter(|b| b.is_finite() && (30.0..=300.0).contains(b))
-                {
-                    record.bpm = bpm;
-                }
-                let mut cues = vec![None; 8];
-                for mark in &entry.marks {
-                    if mark.kind == 0
-                        && (0..8).contains(&mark.number)
-                        && mark.start.is_finite()
-                        && mark.start >= 0.
-                        && mark.start <= record.duration_seconds
-                    {
-                        cues[mark.number as usize] = Some(mark.start);
-                    }
-                }
-                record.hot_cues = cues;
-                let mut memory = entry
-                    .marks
-                    .iter()
-                    .filter(|m| {
-                        m.kind == 0
-                            && m.number == -1
-                            && m.start.is_finite()
-                            && m.start >= 0.
-                            && m.start <= record.duration_seconds
-                    })
-                    .map(|m| m.start)
-                    .take(10)
-                    .map(Some)
-                    .collect::<Vec<_>>();
-                memory.resize(10, None);
-                record.memory_cues = memory;
-                record.cue_seconds = record
-                    .memory_cues
-                    .iter()
-                    .flatten()
-                    .next()
-                    .copied()
-                    .unwrap_or(0.);
-                record.beatgrid_offset_seconds = entry
-                    .tempos
-                    .first()
-                    .filter(|t| t.start.is_finite())
-                    .map(|t| t.start.max(0.))
-                    .unwrap_or(0.);
                 {
                     let lib = state.library.lock().map_err(|_| poisoned())?;
-                    lib.metadata(
-                        &record.path,
-                        Some(record.bpm),
-                        Some(record.hot_cues.clone()),
-                        Some(record.beatgrid_offset_seconds),
-                    )?;
-                    lib.memory(&record.path, &record.memory_cues, record.cue_seconds)?;
+                    lib.import_xml_cues(&record, &entry)?;
+                    lib.import_xml_details(record.id, &entry.attributes)?;
                     lib.tags(
                         &record.path,
                         &entry.name,
                         &entry.artist,
-                        entry.key.as_deref(),
+                        entry.key.as_deref().filter(|key| !key.is_empty()),
                     )?;
                 }
-                if !entry.name.is_empty() {
-                    record.title = entry.name;
-                }
-                if !entry.artist.is_empty() {
-                    record.artist = entry.artist;
-                }
-                if entry.key.is_some() {
-                    record.key = entry.key;
+                if !summary.unwrap_or(false) {
+                    record = state
+                        .library
+                        .lock()
+                        .map_err(|_| poisoned())?
+                        .track_by_path(&record.path)?
+                        .ok_or("Imported track disappeared")?;
                 }
                 track_ids.insert(entry.id, record.id);
                 Ok::<_, String>(record)
             })();
             match result {
-                Ok(t) => records.push(t),
+                Ok(t) => records.push(if summary.unwrap_or(false) {
+                    serde_json::json!({"id":t.id})
+                } else {
+                    serde_json::to_value(t).map_err(|e| e.to_string())?
+                }),
                 Err(e) => {
                     state.message(e.clone());
                     if let Ok(mut p) = state.analysis.lock() {
@@ -1586,29 +1385,49 @@ async fn import_rekordbox_xml(
         }
         let lib = state.library.lock().map_err(|_| poisoned())?;
         playlists(&lib, &xml.playlists.nodes, &track_ids, "")?;
-        Ok(records)
+        Ok(serde_json::Value::Array(records))
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
-async fn export_rekordbox_xml(app: tauri::AppHandle) -> Result<Option<String>, String> {
+async fn export_rekordbox_xml_to(
+    app: tauri::AppHandle,
+    path: Option<String>,
+    overwrite: bool,
+) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let Some(file) = app
-            .dialog()
-            .file()
-            .add_filter("rekordbox XML", &["xml"])
-            .set_file_name("PulseDeck.xml")
-            .blocking_save_file()
-        else {
-            return Ok(None);
+        use std::io::Write;
+        let path = if let Some(path) = path {
+            std::path::PathBuf::from(path)
+        } else {
+            let Some(file) = app
+                .dialog()
+                .file()
+                .add_filter("rekordbox XML", &["xml"])
+                .set_file_name("PulseDeck.xml")
+                .blocking_save_file()
+            else {
+                return Ok(None);
+            };
+            file.into_path().map_err(|e| e.to_string())?
         };
-        let path = file.into_path().map_err(|e| e.to_string())?;
         let state = app.state::<AppState>();
-        let lib = state.library.lock().map_err(|_| poisoned())?;
-        let xml = library::export_xml(&lib.tracks()?, &lib.playlists()?)?;
-        std::fs::write(&path, xml).map_err(|e| e.to_string())?;
+        let database = state
+            .library
+            .lock()
+            .map_err(|_| poisoned())?
+            .database_path()?;
+        let xml = Library::export_readonly(std::path::Path::new(&database))?;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(overwrite)
+            .truncate(overwrite)
+            .create_new(!overwrite)
+            .open(&path)
+            .map_err(|e| e.to_string())?;
+        file.write_all(xml.as_bytes()).map_err(|e| e.to_string())?;
+        file.sync_all().map_err(|e| e.to_string())?;
         Ok(Some(path.to_string_lossy().into_owned()))
     })
     .await
@@ -1640,6 +1459,15 @@ fn main() {
         return;
     }
     let mut context = tauri::generate_context!();
+    if std::env::var("PULSEDECK_TEST_NULL_AUDIO").as_deref() == Ok("1")
+        && (!cfg!(debug_assertions)
+            || std::env::var("PULSEDECK_ISOLATED").as_deref() != Ok("1")
+            || std::env::var_os("PULSEDECK_DATA_DIR").is_none()
+            || std::env::var_os("PULSEDECK_SOCKET").is_none())
+    {
+        eprintln!("The null-renderer harness requires a debug build, isolated profile, explicit data directory and private socket");
+        std::process::exit(2);
+    }
     if std::env::var_os("PULSEDECK_ISOLATED").is_some_and(|v| v == "1") {
         for window in &mut context.config_mut().app.windows {
             // A dedicated WKWebView store keeps test UI preferences separate.
@@ -1651,6 +1479,15 @@ fn main() {
     }
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .register_asynchronous_uri_scheme_protocol(
+            "pulsedeck-art",
+            |context, request, responder| {
+                let app = context.app_handle().clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    responder.respond(artwork::response(&app, request.uri().path()))
+                });
+            },
+        )
         .setup(|app| {
             let isolated = std::env::var_os("PULSEDECK_ISOLATED").is_some_and(|v| v == "1");
             if std::env::var_os("PULSEDECK_BEAT_MODEL_DIR").is_none() {
@@ -1659,9 +1496,6 @@ fn main() {
                     app.path().resource_dir()?.join("beat-models"),
                 );
             }
-            std::thread::spawn(|| {
-                let _ = audio_analysis::initialize_neural_rhythm();
-            });
             let data_dir = match std::env::var_os("PULSEDECK_DATA_DIR") {
                 Some(path) => std::path::PathBuf::from(path),
                 None if isolated => {
@@ -1688,7 +1522,6 @@ fn main() {
                     handle.state::<AppState>().message(e);
                 }
             });
-            let settings = analysis_preferences::load(&data_dir.join("analysis.json"));
             app.manage(AppState {
                 engine: engine.clone(),
                 library: Mutex::new(library),
@@ -1696,12 +1529,9 @@ fn main() {
                 analysis: Mutex::new(AnalysisProgress::default()),
                 import_busy: AtomicBool::new(false),
                 import_cancel: AtomicBool::new(false),
-                beat_model_spotify: AtomicBool::new(settings.beat_model_spotify),
-                auto_hot_cues: AtomicBool::new(settings.auto_hot_cues),
-                auto_memory_cues: AtomicBool::new(settings.auto_memory_cues),
-                section_refresh: [AtomicU64::new(0), AtomicU64::new(0)],
-                analysis_settings_path: data_dir.join("analysis.json"),
+                data_dir: data_dir.clone(),
                 loading: [AtomicU64::new(0), AtomicU64::new(0)],
+                local_preparation: std::array::from_fn(|_| Mutex::new(())),
                 source_jobs: spotify_decks::SourceJobs::default(),
                 spotify_analysis: spotify_analysis::BatchService::default(),
                 messages: Mutex::new(vec![]),
@@ -1717,6 +1547,7 @@ fn main() {
                 features_backfill: AtomicBool::new(false),
             });
             control::start(app.handle()).map_err(std::io::Error::other)?;
+            metadata_index::start(app.handle())?;
             let audio_app = app.handle().clone();
             std::thread::Builder::new()
                 .name("pulsedeck-audio-startup".into())
@@ -1884,7 +1715,34 @@ fn main() {
                                                 cues.hot_cues = value.1;
                                                 cues.update_memory(value.2);
                                                 cues.cue_seconds = value.3;
-                                                lib.save_source_cues(path, &cues, None)
+                                                let revision =
+                                                    lib.save_source_cues(path, &cues, None)?;
+                                                let (_, saved) = lib.source_cues(path)?;
+                                                let metadata = state.engine.metadata_snapshot();
+                                                for d in 0..2 {
+                                                    if metadata.tracks[d]
+                                                        .as_ref()
+                                                        .is_some_and(|t| t.path == *path)
+                                                        && metadata.load_revisions[d]
+                                                            == snap.load_revisions[d]
+                                                    {
+                                                        let _ = state
+                                                            .engine
+                                                            .update_loaded_analysis_for_revision(
+                                                                d,
+                                                                &metadata.tracks[d]
+                                                                    .as_ref()
+                                                                    .unwrap()
+                                                                    .id,
+                                                                Some(metadata.load_revisions[d]),
+                                                                |a| {
+                                                                    a.cue_points =
+                                                                        saved.points.clone();
+                                                                },
+                                                            );
+                                                    }
+                                                }
+                                                Ok(revision)
                                             });
                                         if let Err(error) = saved {
                                             state.message(format!(
@@ -1895,24 +1753,29 @@ fn main() {
                                             if track_paths[other].as_ref() == Some(path) {
                                                 let update = state
                                                     .engine
-                                                    .command(EngineCommand::RestoreHotCues {
-                                                        deck: other,
-                                                        cues: value.1,
-                                                    })
+                                                    .command_for_revision(
+                                                        EngineCommand::RestoreHotCues {
+                                                            deck: other,
+                                                            cues: value.1,
+                                                        },
+                                                        Some(source_revisions[other]),
+                                                    )
                                                     .and_then(|()| {
-                                                        state.engine.command(
+                                                        state.engine.command_for_revision(
                                                             EngineCommand::RestoreMemoryCues {
                                                                 deck: other,
                                                                 cues: value.2,
                                                             },
+                                                            Some(source_revisions[other]),
                                                         )
                                                     })
                                                     .and_then(|()| {
-                                                        state.engine.command(
+                                                        state.engine.command_for_revision(
                                                             EngineCommand::SetCuePoint {
                                                                 deck: other,
                                                                 seconds: value.3,
                                                             },
+                                                            Some(source_revisions[other]),
                                                         )
                                                     });
                                                 if let Err(e) = update {
@@ -1930,73 +1793,37 @@ fn main() {
                         };
                     }
                 })?;
+            suggest::warm_cached_features(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             control::control_request,
             control::ui_reply,
-            control::ui_publish,
-            get_app_state,
-            get_engine_snapshot,
-            get_engine_transport,
-            get_engine_metadata,
-            get_activity_state,
-            list_audio_devices,
-            start_audio,
-            stop_audio,
-            choose_tracks,
-            import_tracks,
-            update_library_analysis,
-            cancel_library_analysis,
-            set_analysis_settings,
-            set_section_vocabulary,
-            load_track,
-            load_demo,
-            reanalyze_loaded_track,
-            engine_command,
-            list_midi_ports,
-            connect_midi,
-            disconnect_midi,
-            get_midi_history,
-            create_playlist,
-            add_to_playlist,
-            delete_track,
-            import_rekordbox_xml,
-            export_rekordbox_xml,
-            get_recording_status,
-            start_recording,
-            stop_recording,
-            choose_sample,
-            set_controller_selection,
-            set_controller_browse_context,
-            get_controller_surface,
-            set_controller_tempo_range,
-            set_controller_browser_active,
-            instant_double,
-            set_smart_modes,
-            spotify::spotify_status,
-            spotify::spotify_configure,
-            spotify::spotify_begin_login,
-            spotify::spotify_disconnect,
-            spotify::spotify_playlists,
-            spotify::spotify_liked_tracks,
-            spotify::spotify_playlist_tracks,
-            spotify::spotify_album_tracks,
-            spotify::spotify_devices,
-            spotify::spotify_play,
-            spotify::spotify_pause,
-            spotify_analysis::spotify_cached_analysis,
-            spotify_analysis::analyze_spotify_page,
-            spotify_analysis::spotify_analysis_status,
-            spotify_analysis::cancel_spotify_analysis,
-            spotify_decks::load_spotify_track,
-            spotify_decks::cancel_spotify_load,
-            spotify::spotify_native_status,
-            spotify::spotify_native_begin_login,
-            spotify::spotify_native_disconnect,
-            suggest::suggest_next,
-            suggest::clear_play_history
+            control::ui_publish
         ])
         .run(context)
         .expect("PulseDeck could not start");
+}
+
+#[cfg(test)]
+mod metadata_edit_tests {
+    use super::*;
+    #[test]
+    fn name_edits_update_matching_decks_without_changing_analysis_or_cues() {
+        let engine = EngineHandle::new().unwrap();
+        let mut original = engine.load_demo(0).unwrap();
+        let other = engine.load_demo(1).unwrap();
+        apply_library_names(&engine, &original.path, "Edited title", "Edited artist");
+        original.title = "Edited title".into();
+        original.artist = Some("Edited artist".into());
+        let snapshot = engine.metadata_snapshot();
+        assert_eq!(
+            serde_json::to_value(&snapshot.tracks[0]).unwrap(),
+            serde_json::to_value(Some(original)).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&snapshot.tracks[1]).unwrap(),
+            serde_json::to_value(Some(other)).unwrap()
+        );
+    }
 }

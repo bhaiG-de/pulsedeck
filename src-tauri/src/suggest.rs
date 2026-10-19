@@ -10,7 +10,7 @@
 
 use crate::library::TrackRecord;
 use audio_analysis::WaveformBands;
-use deck_engine::{EngineSnapshot, TrackAnalysis};
+use deck_engine::{DeckSnapshot, EngineSnapshot, TrackAnalysis};
 use serde::{Deserialize, Serialize};
 use std::{
     cmp::Ordering,
@@ -22,7 +22,7 @@ use std::{
 use tauri::Manager;
 
 /// Bump when the stored features or the energy score change.
-pub const FEATURES_VERSION: u32 = 1;
+pub const FEATURES_VERSION: u32 = 3;
 /// Suggestions returned per request.
 pub const LIMIT: usize = 20;
 /// Audible playback after which a track counts as played this session.
@@ -54,6 +54,7 @@ pub struct TrackFeatures {
     pub key_confidence: Option<f32>,
     /// 0 to 1, from the waveform bands; see [`energy_score`].
     pub energy: Option<f32>,
+    pub meter: Option<usize>,
 }
 
 pub fn usable_bpm(bpm: Option<f64>) -> Option<f64> {
@@ -73,6 +74,11 @@ impl TrackFeatures {
                 && record.analysis.bpm_source.as_deref() != Some("manual"),
             camelot: record.camelot.clone(),
             key_confidence: record.key_confidence,
+            meter: record
+                .analysis
+                .neural_rhythm
+                .as_ref()
+                .and_then(|n| n.beats_per_bar),
             energy: record
                 .analysis
                 .waveform_bands
@@ -93,6 +99,10 @@ impl TrackFeatures {
                 && analysis.bpm_source.as_deref() != Some("manual"),
             camelot: analysis.camelot.clone(),
             key_confidence: analysis.key_confidence,
+            meter: analysis
+                .neural_rhythm
+                .as_ref()
+                .and_then(|n| n.beats_per_bar),
             energy: analysis.waveform_bands.as_ref().and_then(energy_score),
         }
     }
@@ -111,6 +121,7 @@ impl TrackFeatures {
             camelot: None,
             key_confidence: None,
             energy: None,
+            meter: None,
         }
     }
 }
@@ -137,6 +148,7 @@ struct FeatureFields {
     bpm_ambiguous: bool,
     bpm_source: Option<String>,
     waveform_bands: Option<WaveformBands>,
+    neural_rhythm: Option<audio_analysis::NeuralRhythm>,
 }
 
 impl PendingFeatures {
@@ -151,6 +163,7 @@ impl PendingFeatures {
                 features.bpm_ambiguous =
                     fields.bpm_ambiguous && fields.bpm_source.as_deref() != Some("manual");
                 features.energy = fields.waveform_bands.as_ref().and_then(energy_score);
+                features.meter = fields.neural_rhythm.as_ref().and_then(|n| n.beats_per_bar);
                 features
             }
             Self::Spotify { uri, metadata } => serde_json::from_str::<TrackAnalysis>(&metadata)
@@ -207,14 +220,7 @@ pub fn energy_level(energy: f32) -> u8 {
     (1.0 + (energy.clamp(0.0, 1.0) * 9.0).round()) as u8
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EnergyDirection {
-    #[default]
-    Keep,
-    Raise,
-    Lower,
-}
+pub use control_protocol::EnergyDirection;
 
 /// A Camelot wheel position: 1 to 12, A (minor) or B (major).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -314,14 +320,27 @@ pub struct TempoMatch {
 /// The best beat match of `next_bpm` against the heard `playing_bpm` within
 /// ±`range` percent: as is, or counted at half or double time. Half/double
 /// costs little when either tempo is flagged ambiguous and more otherwise.
+#[cfg(test)]
 pub fn tempo_match(
     playing_bpm: f64,
     next_bpm: f64,
     ambiguous: bool,
     range: f64,
 ) -> Option<TempoMatch> {
+    tempo_match_allowed(playing_bpm, next_bpm, ambiguous, range, true)
+}
+fn tempo_match_allowed(
+    playing_bpm: f64,
+    next_bpm: f64,
+    ambiguous: bool,
+    range: f64,
+    allow_half_double: bool,
+) -> Option<TempoMatch> {
     let mut best: Option<TempoMatch> = None;
     for multiple in [1.0, 2.0, 0.5] {
+        if multiple != 1.0 && !allow_half_double {
+            continue;
+        }
         let percent = (playing_bpm / (next_bpm * multiple) - 1.0) * 100.0;
         if !percent.is_finite() || percent.abs() > range + 1e-9 {
             continue;
@@ -421,20 +440,22 @@ pub struct Reference {
 }
 
 impl Reference {
-    /// The loaded track as it plays: the deck's BPM (which may be a manual
-    /// edit) times its tempo.
-    pub fn from_deck(track: &TrackAnalysis, deck_bpm: Option<f64>, tempo_percent: f64) -> Self {
+    /// Use the renderer's local effective tempo, retaining canonical BPM only
+    /// for analysis provenance and compatibility with older snapshots.
+    pub fn from_deck(track: &TrackAnalysis, deck: &DeckSnapshot) -> Self {
         let features = TrackFeatures::from_analysis(track);
-        let bpm = usable_bpm(deck_bpm).or(features.bpm);
+        let bpm = usable_bpm(deck.bpm).or(features.bpm);
         let edited = match (bpm, features.bpm) {
             (Some(deck), Some(analysed)) => (deck - analysed).abs() > 0.01,
             _ => false,
         };
-        let rate = 1.0 + tempo_percent / 100.0;
+        let rate = 1.0 + deck.tempo_percent / 100.0;
         Self {
             source: features.source,
             title: features.title,
-            bpm: bpm.map(|b| b * rate).filter(|b| b.is_finite() && *b > 0.0),
+            bpm: usable_bpm(deck.actual_playback_bpm)
+                .or_else(|| usable_bpm(deck.playback_bpm))
+                .or_else(|| bpm.map(|b| b * rate).filter(|b| b.is_finite() && *b > 0.0)),
             bpm_ambiguous: features.bpm_ambiguous && !edited,
             camelot: features.camelot,
             key_confidence: features.key_confidence,
@@ -459,6 +480,8 @@ pub struct Suggestion {
     pub key: KeyRelation,
     pub key_clash: bool,
     pub tempo: Option<TempoMatch>,
+    pub key_confidence: Option<f32>,
+    pub meter: Option<usize>,
     pub energy_delta: Option<f32>,
     pub score: f32,
     pub reason: String,
@@ -498,6 +521,7 @@ fn better(a: &Scored<'_>, b: &Scored<'_>) -> Ordering {
 
 /// Score `pool` against the playing track and return the best `limit`.
 /// `excluded` are the tracks on the decks; `played` were heard this session.
+#[cfg(test)]
 pub fn rank<'a>(
     pool: impl IntoIterator<Item = &'a TrackFeatures>,
     playing: &Reference,
@@ -506,6 +530,28 @@ pub fn rank<'a>(
     excluded: &HashSet<String>,
     played: &HashSet<String>,
     limit: usize,
+) -> Ranking {
+    rank_with_counting(
+        pool,
+        playing,
+        direction,
+        tempo_range,
+        excluded,
+        played,
+        limit,
+        false,
+    )
+}
+#[allow(clippy::too_many_arguments)]
+fn rank_with_counting<'a>(
+    pool: impl IntoIterator<Item = &'a TrackFeatures>,
+    playing: &Reference,
+    direction: EnergyDirection,
+    tempo_range: f64,
+    excluded: &HashSet<String>,
+    played: &HashSet<String>,
+    limit: usize,
+    allow_half_double: bool,
 ) -> Ranking {
     let mut ranking = Ranking::default();
     let playing_key = playing.camelot.as_deref().and_then(Camelot::parse);
@@ -523,11 +569,12 @@ pub fn rank<'a>(
             continue;
         };
         let tempo = match playing.bpm {
-            Some(heard) => match tempo_match(
+            Some(heard) => match tempo_match_allowed(
                 heard,
                 bpm,
                 features.bpm_ambiguous || playing.bpm_ambiguous,
                 tempo_range,
+                allow_half_double,
             ) {
                 Some(tempo) => Some(tempo),
                 None => {
@@ -577,6 +624,8 @@ pub fn rank<'a>(
             key_clash: s.relation == KeyRelation::Clash,
             reason: reason(playing_key, s.next_key, s.tempo.as_ref(), s.energy_delta),
             tempo: s.tempo,
+            key_confidence: s.features.key_confidence,
+            meter: s.features.meter,
             energy_delta: s.energy_delta,
             score: s.score,
         })
@@ -684,6 +733,16 @@ impl PlayHistory {
     }
 }
 
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SuggestionOptions {
+    pub sources: Option<Vec<String>>,
+    pub provider: Option<String>,
+    pub playlist: Option<String>,
+    pub max_stretch_percent: Option<f64>,
+    pub allow_half_double: Option<bool>,
+    pub limit: Option<usize>,
+}
 #[derive(Clone, Debug, Serialize)]
 pub struct SuggestionList {
     /// The audible deck the suggestions follow.
@@ -699,28 +758,36 @@ pub struct SuggestionList {
     /// Tracks whose features are still being prepared in the background.
     pub pending: usize,
     pub elapsed_ms: f64,
+    pub scope_complete: bool,
+    pub cached_only: bool,
+    pub excluded_scope: usize,
+    pub availability: String,
 }
 
 /// Suggest what to play after the track on `deck` (the audible deck when
 /// omitted), for loading into the other deck.
-#[tauri::command(rename_all = "snake_case")]
 pub async fn suggest_next(
     app: tauri::AppHandle,
     deck: Option<usize>,
     energy_direction: Option<EnergyDirection>,
+    options: Option<SuggestionOptions>,
 ) -> Result<SuggestionList, String> {
     if deck.is_some_and(|d| d > 1) {
         return Err("Deck must be 0 or 1".into());
     }
     tauri::async_runtime::spawn_blocking(move || {
-        suggest(&app, deck, energy_direction.unwrap_or_default())
+        suggest(
+            &app,
+            deck,
+            energy_direction.unwrap_or_default(),
+            options.unwrap_or_default(),
+        )
     })
     .await
     .map_err(|_| "Suggestion worker failed".to_string())?
 }
 
 /// Forget which tracks were played this session.
-#[tauri::command]
 pub fn clear_play_history(app: tauri::AppHandle) -> Result<(), String> {
     app.state::<crate::AppState>()
         .play_history
@@ -734,8 +801,24 @@ fn suggest(
     app: &tauri::AppHandle,
     deck: Option<usize>,
     direction: EnergyDirection,
+    options: SuggestionOptions,
 ) -> Result<SuggestionList, String> {
     let started = Instant::now();
+    if options
+        .provider
+        .as_deref()
+        .is_some_and(|p| p != "spotify" && p != "local")
+    {
+        return Err("Provider must be spotify or local".into());
+    }
+    let max_stretch = options.max_stretch_percent.unwrap_or(3.);
+    if !max_stretch.is_finite() || !(0.0..=100.0).contains(&max_stretch) {
+        return Err("max_stretch_percent must be finite and 0..100".into());
+    }
+    let limit = options.limit.unwrap_or(LIMIT);
+    if !(1..=100).contains(&limit) {
+        return Err("Suggestion limit must be 1..100".into());
+    }
     let state = app.state::<crate::AppState>();
     let transport = state.engine.transport_snapshot();
     let metadata = state.engine.metadata_snapshot();
@@ -750,6 +833,10 @@ fn suggest(
         ranking: Ranking::default(),
         pending: 0,
         elapsed_ms: 0.0,
+        scope_complete: true,
+        cached_only: true,
+        excluded_scope: 0,
+        availability: "no_reference".into(),
     };
     let Some((deck, track)) = deck.and_then(|d| metadata.tracks[d].as_ref().map(|t| (d, t))) else {
         return Ok(list);
@@ -759,7 +846,8 @@ fn suggest(
         .lock()
         .map_err(|_| crate::poisoned())?
         .surface()
-        .tempo_ranges[1 - deck];
+        .tempo_ranges[1 - deck]
+        .min(max_stretch);
     let played = state
         .play_history
         .lock()
@@ -772,30 +860,59 @@ fn suggest(
         .flatten()
         .map(|t| t.path.clone())
         .collect();
-    let reference = Reference::from_deck(
-        track,
-        transport.decks[deck].bpm,
-        transport.decks[deck].tempo_percent,
-    );
+    let reference = Reference::from_deck(track, &transport.decks[deck]);
     {
         let library = state.library.lock().map_err(|_| crate::poisoned())?;
         list.pending = library.features_pending()?;
+        let scope = options
+            .playlist
+            .as_ref()
+            .map(|p| library.suggestion_scope(p))
+            .transpose()?;
+        if let Some((_, complete)) = &scope {
+            list.scope_complete = *complete;
+        }
+        let allowed = options
+            .sources
+            .as_ref()
+            .map(|sources| library.normalize_suggestion_sources(sources))
+            .transpose()?;
         list.ranking = library.with_features(|pool| {
-            rank(
-                pool.values(),
+            let selected: Vec<_> =
+                pool.values()
+                    .filter(|f| {
+                        allowed.as_ref().is_none_or(|a| a.contains(&f.source))
+                            && scope.as_ref().is_none_or(|(a, _)| a.contains(&f.source))
+                            && options.provider.as_deref().is_none_or(|p| {
+                                (p == "spotify") == f.source.starts_with("spotify:")
+                            })
+                    })
+                    .collect();
+            list.excluded_scope = pool.len() - selected.len();
+            rank_with_counting(
+                selected,
                 &reference,
                 direction,
                 list.tempo_range,
                 &excluded,
                 &played,
-                LIMIT,
+                limit,
+                options.allow_half_double.unwrap_or(false),
             )
         })?;
+        list.availability = if !list.ranking.suggestions.is_empty() {
+            "ready"
+        } else if !list.scope_complete {
+            "scope_not_cached"
+        } else if list.pending > 0 {
+            "features_not_cached"
+        } else {
+            "no_eligible_candidates"
+        }
+        .into();
     }
     list.reference = Some(reference);
-    if list.pending > 0 {
-        spawn_backfill(app);
-    }
+    // Reads never start feature work; missing cached features are explicit readiness evidence.
     list.elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
     Ok(list)
 }
@@ -803,7 +920,7 @@ fn suggest(
 /// Compute features for records stored before suggestions existed, a batch at
 /// a time. Records are read under the library lock and parsed outside it, so
 /// deck loads are never held up for long.
-fn spawn_backfill(app: &tauri::AppHandle) {
+pub(crate) fn warm_cached_features(app: &tauri::AppHandle) {
     let state = app.state::<crate::AppState>();
     if state.features_backfill.swap(true, AtomicOrdering::AcqRel) {
         return;
@@ -863,6 +980,7 @@ mod tests {
             camelot: (!camelot.is_empty()).then(|| camelot.into()),
             key_confidence: Some(0.8),
             energy: Some(energy),
+            meter: Some(4),
         }
     }
 
@@ -910,6 +1028,7 @@ mod tests {
     fn snapshot(crossfader: f32) -> EngineSnapshot {
         let deck = serde_json::json!({
             "track": null, "playing": false, "position_seconds": 0.0, "playback_rate": 1.0,
+            "actual_playback_rate": 1.0, "playback_bpm": null,
             "tempo_percent": 0.0, "gain": 1.0, "channel_fader": 1.0, "sync_enabled": false,
             "is_master": false, "eq_low": 1.0, "eq_mid": 1.0, "eq_high": 1.0, "filter": 0.0,
             "cue_seconds": 0.0, "hot_cues": [null, null, null, null, null, null, null, null],
@@ -923,7 +1042,7 @@ mod tests {
             "sample_rate": 48000, "output_channels": 2, "buffer_frames": 256, "running": true, "load_revisions": [0,0],
             "rendered_frames": 0, "master_peak": [0.0, 0.0], "cue_peak": [0.0, 0.0],
             "underruns": 0, "master_gain": 1.0, "crossfader": crossfader, "cue_gain": 1.0,
-            "cue_mix": 0.0, "sampler_gain": 1.0, "sampler_positions_seconds": vec![Option::<f64>::None; 16], "active_ramps": vec![false; 17], "decks": [deck.clone(), deck]
+            "cue_mix": 0.0, "sampler_gain": 1.0, "sampler_positions_seconds": vec![Option::<f64>::None; 16], "active_ramps": vec![false; deck_engine::CONTROL_TARGET_COUNT], "decks": [deck.clone(), deck]
         }))
         .unwrap()
     }
@@ -1224,6 +1343,7 @@ mod tests {
                 title: "A".into(),
                 artist: None,
                 extension: None,
+                release_identity: None,
             },
             true,
         )
@@ -1231,10 +1351,22 @@ mod tests {
         track.bpm = Some(71.0);
         track.bpm_source = Some("model".into());
         track.bpm_ambiguous = true;
-        let as_loaded = Reference::from_deck(&track, Some(71.0), 2.0);
+        let mut deck = snapshot(0.).decks[0].clone();
+        deck.bpm = Some(71.0);
+        deck.tempo_percent = 2.0;
+        let as_loaded = Reference::from_deck(&track, &deck);
         assert!((as_loaded.bpm.unwrap() - 72.42).abs() < 1e-9);
         assert!(as_loaded.bpm_ambiguous);
-        let edited = Reference::from_deck(&track, Some(142.0), 0.0);
+        // Local tempo and Sync adaptation come from the unified renderer state;
+        // applying the percentage again would double-count the speed change.
+        deck.actual_playback_bpm = Some(124.0);
+        let local = Reference::from_deck(&track, &deck);
+        assert_eq!(local.bpm, Some(124.0));
+        assert!(local.bpm_ambiguous);
+        deck.bpm = Some(142.0);
+        deck.tempo_percent = 0.;
+        deck.actual_playback_bpm = None;
+        let edited = Reference::from_deck(&track, &deck);
         assert_eq!(edited.bpm, Some(142.0));
         assert!(!edited.bpm_ambiguous);
     }
@@ -1277,5 +1409,47 @@ mod tests {
         let per_request = started.elapsed().as_secs_f64() * 1000.0 / runs as f64;
         let budget = if cfg!(debug_assertions) { 50.0 } else { 5.0 };
         assert!(per_request < budget, "{per_request:.2} ms per request");
+    }
+    #[test]
+    fn conservative_shortlist_requires_explicit_half_double_and_stretch() {
+        let pool = [
+            features("near", 120., "8A", 0.6),
+            features("wide", 90., "8A", 0.6),
+            features("half", 61., "8A", 0.6),
+            features("stretch", 128., "8A", 0.6),
+        ];
+        let reference = playing(122., "8A", 0.6);
+        let r = rank_with_counting(
+            &pool,
+            &reference,
+            EnergyDirection::Keep,
+            3.,
+            &HashSet::new(),
+            &HashSet::new(),
+            20,
+            false,
+        );
+        assert_eq!(
+            r.suggestions
+                .iter()
+                .map(|s| s.source.as_str())
+                .collect::<Vec<_>>(),
+            ["near"]
+        );
+        let r = rank_with_counting(
+            &pool,
+            &reference,
+            EnergyDirection::Keep,
+            3.,
+            &HashSet::new(),
+            &HashSet::new(),
+            20,
+            true,
+        );
+        assert!(r
+            .suggestions
+            .iter()
+            .any(|s| s.source == "half" && s.tempo.unwrap().multiple == 2.));
+        assert!(!r.suggestions.iter().any(|s| s.source == "wide"));
     }
 }

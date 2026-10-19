@@ -9,40 +9,48 @@ import {
   waveformSeekSeconds,
   beatSpacingFraction,
   waveformBarBeat,
-  displaySections,
-  nextSection,
+  displayCuePoints,
+  nextCue,
 } from "./waveform-data.ts";
-test("sections merge repeated labels and count bars to the next one", () => {
-  const stage = {
-    version: 1,
-    bpm: 120,
-    downbeat_offset_seconds: 0.5,
-    vocabulary: "dance" as const,
-    sections: [
-      { start_seconds: 0.5, bars: 16, label: "intro" as const },
-      { start_seconds: 32.5, bars: 8, label: "drop" as const },
-      { start_seconds: 48.5, bars: 8, label: "drop" as const },
-      { start_seconds: 64.5, bars: 4, label: null },
-      { start_seconds: 72.5, bars: 8, label: null },
-      { start_seconds: 88.5, bars: 8, label: "outro" as const },
-    ].map((s) => ({ ...s, energy: 0.5, groove: 0.5, rise: 0, group: 0 })),
-  };
-  const shown = displaySections(stage, 100);
-  assert.deepEqual(
-    shown.map((s) => [s.start, s.end, s.bars, s.label]),
+test("canonical cue display preserves names, same-role anchors and native span endpoints", () => {
+  const point = (
+    id: string,
+    start: number,
+    end: number | null,
+    name: string,
+  ) => ({
+    id,
+    start_seconds: start,
+    end_seconds: end,
+    name,
+    role: "drop" as const,
+    origin: "manual" as const,
+    modified: false,
+    confirmed: false,
+  });
+  const shown = displayCuePoints(
     [
-      [0.5, 32.5, 16, "intro"],
-      [32.5, 64.5, 16, "drop"],
-      [64.5, 72.5, 4, null],
-      [72.5, 88.5, 8, null],
-      [88.5, 100, 8, "outro"],
+      point("b", 48.5, 64.5, "Second drop"),
+      point("a", 32.5, 48.5, "First drop"),
+      point("manual", 80, null, "Vocal exit"),
+    ],
+    100,
+  );
+  assert.deepEqual(
+    shown.map((p) => [p.id, p.start, p.end, p.name]),
+    [
+      ["a", 32.5, 48.5, "First drop"],
+      ["b", 48.5, 64.5, "Second drop"],
+      ["manual", 80, 80, "Vocal exit"],
     ],
   );
-  // Two seconds per bar at 120 BPM: 31 s into the intro, the drop is a bar away.
-  assert.deepEqual(nextSection(shown, 31, 120), { label: "drop", bars: 1 });
-  assert.deepEqual(nextSection(shown, 0.5, 120), { label: "drop", bars: 16 });
-  assert.equal(nextSection(shown, 95, 120), null);
-  assert.deepEqual(displaySections(null, 100), []);
+  assert.deepEqual(nextCue(shown, 31, 120), {
+    label: "drop",
+    name: "First drop",
+    bars: 1,
+  });
+  assert.equal(nextCue(shown, 95, 120), null);
+  assert.deepEqual(displayCuePoints(null, 100), []);
 });
 test("compressed overview retains a narrow transient instead of sampling past it", () => {
   const peaks = Array(4096).fill(0);
@@ -181,12 +189,54 @@ test("pickup before the first grid beat retains a negative bar label at the cent
   assert.equal(waveformBarBeat(0.125, 120, 0.125), "1.1");
 });
 
-
-test("section display uses native bar endpoints for the final variable-tempo section", () => {
-  const stage = { version: 2, bpm: 120, downbeat_offset_seconds: 0.2,
-    beats_per_bar: 3, bar_times: [0.2, 1.7, 3.4, 5.3, 7.4],
-    vocabulary: "dance" as const,
-    sections: [{start_seconds: 0.2, bars: 4, label: "intro" as const, energy: 0.5, groove: 0.5, rise: 0, group: 0}],
+test("display uses supplied native end time even with variable tempo and odd meter", () => {
+  const point = {
+    id: "intro",
+    start_seconds: 0.2,
+    end_seconds: 7.4,
+    name: "Intro",
+    role: "intro" as const,
+    origin: "manual" as const,
+    modified: false,
+    confirmed: false,
   };
-  assert.equal(displaySections(stage, 10)[0].end, 7.4);
+  assert.equal(displayCuePoints([point], 10)[0].end, 7.4);
+});
+
+test("expanded compositor strips preserve cue/grid pixels through panning and file margins", async () => {
+  const { expandWaveformWindow } = await import("./waveform-data.ts");
+  for (const position of [0, 30, 99.99]) {
+    for (const width of [320, 1500, 3000]) {
+      const view = getWaveformWindow({
+        position,
+        duration: 100,
+        spanBeats: 32,
+        bpm: 120,
+      });
+      const padding = Math.min(width / 4, 512);
+      const expanded = expandWaveformWindow(view, width, padding);
+      for (const time of [0, position, position + 1, 100]) {
+        const pixel =
+          timeToWaveformFraction(time, expanded) * (width + 2 * padding) -
+          padding;
+        assert.ok(
+          Math.abs(pixel - timeToWaveformFraction(time, view) * width) < 1e-8,
+        );
+        const next = getWaveformWindow({
+          position: position + 0.05,
+          duration: 100,
+          spanBeats: 32,
+          bpm: 120,
+        });
+        if (position + 0.05 <= 100)
+          assert.ok(
+            Math.abs(
+              pixel -
+                (0.05 * width) / view.span -
+                timeToWaveformFraction(time, next) * width,
+            ) < 1e-8,
+          );
+      }
+    }
+  }
 });
