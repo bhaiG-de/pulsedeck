@@ -1158,6 +1158,30 @@ fn command_job_worker(app: tauri::AppHandle, id: String) {
         };
     }
 }
+fn stop_failed_sequential_job(status: &mut Value) -> Option<Vec<Value>> {
+    if status["sequential"] != true { return None; }
+    let error = status["actions"].as_array()?.iter()
+        .find(|action| action["state"] == "failed")?["result"]["error"].clone();
+    let mut cancelled = Vec::new();
+    for action in status["actions"].as_array_mut()? {
+        if !action_terminal(action) {
+            action["state"] = json!("cancelled");
+            settle_action_members(action, "cancelled");
+            cancelled.push(action.clone());
+        }
+    }
+    let attempted: Vec<_> = status["actions"].as_array()?.iter()
+        .filter(|action| matches!(action["state"].as_str(), Some("executed" | "failed")))
+        .map(|action| action["result"].clone()).collect();
+    status["completed"] = json!(attempted.len());
+    status["results"] = json!(attempted);
+    status["state"] = json!("failed");
+    status["open"] = json!(false);
+    status["last_error"] = error;
+    status["finished_unix_ms"] = json!(unix_ms());
+    Some(cancelled)
+}
+
 fn command_job_tick(app: &tauri::AppHandle, id: &str) -> Result<()> {
     refresh_scheduled_jobs(app)?;
     let control = app.state::<Control>();
@@ -1224,6 +1248,25 @@ fn command_job_tick(app: &tauri::AppHandle, id: &str) -> Result<()> {
             "job.updated",
             json!({"id":id,"state":"cancelled","revision":status["revision"]}),
         );
+        return Ok(());
+    }
+    let mut stopped = status.clone();
+    if let Some(cancelled) = stop_failed_sequential_job(&mut stopped) {
+        if let Some(native) = native_id {
+            app.state::<AppState>().engine.cancel_scheduled_batch(native, false).map_err(failure)?;
+            command_queue_fence(app, 5000)?;
+        }
+        {
+            let mut jobs = control.jobs.lock().map_err(failure)?;
+            let job = jobs.get_mut(id).unwrap();
+            job.native_id = None;
+            job.status = stopped;
+        }
+        persist_control(app)?;
+        for action in cancelled {
+            command_job_event(app, id, &action, &status["revision"]);
+        }
+        event(app, "job.updated", json!({"id":id,"state":"failed","revision":status["revision"]}));
         return Ok(());
     }
     if let Some(action) = status["actions"].as_array().unwrap().iter().find(|a| {
@@ -1565,6 +1608,27 @@ fn command_step_schema() -> Value {
 #[cfg(test)]
 mod command_queue_control_tests {
     use super::*;
+
+    #[test]
+    fn closed_sequential_jobs_stop_after_the_first_runtime_failure() {
+        let original = json!({"sequential":true,"state":"running","completed":1,"open":false,"actions":[
+            {"action_id":"first","state":"executed","result":{"ok":true}},
+            {"action_id":"failure","state":"failed","result":{"error":{"code":"deck_empty"}}},
+            {"action_id":"must-not-run","state":"registered"}
+        ]});
+        let mut status = original.clone();
+        let cancelled = stop_failed_sequential_job(&mut status).unwrap();
+        assert_eq!(cancelled.len(), 1);
+        assert_eq!(status["state"], "failed");
+        assert_eq!(status["completed"], 2);
+        assert_eq!(status["results"].as_array().unwrap().len(), 2);
+        assert_eq!(status["actions"][2]["state"], "cancelled");
+        assert_eq!(status["last_error"]["code"], "deck_empty");
+        let mut open = original;
+        open["sequential"] = json!(false);
+        assert!(stop_failed_sequential_job(&mut open).is_none());
+        assert_eq!(open["actions"][2]["state"], "registered");
+    }
     fn group_step() -> Value {
         json!({"action_id":"blend","commands":[
             {"command":"automation.ramp","args":{"target":{"type":"eq_low","deck":"B"},"value":0.8,"seconds":0.25}},

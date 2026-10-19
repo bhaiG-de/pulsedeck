@@ -561,6 +561,18 @@ impl EngineHandle {
         buffer_frames: Option<u32>,
         routing: AudioRouting,
     ) -> Result<AudioStatus, String> {
+        // Serialize with recording creation until the device change has finished.
+        let recording = self
+            .shared
+            .recording
+            .lock()
+            .map_err(|_| "Recording state poisoned")?;
+        if recording
+            .as_ref()
+            .is_some_and(|job| job.stats.active.load(Ordering::Acquire))
+        {
+            return Err("Stop recording before changing audio output".into());
+        }
         let (tx, rx) = mpsc::channel();
         self.shared
             .lifecycle
@@ -571,8 +583,11 @@ impl EngineHandle {
                 reply: tx,
             })
             .map_err(|_| "Audio worker stopped")?;
-        rx.recv_timeout(Duration::from_secs(10))
-            .map_err(|_| "Audio device did not respond within 10 seconds".to_string())?
+        let result = rx
+            .recv_timeout(Duration::from_secs(10))
+            .map_err(|_| "Audio device did not respond within 10 seconds".to_string())?;
+        drop(recording);
+        result
     }
     pub fn start_recording(&self, path: &Path) -> Result<RecordingStatus, String> {
         self.start_recording_with_policy(path, false)
@@ -1773,6 +1788,14 @@ fn audio_thread(
                     ));
                     continue;
                 }
+                // Reject unavailable devices and invalid routing before stopping healthy audio.
+                let config = match stream_config(device, buffer, &routing) {
+                    Ok(config) => config,
+                    Err(error) => {
+                        let _ = reply.send(Err(error));
+                        continue;
+                    }
+                };
                 atoms.stream_revision.fetch_add(1, Ordering::AcqRel);
                 if let Some(old_stream) = stream.take() {
                     let _ = old_stream.pause();
@@ -1785,7 +1808,7 @@ fn audio_thread(
                     atoms.publish(&render.mixer, render.channels, 0, [0.; 2], [0.; 2]);
                     state.put(render);
                 }
-                let result = start_stream(device, buffer, routing, state.clone(), atoms.clone());
+                let result = start_stream(config, buffer, routing, state.clone(), atoms.clone());
                 match result {
                     Ok((new_stream, status)) => {
                         stream = Some(new_stream);
@@ -1893,13 +1916,11 @@ fn validate_routing(routing: &AudioRouting, channels: u16) -> Result<(), String>
     Ok(())
 }
 
-fn start_stream(
+fn stream_config(
     name: Option<String>,
     buffer: Option<u32>,
-    routing: AudioRouting,
-    state: Arc<StateCell>,
-    atoms: Arc<SnapshotAtoms>,
-) -> Result<(cpal::Stream, AudioStatus), String> {
+    routing: &AudioRouting,
+) -> Result<(cpal::Device, StreamConfig, SampleFormat), String> {
     let host = cpal::default_host();
     let device = match name {
         Some(name) => host
@@ -1969,7 +1990,18 @@ fn start_stream(
         }
         config.buffer_size = cpal::BufferSize::Fixed(frames);
     }
-    validate_routing(&routing, config.channels)?;
+    validate_routing(routing, config.channels)?;
+    Ok((device, config, format))
+}
+
+fn start_stream(
+    (device, config, format): (cpal::Device, StreamConfig, SampleFormat),
+    buffer: Option<u32>,
+    routing: AudioRouting,
+    state: Arc<StateCell>,
+    atoms: Arc<SnapshotAtoms>,
+) -> Result<(cpal::Stream, AudioStatus), String> {
+    let rate = config.sample_rate.0;
     let mut render = state.take().ok_or("Audio render state is unavailable")?;
     render.mixer.sample_rate = rate;
     render.routing = routing.clone();
@@ -2050,6 +2082,26 @@ fn build<T: cpal::SizedSample + cpal::FromSample<f32>>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn output_changes_are_rejected_before_touching_an_active_recording() {
+        let engine = EngineHandle::new().unwrap();
+        let path =
+            std::env::temp_dir().join(format!("pd-recording-output-{}.wav", std::process::id()));
+        engine.start_recording(&path).unwrap();
+        let error = engine
+            .start_audio(
+                Some("Missing test output".into()),
+                Some(0),
+                AudioRouting::default(),
+            )
+            .unwrap_err();
+        assert_eq!(error, "Stop recording before changing audio output");
+        assert!(engine.recording_status().active);
+        engine.stop_recording().unwrap();
+        assert!(!engine.recording_status().active);
+        std::fs::remove_file(path).unwrap();
+    }
     #[test]
     fn completion_fences_source_guards_and_explicit_cues_preserve_transport() {
         let engine = EngineHandle::new().unwrap();

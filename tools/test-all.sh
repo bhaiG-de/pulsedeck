@@ -7,7 +7,9 @@ if [ "$#" -gt 0 ]; then
   exit 2
 fi
 bash tools/rust-env.sh cargo fmt --all --check
-bash tools/rust-env.sh cargo test --workspace
+bash tools/rust-env.sh cargo test --workspace -- --skip library::tests::browser_pages_filter_and_sort_in_sql_without_reading_large_analysis_or_cues
+# Keep the latency threshold intact; measure without competing regression workers.
+bash tools/rust-env.sh cargo test -p pulsedeck library::tests::browser_pages_filter_and_sort_in_sql_without_reading_large_analysis_or_cues -- --test-threads=1
 bash tools/rust-env.sh cargo clippy --workspace --all-targets -- -D warnings
 npm --prefix frontend test
 npm --prefix frontend run build

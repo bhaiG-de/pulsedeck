@@ -24,6 +24,22 @@ fn main() -> Result<(), String> {
             engine.command(EngineCommand::Play { deck: 0 })?;
             thread::sleep(Duration::from_millis(50));
         }
+        if engine
+            .start_audio(
+                Some("PulseDeck missing test output".into()),
+                Some(512),
+                AudioRouting::default(),
+            )
+            .is_ok()
+        {
+            return Err("Unavailable output was accepted".into());
+        }
+        if engine
+            .start_audio(Some(name.clone()), Some(0), AudioRouting::default())
+            .is_ok()
+        {
+            return Err("Zero-sized buffer was accepted".into());
+        }
         let before = engine.snapshot().decks[0].position_seconds;
         let started = Instant::now();
         thread::sleep(Duration::from_millis(400));

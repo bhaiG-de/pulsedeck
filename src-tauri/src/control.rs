@@ -158,7 +158,10 @@ fn event(app: &tauri::AppHandle, kind: &str, mut data: Value) {
     };
 }
 
-pub fn start(app: &tauri::AppHandle) -> std::result::Result<(), String> {
+pub fn start(
+    app: &tauri::AppHandle,
+    server: control_protocol::ipc::Server,
+) -> std::result::Result<(), String> {
     app.manage(Control::default());
     let journal = app
         .state::<AppState>()
@@ -209,12 +212,6 @@ pub fn start(app: &tauri::AppHandle) -> std::result::Result<(), String> {
                 .wait_timeout(events, Duration::from_millis(if active { 50 } else { 500 }));
         };
     });
-    let runtime = app.clone();
-    let server =
-        control_protocol::ipc::Server::start(control_protocol::socket_path(), move |request| {
-            execute(&runtime, request)
-        })
-        .map_err(|e| e.to_string())?;
     *app.state::<Control>()
         ._server
         .lock()
@@ -259,6 +256,23 @@ pub fn ui_reply(
         }
     }
 }
+pub fn prepare_exit(app: &tauri::AppHandle) -> Result<()> {
+    let Some(state) = app.try_state::<AppState>() else {
+        return Ok(());
+    };
+    // Finalize the WAV header before the process or its audio callback can disappear.
+    if state.engine.recording_status().path.is_some() {
+        state.engine.stop_recording().map_err(failure)?;
+    }
+    if app.try_state::<Control>().is_some() {
+        for deck in 0..2 {
+            persist_deck(app, deck, None)?;
+        }
+        persist_control(app)?;
+    }
+    Ok(())
+}
+
 pub fn execute(app: &tauri::AppHandle, request: Request) -> Response {
     if let Err(e) = request.validate() {
         return Response::failure(request.request_id, e);
@@ -796,10 +810,12 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
         "mix.queue.edit" => return edit_successor_queue(app, request),
         "mix.queue.stop" => return stop_successor_queue(app, request),
         "app.show" => {
-            app.get_webview_window("main")
-                .ok_or_else(|| ControlError::new("ui_unavailable", "Main window is unavailable"))?
-                .show()
-                .map_err(failure)?;
+            let window = app
+                .get_webview_window("main")
+                .ok_or_else(|| ControlError::new("ui_unavailable", "Main window is unavailable"))?;
+            window.show().map_err(failure)?;
+            window.unminimize().map_err(failure)?;
+            window.set_focus().map_err(failure)?;
             Value::Null
         }
         "app.hide" => {
@@ -810,18 +826,13 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
             Value::Null
         }
         "app.stop" => {
-            for d in 0..2 {
-                persist_deck(app, d, None)?;
-            }
-            if state.engine.recording_status().active {
-                state.engine.stop_recording().map_err(failure)?;
-            }
+            prepare_exit(app)?;
             json!({"shutting_down":true})
         }
         "status" | "state.get" => {
             refresh_scheduled_jobs(app)?;
             let (engine, metadata) = compact_engine_state(&state.engine);
-            let mut result = json!({"protocol_version":control_protocol::VERSION,"instance":std::process::id(),"isolated":std::env::var_os("PULSEDECK_ISOLATED").is_some_and(|v|v=="1"),"engine":engine,"metadata":metadata,"controller":crate::get_controller_surface(app.state()),"audio":state.audio_status.lock().map_err(failure)?.clone(),"midi":state.midi.lock().map_err(failure)?.status(),"recording":state.engine.recording_status(),"source_jobs":state.source_jobs.snapshot(),"analysis":state.analysis.lock().map_err(failure)?.clone(),"performance_baseline":app.state::<Control>().performance_baseline.lock().map_err(failure)?.clone(),"jobs":app.state::<Control>().jobs.lock().map_err(failure)?.iter().map(|(id,j)|json!({"id":id,"state":j.status["state"],"reason":j.status["reason"],"mode":j.status["mode"],"operation_id":j.status["operation_id"]})).collect::<Vec<_>>()});
+            let mut result = json!({"protocol_version":control_protocol::VERSION,"instance":std::process::id(),"isolated":std::env::var_os("PULSEDECK_ISOLATED").is_some_and(|v|v=="1"),"engine":engine,"metadata":metadata,"controller":crate::get_controller_surface(app.state()),"audio":state.current_audio_status().map_err(failure)?,"midi":state.midi.lock().map_err(failure)?.status(),"recording":state.engine.recording_status(),"source_jobs":state.source_jobs.snapshot(),"analysis":state.analysis.lock().map_err(failure)?.clone(),"performance_baseline":app.state::<Control>().performance_baseline.lock().map_err(failure)?.clone(),"jobs":app.state::<Control>().jobs.lock().map_err(failure)?.iter().map(|(id,j)|json!({"id":id,"state":j.status["state"],"reason":j.status["reason"],"mode":j.status["mode"],"operation_id":j.status["operation_id"]})).collect::<Vec<_>>()});
             if request.view.as_deref() == Some("resume") {
                 let mut jobs: Vec<_> = app
                     .state::<Control>()

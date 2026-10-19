@@ -171,6 +171,35 @@ fn validate_client_id(id: &str) -> Result<String, String> {
     }
     Ok(id.to_string())
 }
+// Optional provider settings must never prevent local decks from opening.
+fn load_config(path: &std::path::Path) -> (Config, Option<String>) {
+    let result = (|| -> Result<Config, String> {
+        let bytes = match std::fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Config::default())
+            }
+            Err(_) => {
+                return Err(
+                    "Could not read Spotify settings; configure Spotify again in Settings".into(),
+                )
+            }
+        };
+        let mut config: Config = serde_json::from_slice(&bytes).map_err(|_| {
+            "Spotify settings are invalid; configure Spotify again in Settings".to_string()
+        })?;
+        config.client_id = config
+            .client_id
+            .map(|id| validate_client_id(&id))
+            .transpose()?;
+        Ok(config)
+    })();
+    match result {
+        Ok(config) => (config, None),
+        Err(error) => (Config::default(), Some(error)),
+    }
+}
+
 impl SpotifyService {
     #[cfg(test)]
     pub fn new(config_path: PathBuf) -> Result<Self, String> {
@@ -180,18 +209,9 @@ impl SpotifyService {
         config_path: PathBuf,
         native_path: PathBuf,
     ) -> Result<(Self, NativeSpotifyService), String> {
-        let library_id = match std::fs::read(&config_path) {
-            Ok(raw) => {
-                serde_json::from_slice::<Config>(&raw)
-                    .map_err(|_| "Spotify settings are invalid")?
-                    .client_id
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(_) => return Err("Could not read Spotify settings".into()),
-        };
+        let (config, _) = load_config(&config_path);
         let mut legacy = Vec::new();
-        if let Some(id) = library_id {
-            validate_client_id(&id)?;
+        if let Some(id) = config.client_id {
             legacy.push(id);
         }
         legacy.push(format!("native:{}", spotify_playback::native_client_id()));
@@ -213,21 +233,16 @@ impl SpotifyService {
         native_playback: bool,
         vault: Option<Arc<crate::spotify_vault::Vault>>,
     ) -> Result<Self, String> {
-        let config = if native_playback {
-            Config {
-                client_id: Some(spotify_playback::native_client_id()),
-            }
+        let (config, config_error) = if native_playback {
+            (
+                Config {
+                    client_id: Some(spotify_playback::native_client_id()),
+                },
+                None,
+            )
         } else {
-            match std::fs::read(&config_path) {
-                Ok(bytes) => serde_json::from_slice::<Config>(&bytes)
-                    .map_err(|_| "Spotify settings are invalid".to_string())?,
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Config::default(),
-                Err(_) => return Err("Could not read Spotify settings".into()),
-            }
+            load_config(&config_path)
         };
-        if let Some(id) = &config.client_id {
-            validate_client_id(id)?;
-        }
         let restore_id = config.client_id.clone();
         let vault = vault.unwrap_or_else(|| {
             Arc::new(crate::spotify_vault::Vault::new(
@@ -246,6 +261,7 @@ impl SpotifyService {
         let inner = Inner {
             config,
             restoring: restore_id.is_some(),
+            last_error: config_error,
             ..Inner::default()
         };
         let client = Client::builder()
@@ -1389,6 +1405,25 @@ pub async fn spotify_pause(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invalid_optional_settings_preserve_the_file_and_leave_local_startup_available() {
+        let root = std::env::temp_dir().join(format!("pd-bad-spotify-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("spotify.json");
+        for raw in ["{broken", r#"{"client_id":"invalid"}"#] {
+            std::fs::write(&path, raw).unwrap();
+            let service = SpotifyService::new(path.clone()).unwrap();
+            let status = service.status().unwrap();
+            assert!(!status.configured);
+            assert!(status.last_error.is_some());
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), raw);
+        }
+        let (config, error) = load_config(&root);
+        assert!(config.client_id.is_none());
+        assert!(error.is_some());
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn pkce_matches_rfc_vector() {
         assert_eq!(

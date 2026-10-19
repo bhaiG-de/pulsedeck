@@ -36,14 +36,18 @@ jobs:
             package-lock.json
             frontend/package-lock.json
       - name: Install Rust
-        run: rustup toolchain install stable --profile minimal
+        run: rustup toolchain install stable --profile minimal --component clippy --component rustfmt
       - name: Check tag matches app version
         run: |
           python3 - <<'PY'
-          import json, os
+          import json, os, re
           from pathlib import Path
           version = json.loads(Path('src-tauri/tauri.conf.json').read_text())['version']
           assert os.environ['RELEASE_TAG'] == 'v' + version, 'Tag must match tauri.conf.json version'
+          assert json.loads(Path('package.json').read_text())['version'] == version
+          lock = json.loads(Path('package-lock.json').read_text())
+          assert lock['version'] == lock['packages']['']['version'] == version
+          assert re.search(r'^version = "' + re.escape(version) + r'"$', Path('src-tauri/Cargo.toml').read_text(), re.M)
           PY
       - name: Install dependencies
         run: |
@@ -51,6 +55,17 @@ jobs:
           npm --prefix frontend ci
       - name: Install verified analysis assets
         run: python3 tools/ensure-beat-models.py
+      - name: Run regression checks
+        run: |
+          cargo fmt --all --check
+          cargo test --workspace -- --skip library::tests::browser_pages_filter_and_sort_in_sql_without_reading_large_analysis_or_cues
+          # Run the wall-clock latency gate without the other tests competing for CPU.
+          cargo test -p pulsedeck library::tests::browser_pages_filter_and_sort_in_sql_without_reading_large_analysis_or_cues -- --test-threads=1
+          cargo clippy --workspace --all-targets -- -D warnings
+          npm --prefix frontend test
+          python3 tools/check-control-coverage.py
+          python3 tools/validate-dj-skills.py
+          python3 tools/test-dj-skill-packaging.py
       - name: Build Apple Silicon DMG
         run: npm run package:macos
       - name: Verify bundle and checksum
@@ -59,6 +74,19 @@ jobs:
           python3 tools/verify-release.py target/release/bundle/macos/PulseDeck.app
           cd target/release/bundle/dmg
           shasum -a 256 *.dmg > SHA256SUMS.txt
+      - name: Test installed app from the DMG
+        run: |
+          python3 - <<'PYTHON'
+          import pathlib, subprocess, tempfile
+          image = next(pathlib.Path('target/release/bundle/dmg').glob('*.dmg')).resolve()
+          with tempfile.TemporaryDirectory(prefix='pulsedeck-dmg-test-') as temporary:
+              mount = pathlib.Path(temporary).resolve() / 'mounted'
+              subprocess.run(['hdiutil', 'attach', '-readonly', '-nobrowse', '-mountpoint', str(mount), str(image)], check=True)
+              try:
+                  subprocess.run(['python3', 'tools/test-release.py', str(mount / 'PulseDeck.app')], check=True)
+              finally:
+                  subprocess.run(['hdiutil', 'detach', str(mount)], check=True)
+          PYTHON
       - uses: actions/upload-artifact@v4
         with:
           name: PulseDeck-${{ env.RELEASE_TAG }}-${{ github.sha }}

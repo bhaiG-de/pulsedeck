@@ -66,7 +66,7 @@ if opts.restart_check:
     cues = data("cues.get", {"source": fixture["source"]})
     assert cues["cues"]["hot_cues"][7] == 7.0, cues
     assert cues["cues"]["annotations"]["hot:7"] == "Outro", cues
-    assert data("playlist.list")[0]["track_ids"] == fixture["order"]
+    assert next(p for p in data("playlist.list") if p["name"] == "CLI integration set")["track_ids"] == fixture["order"]
     run("deck", "A", "load", "--track", fixture["source"])
     deck = data("engine.transport")["decks"][0]
     assert deck["hot_cues"][7] == 7.0, deck
@@ -180,8 +180,19 @@ else:
     run("ui", "app", "does-not-exist", "true", expected="command_unsupported")
     call("ui.call", {"target": "unmounted", "action": "open"}, expected="ui_unavailable")
     passed("real mounted UI commits and acknowledges theme, zoom, drawer, pads and sampler")
+    data("app.show")
     run("ui", "deck-A", "grid-editor", "true")
-    run("ui", "deck-A", "grid-draft", "--value", json.dumps({"bpm": 125, "offset": 0.1}))
+    def grid_metadata_ready():
+        try:
+            run("ui", "deck-A", "grid-draft", "--value", json.dumps({"bpm": 125, "offset": 0.1}))
+            return True
+        except AssertionError as error:
+            response = error.args[0]
+            # Transport and track metadata arrive independently in the UI.
+            if isinstance(response, dict) and response.get("error", {}).get("code") == "invalid_arguments" and response["error"].get("details", {}).get("expected", {}).get("maximum") == 0:
+                return False
+            raise
+    until(grid_metadata_ready)
     run("ui", "deck-A", "grid-apply")
     assert data("engine.transport")["decks"][0]["bpm"] == 125
     run("ui", "app", "settings", "true")
@@ -196,21 +207,35 @@ else:
     data("library.export_xml", {"path": str(export), "overwrite": True})
     assert "DJ_PLAYLISTS" in export.read_text()
     passed("XML export is explicit and protects existing output")
+    if opts.audio:
+        run("mixer", "master-gain", "set", "0")
+        run("mixer", "cue-gain", "set", "0")
+        data("audio.start", {"buffer_frames": 256})
     data("deck.unload", {"deck": "B"})
-    steps = [{"command": "engine.command", "args": {"type": "set_deck_gain", "deck": "A", "gain": 0.4}}, {"command": "engine.command", "args": {"type": "play", "deck": "B"}}, {"command": "engine.command", "args": {"type": "set_deck_gain", "deck": "A", "gain": 1.9}}]
+    steps = [
+        {"command": "playlist.create", "args": {"name": "Batch first step"}},
+        {"command": "engine.command", "args": {"type": "play", "deck": "B"}},
+        {"command": "playlist.create", "args": {"name": "Must never be created"}},
+    ]
     assert data("batch.validate", {"steps": steps})["valid"]
     job = data("batch.run", {"steps": steps})["job_id"]
     final = until(lambda: (j := data("jobs.get", {"id": job}))["state"] != "running" and j)
-    assert final["state"] == "failed" and final["completed"] == 2
-    assert abs(data("engine.transport")["decks"][0]["gain"] - 0.4) < 1e-5
-    passed("batch partial failure stops later audible mutations and returns step errors")
-    data("automation.ramp", {"target": {"type": "crossfader"}, "value": 1.0, "seconds": 1.0})
-    job = data("batch.run", {"steps": [{"command": "engine.wait", "args": {"ramps": True}}]})["job_id"]
-    data("jobs.cancel", {"id": job})
-    final = until(lambda: (j := data("jobs.get", {"id": job}))["state"] != "running" and j)
-    assert final["state"] == "cancelled", final
-    data("automation.stop")
-    passed("job cancellation interrupts active waits and stops native ramps")
+    assert final["state"] == "failed", final
+    assert [action["state"] for action in final["actions"][:2]] == ["executed", "failed"], final
+    assert final["actions"][2]["state"] in {"cancelled", "failed"}, final
+    if opts.audio:
+        assert final["completed"] == 2, final
+    names = [playlist["name"] for playlist in data("playlist.list")]
+    assert "Batch first step" in names and "Must never be created" not in names
+    passed("batch partial failure stops later mutations and returns step errors")
+    if opts.audio:
+        data("automation.ramp", {"target": {"type": "crossfader"}, "value": 1.0, "seconds": 1.0})
+        job = data("batch.run", {"steps": [{"command": "engine.wait", "args": {"ramps": True}}]})["job_id"]
+        data("jobs.cancel", {"id": job})
+        final = until(lambda: (j := data("jobs.get", {"id": job}))["state"] != "running" and j)
+        assert final["state"] == "cancelled", final
+        data("automation.stop")
+        passed("job cancellation interrupts active waits and stops native ramps")
     assert data("events.get")["events"]
     call("spotify.devices", expected="configuration_required")
     data("spotify.configure", {"client_id": "00000000000000000000000000000000"})
@@ -232,6 +257,9 @@ else:
         assert data("engine.transport")["crossfader"] == -1.0
         recording = work / "silent-mix.wav"
         data("recording.start", {"path": str(recording)})
+        call("audio.start", {"buffer_frames": 512}, expected="operation_failed")
+        assert data("recording.status")["active"]
+        assert data("engine.transport")["running"]
         time.sleep(0.2)
         result = data("recording.stop")
         assert result["frames_written"] > 0 and result["dropped_frames"] == 0

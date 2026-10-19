@@ -10,6 +10,8 @@ A native, two-deck DJ app for macOS, built with Rust and Tauri. Browse local mus
 2. Open it and launch **Install PulseDeck** for the animated installer; drag its PulseDeck icon into the Applications target or use Install. You can also drag **PulseDeck.app** directly into the DMG’s Applications shortcut.
 3. Launch PulseDeck. Import a local folder or configure Spotify in Settings.
 
+PulseDeck runs one normal instance per user. Opening it again, including from another app copy, brings the existing window forward. Startup errors show an explanation; invalid optional Spotify settings leave local playback available and retain the settings file for recovery.
+
 Requires an Apple Silicon Mac and macOS 12 or newer. Release downloads include `SHA256SUMS.txt`; verify with `shasum -a 256 -c SHA256SUMS.txt` beside the downloaded DMG.
 
 The current build is ad-hoc signed and **not Apple-notarized**. macOS may require first-launch approval in System Settings → Privacy & Security. User music, library databases and account credentials are not included in downloads.
@@ -128,6 +130,12 @@ bash tools/rust-env.sh npm run package:macos
 
 # Verify bundled identity, icon, model hashes and exclusion of runtime profiles.
 python3 tools/verify-release.py target/release/bundle/macos/PulseDeck.app
+
+# Copy the release outside the checkout; test launch, single-instance behavior,
+# bundled CLI/UI, library persistence and damaged optional settings.
+python3 tools/test-release.py target/release/bundle/macos/PulseDeck.app
+# Also exercise muted CoreAudio, recording and native macOS Quit locally:
+python3 tools/test-release.py target/release/bundle/macos/PulseDeck.app --audio
 ```
 
 Build outputs live under `target/release/bundle/macos` and `target/release/bundle/dmg`. Local configuration, credentials, databases, audio, captures and validation artifacts are excluded by `.gitignore`.
@@ -144,13 +152,13 @@ python3 tools/validate-dj-skills.py
 python3 tools/test-dj-skill-packaging.py
 ```
 
-The current regression run passed **473 Rust tests**, **73 frontend tests**, strict Clippy, control-catalog coverage and skill packaging checks (11 opt-in Rust tests ignored; the large-library timing gate excluded). Installer self-tests cover app copy/replacement, skill installation/update/backup, bundled font registration and failure preservation. A real native drag from the mounted DMG installed the app and all three skills into Applications/Codex; the installed app’s signature and bundled assets were verified.
+The 0.2.2 regression run passed **479 Rust tests**, **73 frontend tests**, strict Clippy, control-catalog coverage and skill packaging checks (11 opt-in Rust tests ignored). Run the 100,000-row timing gate without concurrent release compilation; its wall-clock limits are sensitive to host load. Installer self-tests cover app copy/replacement, skill installation/update/backup, bundled font registration and failure preservation. A real native drag from the mounted DMG installed the app and all three skills into Applications/Codex; the installed app’s signature and bundled assets were verified.
 
 Opt-in real-library/audio tests require their documented inputs. The 100,000-row browser SQL timing test is sensitive to host load and is reported separately when excluded from a regression run. Real-song offline renders exercise transitions, recovery and silence detection; accelerated isolated queue tests establish functional integration, not wall-clock performance or subjective mixing quality.
 
 ## Publish a GitHub release
 
-Update the app version consistently in `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` and the root npm package/lock. Push a matching `vVERSION` tag. The [release workflow](.github/workflows/release-macos.yml) checks version agreement, fetches hash-verified models, builds an Apple Silicon DMG, verifies the bundle and uses `softprops/action-gh-release@v3` to publish the installer and checksum file to GitHub Releases automatically. This follows [Flowbar’s release action](https://github.com/triptu/flowbar/blob/main/.github/workflows/build-dmg.yml), using its currently supported action version. Dispatching the workflow for an existing tag rebuilds and replaces its download assets. Build artifacts are retained for 30 days.
+Update the app version consistently in `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` and the root npm package/lock. Push a matching `vVERSION` tag. The [release workflow](.github/workflows/release-macos.yml) checks version agreement, runs regression checks, fetches hash-verified models, builds an Apple Silicon DMG, verifies the bundle, launches and tests a copy from the mounted DMG, and uses `softprops/action-gh-release@v3` to publish the installer and checksum file to GitHub Releases automatically. This follows [Flowbar’s release action](https://github.com/triptu/flowbar/blob/main/.github/workflows/build-dmg.yml), using its currently supported action version. Dispatching the workflow for an existing tag rebuilds and replaces its download assets. Build artifacts are retained for 30 days.
 
 Only the workflow's scoped GitHub token is needed for publishing; no credentials belong in source. Apple Developer signing/notarization is not configured in this release workflow.
 

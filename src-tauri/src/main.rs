@@ -74,6 +74,14 @@ struct AppState {
 }
 
 impl AppState {
+    fn current_audio_status(&self) -> Result<Option<AudioStatus>, String> {
+        let mut status = self.audio_status.lock().map_err(|_| poisoned())?.clone();
+        if let Some(status) = &mut status {
+            status.running = self.engine.transport_snapshot().running;
+        }
+        Ok(status)
+    }
+
     fn message(&self, text: impl Into<String>) {
         if let Ok(mut messages) = self.messages.lock() {
             messages.push(text.into());
@@ -140,7 +148,7 @@ fn get_app_state(state: State<'_, AppState>, include_library: bool) -> Result<Ap
         library,
         playlists,
         audio_devices: state.audio_devices.lock().map_err(|_| poisoned())?.clone(),
-        audio_status: state.audio_status.lock().map_err(|_| poisoned())?.clone(),
+        audio_status: state.current_audio_status()?,
         midi: state.midi.lock().map_err(|_| poisoned())?.status(),
         midi_ports: flx4_midi::list_ports().unwrap_or_default(),
         analysis: state.analysis.lock().map_err(|_| poisoned())?.clone(),
@@ -169,7 +177,7 @@ fn get_activity_state(state: State<'_, AppState>) -> Result<ActivitySnapshot, St
         }
     };
     Ok(ActivitySnapshot {
-        audio_status: state.audio_status.lock().map_err(|_| poisoned())?.clone(),
+        audio_status: state.current_audio_status()?,
         audio_devices: state.audio_devices.lock().map_err(|_| poisoned())?.clone(),
         midi: state.midi.lock().map_err(|_| poisoned())?.status(),
         analysis: state.analysis.lock().map_err(|_| poisoned())?.clone(),
@@ -1458,6 +1466,31 @@ fn main() {
         }
         return;
     }
+    // Own the runtime before opening the library or restoring the durable journal.
+    let ready = Arc::new(std::sync::OnceLock::<tauri::AppHandle>::new());
+    let runtime = ready.clone();
+    let server =
+        control_protocol::ipc::Server::start(control_protocol::socket_path(), move |request| {
+            match runtime.get() {
+                Some(app) => control::execute(app, request),
+                None => control_protocol::Response::failure(
+                    request.request_id,
+                    control_protocol::ControlError::new(
+                        "busy",
+                        "PulseDeck is starting; retry shortly",
+                    ),
+                ),
+            }
+        });
+    if server
+        .as_ref()
+        .is_err_and(|error| error.code == "instance_running")
+    {
+        let mut request = control_protocol::Request::new("app.show", serde_json::json!({}));
+        request.timeout_ms = 2000;
+        let _ = control_protocol::ipc::call(&control_protocol::socket_path(), &request);
+        return;
+    }
     let mut context = tauri::generate_context!();
     if std::env::var("PULSEDECK_TEST_NULL_AUDIO").as_deref() == Ok("1")
         && (!cfg!(debug_assertions)
@@ -1477,7 +1510,7 @@ fn main() {
             window.data_store_identifier = Some(identifier);
         }
     }
-    tauri::Builder::default()
+    let result = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .register_asynchronous_uri_scheme_protocol(
             "pulsedeck-art",
@@ -1488,7 +1521,9 @@ fn main() {
                 });
             },
         )
-        .setup(|app| {
+        .setup(move |app| {
+            let result = (|| -> Result<(), Box<dyn std::error::Error>> {
+            let server = server.map_err(std::io::Error::other)?;
             let isolated = std::env::var_os("PULSEDECK_ISOLATED").is_some_and(|v| v == "1");
             if std::env::var_os("PULSEDECK_BEAT_MODEL_DIR").is_none() {
                 std::env::set_var(
@@ -1546,7 +1581,7 @@ fn main() {
                 play_history: Mutex::new(suggest::PlayHistory::default()),
                 features_backfill: AtomicBool::new(false),
             });
-            control::start(app.handle()).map_err(std::io::Error::other)?;
+            control::start(app.handle(), server).map_err(std::io::Error::other)?;
             metadata_index::start(app.handle())?;
             let audio_app = app.handle().clone();
             std::thread::Builder::new()
@@ -1794,6 +1829,20 @@ fn main() {
                     }
                 })?;
             suggest::warm_cached_features(app.handle());
+            let _ = ready.set(app.handle().clone());
+            Ok(())
+            })();
+            if let Err(error) = result {
+                let message = format!("PulseDeck could not start: {error}\n\nYour library has not been reset. Close other copies and check the app data folder's permissions before trying again.");
+                eprintln!("{message}");
+                for window in app.webview_windows().values() {
+                    let _ = window.hide();
+                }
+                let handle = app.handle().clone();
+                app.dialog().message(message).title("PulseDeck startup failed")
+                    .kind(tauri_plugin_dialog::MessageDialogKind::Error)
+                    .show(move |_| handle.exit(1));
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1801,8 +1850,23 @@ fn main() {
             control::ui_reply,
             control::ui_publish
         ])
-        .run(context)
-        .expect("PulseDeck could not start");
+        .build(context);
+    match result {
+        Ok(app) => app.run(|handle, event| {
+            if matches!(
+                event,
+                tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
+            ) {
+                if let Err(error) = control::prepare_exit(handle) {
+                    eprintln!("PulseDeck shutdown: {error}");
+                }
+            }
+        }),
+        Err(error) => {
+            eprintln!("PulseDeck could not start: {error}");
+            std::process::exit(1);
+        }
+    }
 }
 
 #[cfg(test)]

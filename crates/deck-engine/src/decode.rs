@@ -9,6 +9,7 @@ use std::{
     sync::Arc,
     time::Instant,
 };
+const MAX_PCM_FRAMES: usize = 180_000_000;
 const RHYTHM_VERSION: u32 = 1;
 const WAVEFORM_VERSION: u32 = 1;
 const KEY_VERSION: u32 = 1;
@@ -575,6 +576,21 @@ pub(crate) fn decode_source(
     decode_source_cached(source, info, None, true, None)
 }
 
+// Check before appending; geometric Vec growth can otherwise overshoot the RAM limit.
+fn reserve_pcm(pcm: &mut Vec<[f32; 2]>, additional: usize) -> Result<(), String> {
+    let required = pcm
+        .len()
+        .checked_add(additional)
+        .filter(|frames| *frames <= MAX_PCM_FRAMES)
+        .ok_or("Track exceeds the in-memory deck limit")?;
+    if required > pcm.capacity() {
+        let growth = additional.max(1_048_576).min(MAX_PCM_FRAMES - pcm.len());
+        pcm.try_reserve_exact(growth)
+            .map_err(|e| format!("Cannot allocate decoded audio: {e}"))?;
+    }
+    Ok(())
+}
+
 fn decode_source_cached(
     source: Box<dyn MediaSource>,
     info: AudioSourceInfo,
@@ -661,6 +677,9 @@ fn decode_source_cached(
             Err(e) => return Err(format!("Cannot decode track: {e}")),
         };
         let spec = *decoded.spec();
+        if !(8000..=192000).contains(&spec.rate) {
+            return Err("Audio sample rate must be between 8000 and 192000 Hz".into());
+        }
         if !pcm.is_empty() && spec.rate != sample_rate {
             return Err("Tracks with changing sample rate are unsupported".into());
         }
@@ -675,6 +694,7 @@ fn decode_source_cached(
             *samples = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
         }
         samples.copy_interleaved_ref(decoded);
+        reserve_pcm(&mut pcm, samples.samples().len() / channels)?;
         for frame in samples.samples().chunks_exact(channels) {
             let left = sanitize(frame[0]);
             let right = sanitize(if channels > 1 { frame[1] } else { frame[0] });
@@ -685,10 +705,6 @@ fn decode_source_cached(
                 pcm.truncate(frames);
                 break;
             }
-        }
-        // Bound memory used by untrusted/accidentally huge media to ~1.4 GiB of PCM.
-        if pcm.len() > 180_000_000 {
-            return Err("Track exceeds the in-memory deck limit".into());
         }
     }
     if pcm.is_empty() {
@@ -815,7 +831,7 @@ pub(crate) fn prepare_pcm_cached(
     recording_allowed: bool,
     cached: Option<TrackAnalysis>,
 ) -> Result<Arc<TrackData>, String> {
-    if !(8000..=192000).contains(&sample_rate) || pcm.is_empty() || pcm.len() > 180_000_000 {
+    if !(8000..=192000).contains(&sample_rate) || pcm.is_empty() || pcm.len() > MAX_PCM_FRAMES {
         return Err("Invalid or oversized decoded audio source".into());
     }
     for frame in &mut pcm {
@@ -1452,6 +1468,30 @@ pub(crate) fn sample_track(slot: usize) -> Arc<TrackData> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn oversized_packets_are_rejected_before_allocating_pcm() {
+        let mut pcm = Vec::new();
+        assert!(reserve_pcm(&mut pcm, MAX_PCM_FRAMES + 1).is_err());
+        assert!(reserve_pcm(&mut pcm, usize::MAX).is_err());
+        assert_eq!(pcm.capacity(), 0);
+        pcm.push([0., 0.]);
+        assert!(reserve_pcm(&mut pcm, MAX_PCM_FRAMES).is_err());
+        assert_eq!(pcm.len(), 1);
+        reserve_pcm(&mut pcm, 1024).unwrap();
+        assert!(pcm.capacity() >= 1025);
+    }
+
+    #[test]
+    fn playable_load_rejects_unsupported_sample_rates_before_analysis() {
+        let path = std::env::temp_dir().join(format!("pd-invalid-rate-{}.wav", std::process::id()));
+        let mut bytes = include_bytes!("../tests/fixtures/metadata/tags.wav").to_vec();
+        bytes[24..28].copy_from_slice(&4000_u32.to_le_bytes());
+        std::fs::write(&path, bytes).unwrap();
+        let result = decode_file_playable(&path, None);
+        std::fs::remove_file(path).unwrap();
+        assert!(result.err().unwrap().contains("sample rate"));
+    }
     fn wav_fixture() -> Vec<u8> {
         let rate = 8000_u32;
         let n = rate * 12;
