@@ -13,9 +13,9 @@ Six approved views of the real PulseDeck production frontend, rendered with Thre
 
 ## README delivery
 
-The README displays **1920 × 1080 WebP previews** from `previews/`, encoded at quality 90 with method 6 after Lanczos downsampling. All six previews total **832 KB** rather than 9.52 MB of inline images (**91.3% less image data**). Fine text and waveforms were visually compared with the downscaled originals; the previews use lossy compression and are intended for normal README display.
+The repository contains six **1920 × 1080 WebP images**, totaling **832 KB**. They were downsampled with Lanczos and encoded at quality 90, method 6. Fine text and waveforms were visually compared with the downscaled source renders; the images use lossy compression and are intended for normal README display.
 
-Clicking any preview opens its **3840 × 2160 lossless WebP original** listed above. These originals preserve the approved PNG pixels exactly and are not loaded as inline images. Their combined size remains 9.52 MB. The native render, original dimensions and full-resolution downloads are preserved.
+Inline images and click-through links use the same 1080p files. The 4K source renders are kept outside the tracked repository.
 
 The session uses real local track metadata in an isolated profile. Playback is paused and hot cues are staged; the empty successor queue and preparation requirements are preserved. No audio, account credentials, local library database or private source file paths are included.
 
