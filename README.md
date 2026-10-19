@@ -1,8 +1,14 @@
 # PulseDeck
 
-A native, two-deck DJ app for macOS, built with Rust and Tauri. Browse local music and Spotify collections, inspect beatgrids and waveforms, and use **Suggest** to plan a next move or hand a continuous set to the app-owned successor queue.
+**Your music. One instrument.**
 
-[Download for macOS](https://github.com/bhaiG-de/pulsedeck/releases/latest) · [Release history](https://github.com/bhaiG-de/pulsedeck/releases) · [DJ skills](.agents/skills/README.md)
+A native, two-deck DJ app for macOS. Mix local music and Spotify, read the beatgrid, shape the overlap, and plan what comes next with **Suggest**. Built with Rust and Tauri, with playback and transition timing owned by the native engine.
+
+[**Download for macOS**](https://github.com/bhaiG-de/pulsedeck/releases/latest) · [Install](#install) · [Explore the app](#inside-pulsedeck) · [Agents & CLI](#agents-and-cli) · [Develop](#develop)
+
+[![PulseDeck's two decks, stacked waveforms and mixer, shown in a close view of a MacBook Pro screen.](docs/images/01-hero.webp)](docs/images/01-hero.webp)
+
+**Two decks, one workspace.** Waveforms, cue points, transport and mixer controls stay together. Choose your next move yourself, or give the successor queue an ordered set to prepare and execute.
 
 ## Install
 
@@ -16,17 +22,37 @@ Requires an Apple Silicon Mac and macOS 12 or newer. Release downloads include `
 
 The current build is ad-hoc signed and **not Apple-notarized**. macOS may require first-launch approval in System Settings → Privacy & Security. User music, library databases and account credentials are not included in downloads.
 
+<details>
+<summary>Installer details, DJ skills and bundled tools</summary>
+
 The native installer uses the app’s aluminium chassis, Hanken Grotesk/DM Mono type and exact header mark, with a live drag-position indicator, reactive install target, Reduced Motion support and transactional app replacement. It confirms replacement, requires the installed app to be quit, and preserves the previous app if source copying fails. It does not modify the library or account data.
 
 The installer can install/update **pulsedeck-control**, **pulsedeck-library** and **djing-art** into `${CODEX_HOME:-~/.codex}/skills`. Existing DJ skills (including legacy names) are backed up outside skill discovery in `pulsedeck-skill-backups` before replacement; restart Codex to discover the installed skills. Uncheck the option for app-only installation. Dragging the app directly in Finder installs only the app.
 
 The signed app includes the CLI at `/Applications/PulseDeck.app/Contents/MacOS/pulsedeckctl` and self-contained skill packages in `Contents/Resources/dj-skills`; a source checkout is not required for agent control.
 
-The bundled app icon follows the header's dot-matrix record mark: graphite dots with an orange center on a full-bleed silver surface. Its Imagegen master and prompt are in [src-tauri/icons](src-tauri/icons); regenerate bundle sizes with `python3 tools/make_icon.py` after installing npm dependencies.
+</details>
 
-## What the app does
+## Inside PulseDeck
+
+### Read the music ahead
+
+Stacked, three-band waveforms put both tracks on the same timeline. Follow the playhead, inspect beatgrid alignment and cue markers, and see the approach to your next move.
+
+[![Close angled view of PulseDeck's stacked waveforms, beatgrid, playhead and cue countdowns.](docs/images/02-waveforms.webp)](docs/images/02-waveforms.webp)
 
 ### Decks and mixer
+
+<table>
+  <tr>
+    <td width="50%"><a href="docs/images/03-deck.webp"><img src="docs/images/03-deck.webp" alt="Close-up of Deck A's yellow jog wheel, tempo, transport and eight hot cues." /></a></td>
+    <td width="50%"><a href="docs/images/04-mixer.webp"><img src="docs/images/04-mixer.webp" alt="Close-up of the central mixer with EQ, filters, channel faders, effects and crossfader." /></a></td>
+  </tr>
+  <tr>
+    <td><strong>Hands on the mix.</strong><br />Jog, cue, loop and adjust tempo from one deck surface.</td>
+    <td><strong>Shape the overlap.</strong><br />Balance EQ, filters, effects and faders between both decks.</td>
+  </tr>
+</table>
 
 - Two native audio decks with stacked, three-band waveforms, overview seeking, jog/scratch, tempo control, key lock and pitch shifting.
 - Beat-aware launches and Sync, editable beatgrid origin/BPM, hot cues, memory cues, loops and beat jumps.
@@ -37,6 +63,10 @@ The bundled app icon follows the header's dot-matrix record mark: graphite dots 
 - Native DDJ-FLX4 MIDI/control integration and explicit audio/controller setup.
 
 ### Library and analysis
+
+Find the next record in your collection, inspect its metadata, and load it onto either deck. Playlists, tags and search share the same library view.
+
+[![Close view of the local library with collections, track names, BPM, key, duration, deck loading and tags.](docs/images/05-library.webp)](docs/images/05-library.webp)
 
 - Local folder import, searchable library, playlists, tags, metadata tools and rekordbox XML exchange.
 - Versioned analysis/cache with locally bundled Beat This! `final0` beat/downbeat inference, key estimates and waveform features. Analysis runs on workers rather than in the audio callback.
@@ -57,6 +87,10 @@ Native Spotify preparation keeps bounded full-track PCM in RAM for playback. Pro
 ## Suggest and continuous mixing
 
 Open **Suggest** in the top navigation. It shows feasible successors and transitions calculated from the current decks, source/grid/control identities, tempo limits, harmonic/energy evidence and remaining audible material.
+
+[![Suggest shows ranked next tracks, mixing techniques, tempo differences and a detailed transition timeline.](docs/images/06-suggest.webp)](docs/images/06-suggest.webp)
+
+**A next move with a reason and a time.** Compare the candidate tracks and techniques, inspect preparation requirements, and see when each part of a transition should begin.
 
 Supported native recipes:
 
@@ -139,6 +173,15 @@ python3 tools/test-release.py target/release/bundle/macos/PulseDeck.app --audio
 ```
 
 Build outputs live under `target/release/bundle/macos` and `target/release/bundle/dmg`. Local configuration, credentials, databases, audio, captures and validation artifacts are excluded by `.gitignore`.
+
+<details>
+<summary>App icon and README imagery</summary>
+
+The bundled app icon follows the header's dot-matrix record mark: graphite dots with an orange center on a full-bleed silver surface. Its Imagegen master and prompt are in [src-tauri/icons](src-tauri/icons); regenerate bundle sizes with `python3 tools/make_icon.py` after installing npm dependencies.
+
+The six README images show the real production UI in a staged, paused local session. They are 3840 × 2160 WebGL renders on a MacBook Pro model, exported as lossless WebP with pixel-identical decoding to the approved PNGs. Cues are staged; the images do not represent live playback or a completed queue. See [image notes](docs/images/README.md).
+
+</details>
 
 ### Tests and validation
 
