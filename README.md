@@ -53,15 +53,7 @@ Requires **Apple Silicon and macOS 12 or newer**.
 
 Opening PulseDeck again brings the existing window forward, including when it is hidden or minimised. A clean ZIP install with a fresh profile, repeat launches, hidden/minimised window recovery and quit/restart was verified on Apple Silicon with macOS 26.7.1 on 20 October 2026; repeat launches kept one process running with no new crash reports. Other macOS versions have not been checked in this installation test.
 
-### Custom installer and optional agent setup
-
-Use the DMG if you want the custom installer to set up DJ skills in Codex or Claude Code automatically.
-
-1. Download the `aarch64.dmg` from [the latest release](https://github.com/bhaiG-de/pulsedeck/releases/latest).
-2. Open the DMG. **START HERE.html** explains first-launch approval and includes a shortcut to Privacy & Security. Double-click **Install PulseDeck** to open the custom installer.
-3. Select the optional DJ skills for **Codex**, **Claude Code**, or both. Drag the PulseDeck icon to the Applications target or click **Install PulseDeck**, then open the app.
-
-The app is currently ad-hoc signed, **not Apple-notarized**. If macOS blocks the installer, dismiss the warning, use **Open Privacy & Security.inetloc** in the DMG, then scroll to **Security → Open Anyway** for **Install PulseDeck.app** and confirm **Open**. Approve only a download you trust from the official release. If the installed **PulseDeck.app** is also blocked, repeat for that app. On macOS 12, use **System Preferences → Security & Privacy → General**. The installer also has **First-launch help**. See [Apple’s instructions](https://support.apple.com/en-us/102445). Releases include `SHA256SUMS.txt` for download verification.
+On macOS 12, first-launch approval is in **System Preferences → Security & Privacy → General**. Approve only a download you trust from the official release. See [Apple’s instructions](https://support.apple.com/en-us/102445). Releases include `SHA256SUMS.txt` for download verification. For Codex or Claude Code setup, see [Agent workflows](#agent-workflows).
 
 ### Run from source
 
@@ -118,7 +110,7 @@ Use **Codex or Claude Code** to work with PulseDeck through three bundled skills
 
 ### Connect your agent
 
-1. Select your agent's skills checkbox in the DMG installer. Existing PulseDeck skills are backed up before updates.
+1. Copy the three folders from `/Applications/PulseDeck.app/Contents/Resources/dj-skills/` into `~/.codex/skills/` for **Codex**, `~/.claude/skills/` for **Claude Code**, or both. Before copying, back up folders with those names and any older PulseDeck skill packages outside the agent’s skills folder. Keep all three skill folders together. If configured, use `$CODEX_HOME/skills` or `$CLAUDE_CONFIG_DIR/skills` instead of the default location.
 2. Restart Codex or Claude Code to discover the skills. Keep PulseDeck open and set up your local library or Spotify account.
 3. Ask the agent to **use the PulseDeck skills**, then describe the workflow you want. No separate MCP server is required; the app includes its CLI.
 

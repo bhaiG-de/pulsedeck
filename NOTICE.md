@@ -24,8 +24,8 @@ Programme loudness and true-peak measurement use the MIT-licensed Rust `ebur128`
 crate, pinned to 0.1.10 in Cargo.lock: https://github.com/sdroege/ebur128. Its
 license is retained in the upstream crate distribution.
 
-The native installer bundles Hanken Grotesk and DM Mono from Google Fonts
-under the SIL Open Font License 1.1. Font files and their licenses are retained
-in `installer/resources`; they match the app's existing frontend typefaces.
+The app bundles Hanken Grotesk and DM Mono from Google Fonts via Fontsource
+under the SIL Open Font License 1.1. Their licenses are retained in
+`frontend/public/licenses` and included in the built frontend.
 Sources: https://github.com/google/fonts/tree/main/ofl/hankengrotesk and
 https://github.com/google/fonts/tree/main/ofl/dmmono.
