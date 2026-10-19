@@ -1,6 +1,8 @@
 ## Stability fixes in 0.2.2
 
 - Ready-to-run app ZIP with the audio engine, offline analysis models, control CLI and all three Codex/Claude Code DJ skills bundled.
+- First-launch welcome and Settings → Agent skills install the three DJ skills for Codex, Claude Code, or both, with backups of previous PulseDeck skill packages.
+- Removed the headroom/limit/cue readout from the mixer.
 - Historical mix outcomes no longer appear as a startup toast; new session outcomes still appear when they occur.
 - Opening another app copy focuses the running PulseDeck instead of crashing or restoring the same session twice.
 - macOS Finder/Dock reopening also restores the existing window after it was hidden or minimised. Clean ZIP installation, repeat launches with one process, hidden/minimised window recovery and native quit/restart were verified on Apple Silicon with macOS 26.7.1.
@@ -15,7 +17,7 @@
 
 Download **PulseDeck_0.2.2_aarch64.zip** under **Assets**, unzip it, move **PulseDeck.app** to Applications, and open it. No installer or build tools are needed. Apple Silicon (M1 or newer) and macOS 12 or newer are required. `SHA256SUMS.txt` contains the download checksum.
 
-The app includes its audio engine, offline analysis models, control CLI and DJ skills. For Codex or Claude Code, copy the three bundled folders from `/Applications/PulseDeck.app/Contents/Resources/dj-skills/` into `~/.codex/skills/` or `~/.claude/skills/`, backing up any existing folders with those names outside the skills folder first. Use the configured agent home if you set `CODEX_HOME` or `CLAUDE_CONFIG_DIR`. Restart the selected agent afterward.
+The app includes its audio engine, offline analysis models, control CLI and DJ skills. On first launch, select Codex, Claude Code or both and click **Install skills**. Setup is also available under **Settings → Agent skills**. Existing PulseDeck skill packages are backed up before updates. Setup respects `CODEX_HOME` and `CLAUDE_CONFIG_DIR`; restart the selected agent afterward.
 
 This build is ad-hoc signed and **not Apple-notarized**. If macOS blocks it, dismiss the warning and use **System Settings → Privacy & Security → Security → Open Anyway** for **PulseDeck.app**, then confirm **Open**. On macOS 12, use **System Preferences → Security & Privacy → General**. Approve only a download you trust from the official release. See [Apple’s instructions](https://support.apple.com/en-us/102445).
 

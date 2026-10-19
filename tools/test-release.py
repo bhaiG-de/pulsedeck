@@ -31,7 +31,8 @@ def main():
     socket = work / 'control.sock'
     profile = work / 'data'
     env = {key: value for key, value in os.environ.items() if not key.startswith('PULSEDECK_')}
-    env.update(PULSEDECK_ISOLATED='1', PULSEDECK_DATA_DIR=str(profile), PULSEDECK_SOCKET=str(socket))
+    env.update(PULSEDECK_ISOLATED='1', PULSEDECK_DATA_DIR=str(profile), PULSEDECK_SOCKET=str(socket),
+               CODEX_HOME=str(work / 'codex'), CLAUDE_CONFIG_DIR=str(work / 'claude'))
     process = None
     log = None
 
@@ -80,6 +81,32 @@ def main():
 
     try:
         launch('clean')
+        assert call('skills.welcome')['show']
+        reports = call('skills.install', {'agents': ['codex', 'claude']})
+        assert len(reports) == 2 and all(r['installed'] for r in reports), reports
+        for agent in ('codex', 'claude'):
+            for skill in ('pulsedeck-control', 'pulsedeck-library', 'djing-art'):
+                assert (work / agent / 'skills' / skill / 'SKILL.md').is_file()
+        customized = work / 'codex/skills/pulsedeck-control/SKILL.md'
+        customized.write_text('customized skill')
+        updated = call('skills.install', {'agents': ['codex']})[0]
+        assert updated['installed'] and updated['backup'], updated
+        assert (Path(updated['backup']) / 'pulsedeck-control/SKILL.md').read_text() == 'customized skill'
+        assert customized.read_text() != 'customized skill'
+        # Per-agent failure must preserve a successful install for the other agent.
+        shutil.rmtree(work / 'claude/skills')
+        (work / 'claude/skills').write_text('blocked destination')
+        partial = call('skills.install', {'agents': ['codex', 'claude']})
+        assert partial[0]['installed'] and not partial[1]['installed'] and partial[1]['error'], partial
+        call('ui.call', {'target': 'app', 'action': 'agent-skills', 'value': False})
+        deadline = time.monotonic() + 5
+        while call('skills.welcome')['show'] and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert not call('skills.welcome')['show']
+        call('ui.call', {'target': 'app', 'action': 'settings', 'value': True})
+        call('ui.call', {'target': 'app', 'action': 'settings-tab', 'value': 'skills'})
+        call('ui.call', {'target': 'app', 'action': 'settings', 'value': False})
+        print('PASS first-launch setup, both agents, backups, partial failure and Settings tab', flush=True)
         first_instance = call('status')['instance']
         # Another binary copy must exit before it creates a profile or restores a journal.
         duplicate_profile = work / 'must-not-create'
@@ -111,6 +138,7 @@ def main():
             print('PASS native macOS Quit finalizes an active recording', flush=True)
         stop()
         launch('restart')
+        assert not call('skills.welcome')['show'], 'Welcome repeated after dismissal'
         subprocess.run(smoke + ['--restart-check'], cwd=ROOT, check=True, timeout=90)
         stop()
         damaged = '{damaged Spotify settings'

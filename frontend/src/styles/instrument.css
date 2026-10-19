@@ -2461,20 +2461,6 @@
   }
 }
 
-.output-protection {
-  display: flex;
-  justify-content: space-between;
-  gap: 4px;
-  padding: 5px 4px;
-  font:
-    9px "DM Mono",
-    monospace;
-  color: var(--muted);
-}
-.output-protection.limiting {
-  color: #b65a14;
-}
-
 .section-list button {
   font: inherit;
   padding: 0;

@@ -110,9 +110,11 @@ Use **Codex or Claude Code** to work with PulseDeck through three bundled skills
 
 ### Connect your agent
 
-1. Copy the three folders from `/Applications/PulseDeck.app/Contents/Resources/dj-skills/` into `~/.codex/skills/` for **Codex**, `~/.claude/skills/` for **Claude Code**, or both. Before copying, back up folders with those names and any older PulseDeck skill packages outside the agent’s skills folder. Keep all three skill folders together. If configured, use `$CODEX_HOME/skills` or `$CLAUDE_CONFIG_DIR/skills` instead of the default location.
-2. Restart Codex or Claude Code to discover the skills. Keep PulseDeck open and set up your local library or Spotify account.
+1. On first launch, choose **Codex**, **Claude Code**, or both in the welcome screen and click **Install skills**. You can also use **Settings → Agent skills** anytime. Existing PulseDeck skill packages are backed up outside the agent’s skills folder before updates; unrelated skills stay in place.
+2. Restart the selected agent to discover the skills. Keep PulseDeck open and set up your local library or Spotify account.
 3. Ask the agent to **use the PulseDeck skills**, then describe the workflow you want. No separate MCP server is required; the app includes its CLI.
+
+Setup installs into `~/.codex/skills/` or `~/.claude/skills/`, respecting `CODEX_HOME` and `CLAUDE_CONFIG_DIR` when configured. For manual installation, copy the three folders from `/Applications/PulseDeck.app/Contents/Resources/dj-skills/` into the agent’s skills folder, first backing up older PulseDeck skills outside that folder.
 
 For a source checkout, install the skills with `python3 tools/install-dj-skills.py --destination PATH_TO_AGENT_SKILLS` into a destination without existing PulseDeck skill folders. See [skill installation](.agents/skills/README.md#discovery-and-installation).
 
