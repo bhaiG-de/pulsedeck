@@ -51,6 +51,8 @@ Requires **Apple Silicon and macOS 12 or newer**.
 2. Double-click the ZIP to extract **PulseDeck.app**, then move it to **Applications** and open it. No installer or build tools are needed; the audio engine, analysis models, control CLI and DJ skills are bundled.
 3. If macOS blocks the first launch, dismiss the warning, open **System Settings → Privacy & Security**, scroll to **Security**, choose **Open Anyway** for **PulseDeck.app**, and confirm **Open**. This download is not Apple-notarized, so the ZIP still requires approval.
 
+Opening PulseDeck again brings the existing window forward, including when it is hidden or minimised. A clean ZIP install with a fresh profile, repeat launches, hidden/minimised window recovery and quit/restart was verified on Apple Silicon with macOS 26.7.1 on 20 October 2026; repeat launches kept one process running with no new crash reports. Other macOS versions have not been checked in this installation test.
+
 ### Custom installer and optional agent setup
 
 Use the DMG if you want the custom installer to set up DJ skills in Codex or Claude Code automatically.

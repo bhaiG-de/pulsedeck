@@ -3,6 +3,7 @@
 - Updated 0.2.2 download: one custom installer with the app bundled inside, plus independent Codex and Claude Code DJ-skill installation options and backups.
 - Historical mix outcomes no longer appear as a startup toast; new session outcomes still appear when they occur.
 - Opening another app copy focuses the running PulseDeck instead of crashing or restoring the same session twice.
+- macOS Finder/Dock reopening also restores the existing window after it was hidden or minimised. Clean ZIP installation, repeat launches with one process, hidden/minimised window recovery and native quit/restart were verified on Apple Silicon with macOS 26.7.1.
 - Startup failures show a useful error; damaged Spotify settings preserve the original file and leave local decks available.
 - Invalid device/buffer/routing selections preserve healthy audio output; status reflects renderer failures. Output changes require stopping an active recording first.
 - Native macOS Quit finalizes active WAV recording and saves deck cues.

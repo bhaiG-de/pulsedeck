@@ -256,6 +256,16 @@ pub fn ui_reply(
         }
     }
 }
+pub fn show_main_window(app: &tauri::AppHandle) -> Result<()> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| ControlError::new("ui_unavailable", "Main window is unavailable"))?;
+    window.show().map_err(failure)?;
+    window.unminimize().map_err(failure)?;
+    window.set_focus().map_err(failure)?;
+    Ok(())
+}
+
 pub fn prepare_exit(app: &tauri::AppHandle) -> Result<()> {
     let Some(state) = app.try_state::<AppState>() else {
         return Ok(());
@@ -810,12 +820,7 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
         "mix.queue.edit" => return edit_successor_queue(app, request),
         "mix.queue.stop" => return stop_successor_queue(app, request),
         "app.show" => {
-            let window = app
-                .get_webview_window("main")
-                .ok_or_else(|| ControlError::new("ui_unavailable", "Main window is unavailable"))?;
-            window.show().map_err(failure)?;
-            window.unminimize().map_err(failure)?;
-            window.set_focus().map_err(failure)?;
+            show_main_window(app)?;
             Value::Null
         }
         "app.hide" => {

@@ -1852,15 +1852,19 @@ fn main() {
         ])
         .build(context);
     match result {
-        Ok(app) => app.run(|handle, event| {
-            if matches!(
-                event,
-                tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
-            ) {
+        Ok(app) => app.run(|handle, event| match event {
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen { .. } => {
+                if let Err(error) = control::show_main_window(handle) {
+                    eprintln!("PulseDeck reopen: {error}");
+                }
+            }
+            tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit => {
                 if let Err(error) = control::prepare_exit(handle) {
                     eprintln!("PulseDeck shutdown: {error}");
                 }
             }
+            _ => {}
         }),
         Err(error) => {
             eprintln!("PulseDeck could not start: {error}");
