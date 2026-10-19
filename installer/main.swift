@@ -152,7 +152,22 @@ final class DragImage: NSImageView, NSDraggingSource {
         guard let model = model, !active, !model.copying, !model.installed, let image = image else { return }
         active = true; model.dragging = true
         let item = NSDraggingItem(pasteboardWriter:model.source as NSURL)
-        item.setDraggingFrame(bounds,contents:image)
+        // AppKit receives the same rounded silhouette as the source, with room for its shadow.
+        let preview = NSImage(size:NSSize(width:124,height:124),flipped:false) { _ in
+            let rect = NSRect(x:8,y:8,width:108,height:108)
+            NSGraphicsContext.saveGraphicsState()
+            let shadow = NSShadow(); shadow.shadowColor = NSColor.black.withAlphaComponent(0.2)
+            shadow.shadowBlurRadius = 5; shadow.shadowOffset = NSSize(width:0,height:-2); shadow.set()
+            NSColor.white.setFill(); NSBezierPath(roundedRect:rect,xRadius:22,yRadius:22).fill()
+            NSGraphicsContext.restoreGraphicsState()
+            NSGraphicsContext.saveGraphicsState()
+            NSBezierPath(roundedRect:rect,xRadius:22,yRadius:22).addClip()
+            image.draw(in:rect)
+            NSGraphicsContext.restoreGraphicsState()
+            return true
+        }
+        alphaValue = 0.3
+        item.setDraggingFrame(bounds.insetBy(dx:-8,dy:-8),contents:preview)
         let session = beginDraggingSession(with:[item],event:event,source:self)
         session.animatesToStartingPositionsOnCancelOrFail = true
     }
@@ -161,7 +176,7 @@ final class DragImage: NSImageView, NSDraggingSource {
         if let window = window { model?.pointer = window.convertPoint(fromScreen:screenPoint) }
     }
     func draggingSession(_ session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
-        active = false; model?.dragging = false; model?.hovering = false
+        active = false; alphaValue = 1; model?.dragging = false; model?.hovering = false
     }
 }
 
