@@ -11,7 +11,11 @@ Six approved views of the real PulseDeck production frontend, rendered with Thre
 | `05-library.webp` | Local collection, metadata and tags |
 | `06-suggest.webp` | Ranked next moves and transition timing |
 
-All images are **3840 × 2160**, encoded as **lossless WebP** with maximum compression effort (libwebp quality 100, method 6). Together they total **9.52 MB**, down from 9.89 MB after a further lossless optimization. Decoded RGBA pixels match the approved PNG exports exactly; FFmpeg-decoded pixel hashes also match the previous WebP files. No resizing or lossy encoding is applied. Click an image in the main README to view its full resolution.
+## README delivery
+
+The README displays **1920 × 1080 WebP previews** from `previews/`, encoded at quality 90 with method 6 after Lanczos downsampling. All six previews total **832 KB** rather than 9.52 MB of inline images (**91.3% less image data**). Fine text and waveforms were visually compared with the downscaled originals; the previews use lossy compression and are intended for normal README display.
+
+Clicking any preview opens its **3840 × 2160 lossless WebP original** listed above. These originals preserve the approved PNG pixels exactly and are not loaded as inline images. Their combined size remains 9.52 MB. The native render, original dimensions and full-resolution downloads are preserved.
 
 The session uses real local track metadata in an isolated profile. Playback is paused and hot cues are staged; the empty successor queue and preparation requirements are preserved. No audio, account credentials, local library database or private source file paths are included.
 

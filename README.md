@@ -6,7 +6,7 @@ A native, two-deck DJ app for macOS. Mix local music and Spotify, shape your sou
 
 [**Download for macOS**](https://github.com/bhaiG-de/pulsedeck/releases/latest) · [Features](#features) · [Install](#how-to-install) · [Library](#library-setup-and-support) · [Controllers](#controller-support) · [Agents](#agent-workflows)
 
-[![PulseDeck's decks, stacked waveforms and mixer on a MacBook Pro.](docs/images/01-hero.webp)](docs/images/01-hero.webp)
+[![PulseDeck's decks, stacked waveforms and mixer on a MacBook Pro.](docs/images/previews/01-hero.webp)](docs/images/01-hero.webp)
 
 ## Features
 
@@ -14,14 +14,14 @@ A native, two-deck DJ app for macOS. Mix local music and Spotify, shape your sou
 
 Stacked, three-band waveforms bring both tracks onto one timeline, with beatgrids, playheads and cue markers to help you line up the next transition.
 
-[![Stacked waveforms with beatgrid alignment, playheads and cue countdowns.](docs/images/02-waveforms.webp)](docs/images/02-waveforms.webp)
+[![Stacked waveforms with beatgrid alignment, playheads and cue countdowns.](docs/images/previews/02-waveforms.webp)](docs/images/02-waveforms.webp)
 
 ### Play and shape the mix
 
 <table>
   <tr>
-    <td width="50%"><a href="docs/images/03-deck.webp"><img src="docs/images/03-deck.webp" alt="Deck A's jog wheel, tempo, transport and hot cues." /></a></td>
-    <td width="50%"><a href="docs/images/04-mixer.webp"><img src="docs/images/04-mixer.webp" alt="The mixer with EQ, filters, faders and effects." /></a></td>
+    <td width="50%"><a href="docs/images/03-deck.webp"><img src="docs/images/previews/03-deck.webp" alt="Deck A's jog wheel, tempo, transport and hot cues." /></a></td>
+    <td width="50%"><a href="docs/images/04-mixer.webp"><img src="docs/images/previews/04-mixer.webp" alt="The mixer with EQ, filters, faders and effects." /></a></td>
   </tr>
   <tr>
     <td><strong>Find your entry.</strong><br />Jog, cue, loop, beat jump and Sync.</td>
@@ -37,7 +37,7 @@ Stacked, three-band waveforms bring both tracks onto one timeline, with beatgrid
 
 Click **Suggest** in the top bar for ranked next-track options, transition techniques and timing based on the current decks. Compare EQ blends, filter blends, short exchanges, echo outs and reverb exits.
 
-[![Suggest's ranked tracks, transition options and timing details.](docs/images/06-suggest.webp)](docs/images/06-suggest.webp)
+[![Suggest's ranked tracks, transition options and timing details.](docs/images/previews/06-suggest.webp)](docs/images/06-suggest.webp)
 
 Use the **Successor queue** to run an ordered set or a collection with tempo, energy, technique and duration limits. The native engine prepares tracks and times transitions; manual takeover yields control to you. It asks for attention when no feasible continuation is available. Suggestions depend on usable analysis and available audio; musical judgment still matters.
 
@@ -80,7 +80,7 @@ For agent control of a development build, also run `bash tools/rust-env.sh cargo
 
 Choose **Import folder…** to add your music, then open **Library** to search tracks, browse playlists and manage tags. Imports read file metadata; missing beat, key and waveform analysis completes when a track is loaded. Saved analysis is reused, and manual/imported cues are preserved.
 
-[![The library with playlists, track metadata, BPM, key and tags.](docs/images/05-library.webp)](docs/images/05-library.webp)
+[![The library with playlists, track metadata, BPM, key and tags.](docs/images/previews/05-library.webp)](docs/images/05-library.webp)
 
 Build local playlists, edit tags and cues, or exchange library metadata through **rekordbox XML**. Tracks decode into RAM, so large files and concurrent analysis need memory headroom.
 

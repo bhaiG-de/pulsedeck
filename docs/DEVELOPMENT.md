@@ -34,7 +34,7 @@ Build outputs live under `target/release/bundle/macos` and `target/release/bundl
 
 The bundled app icon follows the header's dot-matrix record mark: graphite dots with an orange center on a full-bleed silver surface. Its Imagegen master and prompt are in [src-tauri/icons](../src-tauri/icons); regenerate bundle sizes with `python3 tools/make_icon.py` after installing npm dependencies.
 
-The six README images show the real production UI in a staged, paused local session. They are 3840 × 2160 WebGL renders on a MacBook Pro model, exported as lossless WebP with pixel-identical decoding to the approved PNGs. Cues are staged; the images do not represent live playback or a completed queue. See [image notes](images/README.md).
+The six README images show the real production UI in a staged, paused local session. The originals are 3840 × 2160 WebGL renders on a MacBook Pro model, exported as lossless WebP with pixel-identical decoding to the approved PNGs. The README loads compressed 1920 × 1080 previews; clicking an image opens its 4K original. Cues are staged; the images do not represent live playback or a completed queue. See [image notes](images/README.md).
 
 </details>
 
