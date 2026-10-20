@@ -147,18 +147,18 @@ pub struct SpotifyDevice {
 fn lock_error() -> String {
     "Spotify state is unavailable; restart the application".into()
 }
-fn now_seconds() -> u64 {
+pub(crate) fn now_seconds() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
 }
-fn random_secret() -> String {
+pub(crate) fn random_secret() -> String {
     let mut bytes = [0u8; 32];
     OsRng.fill_bytes(&mut bytes);
     URL_SAFE_NO_PAD.encode(bytes)
 }
-fn challenge(verifier: &str) -> String {
+pub(crate) fn challenge(verifier: &str) -> String {
     URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
 }
 fn valid_id(id: &str) -> bool {
@@ -220,6 +220,10 @@ impl SpotifyService {
             Self::new_mode(config_path, false, Some(vault.clone()))?,
             NativeSpotifyService(Self::new_mode(native_path, true, Some(vault))?),
         ))
+    }
+    /// The one Keychain bundle, shared so other sign-ins add no extra prompt.
+    pub(crate) fn vault(&self) -> Arc<crate::spotify_vault::Vault> {
+        self.vault.clone()
     }
     fn credential_account(&self, id: &str) -> String {
         if self.native_playback {
@@ -925,6 +929,25 @@ impl SpotifyService {
             .collect();
         Ok(page(&raw, items, offset))
     }
+    /// Catalog search, used to match songs imported from other services.
+    pub fn search_tracks(&self, query: &str, limit: u64) -> Result<Vec<SpotifyTrack>, String> {
+        let raw = self.api(
+            Method::GET,
+            "search",
+            &[
+                ("q", query.into()),
+                ("type", "track".into()),
+                ("limit", limit.to_string()),
+            ],
+            None,
+        )?;
+        Ok(raw["tracks"]["items"]
+            .as_array()
+            .ok_or("Spotify did not return search results")?
+            .iter()
+            .filter_map(parse_track)
+            .collect())
+    }
     pub fn devices(&self) -> Result<Vec<SpotifyDevice>, String> {
         let raw = self.api(Method::GET, "me/player/devices", &[], None)?;
         let devices = raw["devices"]
@@ -1090,11 +1113,11 @@ fn http_error(status: u16, retry_after: Option<u64>, token: bool) -> String {
     format!("Spotify HTTP {status}: {message}")
 }
 #[derive(Debug, PartialEq)]
-enum CallbackError {
+pub(crate) enum CallbackError {
     Invalid,
     Denied,
 }
-fn validate_callback(
+pub(crate) fn validate_callback(
     target: &str,
     redirect: &str,
     expected_state: &str,
@@ -1135,7 +1158,7 @@ fn validate_callback(
     }
     Ok(Some(codes[0].into()))
 }
-fn read_request(stream: &mut TcpStream, expected_host: &str) -> Result<String, String> {
+pub(crate) fn read_request(stream: &mut TcpStream, expected_host: &str) -> Result<String, String> {
     stream
         .set_read_timeout(Some(Duration::from_secs(1)))
         .map_err(|_| lock_error())?;
@@ -1179,7 +1202,7 @@ fn read_request(stream: &mut TcpStream, expected_host: &str) -> Result<String, S
     }
     Ok(target.into())
 }
-fn respond(stream: &mut TcpStream, code: u16, message: &str) {
+pub(crate) fn respond(stream: &mut TcpStream, code: u16, message: &str) {
     let _ = stream.set_write_timeout(Some(Duration::from_secs(1)));
     let reason = match code {
         200 => "OK",

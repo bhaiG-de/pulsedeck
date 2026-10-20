@@ -2,7 +2,7 @@
 
 **Your music. One instrument.**
 
-A native, two-deck DJ app for macOS. Mix local music and Spotify, read the beatgrid, shape the overlap, and plan what comes next with **Suggest**. Built with Rust and Tauri, with playback and transition timing owned by the native engine.
+A native, two-deck DJ app for macOS. Mix local music and Spotify, bring your YouTube Music playlists, read the beatgrid, shape the overlap, and plan what comes next with **Suggest**. Built with Rust and Tauri, with playback and transition timing owned by the native engine.
 
 [**Download for macOS**](https://github.com/bhaiG-de/pulsedeck/releases/latest) · [Install](#install) · [Explore the app](#inside-pulsedeck) · [Agents & CLI](#agents-and-cli) · [Develop](#develop)
 
@@ -83,6 +83,18 @@ Settings has separate sign-ins for **library/Connect access** and **native playe
 Liked Songs and playlists can be fully indexed across pagination. Indexing stores membership/metadata; audio analysis is separate. Collection suggestions use the indexed analysed repertoire, not only the newest provider page. Explicit queued sources can be analysed during isolated preparation, subject to the carrier's runway.
 
 Native Spotify preparation keeps bounded full-track PCM in RAM for playback. Provider audio is not saved/exported as a library cache. Credentials use macOS Keychain and app-private configuration, never repository files.
+
+### YouTube Music
+
+YouTube Music has no DJ playback API, so PulseDeck imports your playlists and plays each song through a matching **local file** or **Spotify catalog track**. YouTube audio is never downloaded or streamed into the decks.
+
+1. In the Google Cloud console, enable **YouTube Data API v3** for a project.
+2. Configure the OAuth consent screen as External in Testing, and add your Google account as a test user.
+3. Create an OAuth client of type **Desktop app**. Paste its Client ID and secret in **Settings → YouTube Music**, then sign in. Access is read-only (`youtube.readonly`).
+
+Open **YouTube Music** in the Library to browse Liked videos and your playlists. Each song shows what it plays as: a local file is preferred, then a Spotify search when the Spotify library account is connected. Matching compares title, artists and duration, and a remix, live or extended version is not treated as the original. Results are saved, so a playlist is searched once; use the row's re-match button to search again. Loading Spotify matches needs the Spotify native player sign-in.
+
+Google ends Testing-mode sign-ins after 7 days. The refresh token shares PulseDeck's Keychain entry; the Desktop client secret is stored in the app-private `youtube-music.json` (owner read/write only). From the CLI: `pd call ytmusic.tracks --args '{"playlist_id":"liked"}' --json` and `ytmusic.match` with up to 50 `video_ids`.
 
 ## Suggest and continuous mixing
 
@@ -209,6 +221,7 @@ Only the workflow's scoped GitHub token is needed for publishing; no credentials
 
 - Tracks decode into RAM; very large sources and concurrent analysis require memory headroom.
 - Spotify deck playback is experimental and depends on native authorization and provider availability.
+- YouTube Music songs play only through a local or Spotify match; unmatched songs cannot be loaded, and matches are automatic (title, artists and duration), not hand-picked.
 - Physical headphone routing, hardware latency, device-loss/sleep stress and listening-quality comparisons need further validation.
 - Beat/downbeat/key estimates remain fallible. Phrase/vocal certainty and commercial-software parity are not claimed.
 - No general stems mixer, DVS, proprietary player/USB export, Pro DJ Link, cloud sync or complete commercial FX parity.

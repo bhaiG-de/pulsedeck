@@ -17,7 +17,7 @@ frontend = root / "frontend/src"
 assert not any(re.search(r"\bnative[<(]", p.read_text()) for p in frontend.glob("*.tsx")), "UI business calls must use control()"
 for p in frontend.glob("*.tsx"):
     for method in re.findall(r'"([a-z_]+(?:\.[a-z_]+)+)"', p.read_text()):
-        if method in names or not method.startswith(("engine.","deck.","library.","playlist.","spotify.","audio.","midi.","recording.","sampler.","controller.","analysis.")):
+        if method in names or not method.startswith(("engine.","deck.","library.","playlist.","spotify.","ytmusic.","audio.","midi.","recording.","sampler.","controller.","analysis.")):
             continue
         raise AssertionError(f"UI method missing from unified catalog: {method} ({p.name})")
 control = (root / "src-tauri/src/control.rs").read_text()
