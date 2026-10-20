@@ -767,6 +767,30 @@ fn persist_deck(app: &tauri::AppHandle, d: usize, expected: Option<u64>) -> Resu
     }
     Ok(Some(revision))
 }
+/// Provider pages the UI links to. The webview ignores target=_blank, so the
+/// app opens these in the default browser and nothing else.
+fn external_url(raw: &str) -> Result<url::Url> {
+    const HOSTS: &[&str] = &[
+        "console.cloud.google.com",
+        "music.youtube.com",
+        "developer.spotify.com",
+    ];
+    url::Url::parse(raw)
+        .ok()
+        .filter(|u| {
+            u.scheme() == "https"
+                && u.username().is_empty()
+                && u.password().is_none()
+                && u.port().is_none()
+                && u.host_str().is_some_and(|host| HOSTS.contains(&host))
+        })
+        .ok_or_else(|| {
+            ControlError::new(
+                "invalid_arguments",
+                "Only https links to Google Cloud, YouTube Music and Spotify developer pages can be opened",
+            )
+        })
+}
 fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, Value)> {
     let a = &request.args;
     let state = app.state::<AppState>();
@@ -821,6 +845,13 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
         "mix.queue.stop" => return stop_successor_queue(app, request),
         "app.show" => {
             show_main_window(app)?;
+            Value::Null
+        }
+        "app.open_url" => {
+            let url = external_url(&arg::<String>(a, "url")?)?;
+            open::that(url.as_str()).map_err(|_| {
+                ControlError::new("open_failed", "Could not open the default browser")
+            })?;
             Value::Null
         }
         "skills.welcome" => {
@@ -1815,6 +1846,30 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
             crate::spotify_analysis::cancel_spotify_analysis(app.clone());
             Value::Null
         }
+        "ytmusic.status" => asynchronous!(crate::youtube_music::ytmusic_status(app.clone())),
+        "ytmusic.configure" => asynchronous!(crate::youtube_music::ytmusic_configure(
+            app.clone(),
+            arg(a, "client_id")?,
+            arg(a, "client_secret")?
+        )),
+        "ytmusic.login" => asynchronous!(crate::youtube_music::ytmusic_begin_login(app.clone())),
+        "ytmusic.disconnect" => {
+            asynchronous!(crate::youtube_music::ytmusic_disconnect(app.clone()))
+        }
+        "ytmusic.playlists" => asynchronous!(crate::youtube_music::ytmusic_playlists(
+            app.clone(),
+            optional(a, "page_token")?
+        )),
+        "ytmusic.tracks" => asynchronous!(crate::youtube_music::ytmusic_tracks(
+            app.clone(),
+            arg(a, "playlist_id")?,
+            optional(a, "page_token")?
+        )),
+        "ytmusic.match" => asynchronous!(crate::youtube_music::ytmusic_match(
+            app.clone(),
+            arg(a, "video_ids")?,
+            optional(a, "force")?.unwrap_or(false)
+        )),
         "ui.state" => serialized(&*app.state::<Control>().ui.lock().map_err(failure)?)?,
         "ui.call" => {
             let target: String = arg(a, "target")?;
@@ -2748,6 +2803,27 @@ include!("control_command_queue.rs");
 #[cfg(test)]
 mod request_reservation_tests {
     use super::*;
+    #[test]
+    fn only_https_provider_pages_open_in_the_browser() {
+        for url in [
+            "https://console.cloud.google.com/apis/library/youtube.googleapis.com",
+            "https://music.youtube.com/watch?v=dQw4w9WgXcQ",
+            "https://developer.spotify.com/dashboard",
+        ] {
+            assert!(external_url(url).is_ok(), "{url}");
+        }
+        for url in [
+            "http://music.youtube.com/watch?v=dQw4w9WgXcQ",
+            "https://music.youtube.com.example.com/",
+            "https://user@music.youtube.com/",
+            "https://music.youtube.com:8443/",
+            "file:///etc/passwd",
+            "https://example.com/",
+            "not a url",
+        ] {
+            assert!(external_url(url).is_err(), "{url}");
+        }
+    }
     #[test]
     fn compact_sources_distinguish_ready_empty_pending_and_replaced_epochs() {
         let engine = deck_engine::EngineHandle::new().unwrap();

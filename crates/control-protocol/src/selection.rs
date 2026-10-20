@@ -44,6 +44,9 @@ pub fn is_read(command: &str) -> bool {
             | "spotify.analysis.get"
             | "spotify.analysis.status"
             | "spotify.devices"
+            | "ytmusic.status"
+            | "ytmusic.playlists"
+            | "ytmusic.tracks"
             | "sampler.state"
             | "ui.state"
     )

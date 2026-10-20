@@ -64,6 +64,7 @@ Only the workflow's scoped GitHub token is needed for publishing; no credentials
 
 - Tracks decode into RAM; very large sources and concurrent analysis require memory headroom.
 - Spotify deck playback is experimental and depends on native authorization and provider availability.
+- YouTube Music songs play only through a local or Spotify match; unmatched songs cannot be loaded, and matches are automatic (title, artists and duration), not hand-picked.
 - Physical headphone routing, hardware latency, device-loss/sleep stress and listening-quality comparisons need further validation.
 - Beat/downbeat/key estimates remain fallible. Phrase/vocal certainty and commercial-software parity are not claimed.
 - No general stems mixer, DVS, proprietary player/USB export, Pro DJ Link, cloud sync or complete commercial FX parity.

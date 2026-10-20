@@ -26,3 +26,14 @@ export async function control<T>(
     throw new Error(response.error?.message || "Command failed");
   return response.result as T;
 }
+
+/** The desktop webview ignores target=_blank, so provider links open in the
+ * default browser through the app. A plain browser follows the link itself. */
+export async function openExternal(
+  event: { preventDefault(): void },
+  url: string,
+): Promise<void> {
+  if (!isDesktop) return;
+  event.preventDefault();
+  await control("app.open_url", { url });
+}

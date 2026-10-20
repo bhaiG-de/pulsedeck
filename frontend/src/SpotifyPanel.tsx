@@ -15,7 +15,7 @@ import {
   Settings2,
   X,
 } from "lucide-react";
-import { isDesktop, control } from "./api";
+import { isDesktop, control, openExternal } from "./api";
 import VirtualTrackRows from "./VirtualTrackRows";
 import TrackArtwork from "./TrackArtwork";
 import { useControl } from "./control-bridge";
@@ -1018,6 +1018,9 @@ function SpotifyPanel({
               Create your own application in the{" "}
               <a
                 href="https://developer.spotify.com/dashboard"
+                onClick={(e) =>
+                  openExternal(e, e.currentTarget.href).catch(fail)
+                }
                 target="_blank"
                 rel="noreferrer"
               >

@@ -2,7 +2,7 @@
 
 **Your music. One instrument.**
 
-A native, two-deck DJ app for macOS. Mix local music and Spotify, shape your sound, and plan your next move—or let your agent help with the music and the preparation.
+A native, two-deck DJ app for macOS. Mix local music and Spotify, bring in your YouTube Music playlists, shape your sound, and plan your next move—or let your agent help with the music and the preparation.
 
 [**Download for macOS**](https://github.com/bhaiG-de/pulsedeck/releases/latest) · [Features](#features) · [Install](#how-to-install) · [Library](#library-setup-and-support) · [Controllers](#controller-support) · [Agents](#agent-workflows)
 
@@ -87,6 +87,16 @@ Build local playlists, edit tags and cues, or exchange library metadata through 
 Library access and deck playback are separate sign-ins. Connect plays on a Spotify device; it does not load a PulseDeck deck. Liked Songs and playlists support full pagination/indexing, while audio analysis is a separate step.
 
 **Spotify deck playback is experimental** and depends on provider availability and account eligibility. Playback audio is held in bounded memory, not saved as an audio library cache. Credentials stay in macOS Keychain/app-private configuration.
+
+### YouTube Music
+
+YouTube Music has no DJ playback API, so PulseDeck imports your playlists and plays each song through a matching **local file** or **Spotify** track. YouTube audio is never downloaded or streamed into the decks.
+
+1. In the Google Cloud console, enable **YouTube Data API v3**, set the OAuth consent screen to External in Testing, and add your Google account as a test user.
+2. Create an OAuth client of type **Desktop app**. Paste its Client ID and secret in **Settings → YouTube Music**, then choose **Sign in with Google**. Access is read-only.
+3. Open **Library → YouTube Music** for Liked videos and your playlists.
+
+Each song shows what it plays as: a local file first, then a Spotify match when the Spotify library account is connected. Loading a Spotify match needs the control player sign-in. Matching compares title, artists and duration; remix, live and extended versions don't count as the original. Results are saved per song, and a row's re-match button searches again. Google ends Testing-mode sign-ins after 7 days. The refresh token stays in macOS Keychain and the client secret in app-private `youtube-music.json`.
 
 For connection, audio or analysis issues, use the [setup and recovery guide](.agents/skills/pulsedeck-control/references/setup-and-recovery.md). Please include the app version and error message in [an issue](https://github.com/bhaiG-de/pulsedeck/issues), with credentials and private paths removed.
 

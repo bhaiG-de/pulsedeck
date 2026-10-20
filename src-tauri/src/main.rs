@@ -16,6 +16,7 @@ mod spotify_decks;
 mod spotify_vault;
 mod suggest;
 mod track_inspection;
+mod youtube_music;
 
 use deck_engine::{
     AudioDeviceInfo, AudioRouting, AudioStatus, EngineCommand, EngineHandle, EngineSnapshot,
@@ -1547,6 +1548,11 @@ fn main() {
                 data_dir.join("spotify-native.json"),
             )
             .map_err(std::io::Error::other)?;
+            app.manage(youtube_music::YouTubeMusicService::new(
+                data_dir.join("youtube-music.json"),
+                spotify_library.vault(),
+            )
+            .map_err(std::io::Error::other)?);
             app.manage(spotify_library);
             app.manage(spotify_native);
             let engine = Arc::new(EngineHandle::new().map_err(std::io::Error::other)?);
