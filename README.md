@@ -94,6 +94,8 @@ For connection, audio or analysis issues, use the [setup and recovery guide](.ag
 
 **Pioneer DJ DDJ-FLX4** is the current controller profile, covering deck transport, jogs, tempo, EQ, faders, browsing, cues and supported LED feedback.
 
+[![DJ's point of view over a white DDJ-FLX4-W connected to a Space Black MacBook running PulseDeck.](docs/images/07-controller.webp)](docs/images/07-controller.webp)
+
 Connect by USB, open **Settings → Controller**, refresh MIDI ports, select the FLX4 input and optional output for LEDs, then choose **Connect controller**. Audio routing is configured separately in Audio settings; discrete headphone monitoring needs a separate output pair.
 
 The integration is independently implemented. Physical controls, LEDs and routing still need further hardware validation; this is not a claim of Pioneer certification or universal MIDI-controller support. See the [FLX4 adapter notes](crates/flx4-midi/README.md).
