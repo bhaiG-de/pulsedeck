@@ -10,11 +10,11 @@ Seven feature views of the real PulseDeck production frontend, rendered with Thr
 | `04-mixer.webp` | EQ, filters, faders and effects |
 | `05-library.webp` | Local collection, metadata and tags |
 | `06-suggest.webp` | Ranked next moves and transition timing |
-| `07-controller.webp` | White DDJ-FLX4-W and Space Black MacBook from the DJ’s point of view |
+| `07-controller.webp` | White DDJ-FLX4-W and Space Black MacBook from a centered, straight-on DJ point of view |
 
 ## README delivery
 
-The repository contains seven **1920 × 1080 WebP images**, totaling **934 KB**. The first six were downsampled with Lanczos; the controller frame was rendered natively at 1080p. All are encoded at quality 90, method 6. Fine text and waveforms were visually compared with the downscaled source renders; the images use lossy compression and are intended for normal README display.
+The repository contains seven **1920 × 1080 WebP images**, totaling **937 KB**. The first six were downsampled with Lanczos; the controller frame was rendered natively at 1080p. All are encoded at quality 90, method 6. Fine text and waveforms were visually compared with the downscaled source renders; the images use lossy compression and are intended for normal README display.
 
 Inline images and click-through links use the same 1080p files. The 4K source renders are kept outside the tracked repository.
 
