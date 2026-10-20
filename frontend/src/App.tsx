@@ -46,6 +46,8 @@ import {
   performanceSnapshot,
 } from "./performance";
 import TrackTags from "./TrackTags";
+import BrandMark from "./BrandMark";
+import AgentSetup from "./AgentSetup";
 import LibraryTools, { type LibraryFilters } from "./LibraryTools";
 import TrackArtwork from "./TrackArtwork";
 import VirtualTrackRows from "./VirtualTrackRows";
@@ -115,11 +117,6 @@ import {
   type ControllerBrowserAction,
   type ControllerBrowserHandle,
 } from "./controller-browser";
-/* Brand mark: a record drawn as a circle of dots, orange at the spindle. */
-const BRAND_DOTS = Array.from({ length: 25 }, (_, i) => [
-  2.2 + (i % 5) * 4.4,
-  2.2 + Math.floor(i / 5) * 4.4,
-]).filter(([x, y]) => Math.hypot(x - 11, y - 11) < 10.5);
 const fmt = (seconds: number) => {
   const value = Math.max(0, Math.floor(seconds || 0));
   return `${Math.floor(value / 60)
@@ -242,39 +239,6 @@ function PerformanceDiagnostics() {
     { ...snapshot, store: engineStore.diagnostics },
   );
   return null;
-}
-function OutputProtection() {
-  const summary = useSyncExternalStore(engineStore.subscribeTransport, () => {
-    const q = engineStore.getTransport().audio_quality as
-      | {
-          headroom_db?: number;
-          master_gain_reduction_db?: number;
-          cue_gain_reduction_db?: number;
-          master_input_peak?: number[];
-          cue_input_peak?: number[];
-        }
-      | undefined;
-    return q
-      ? JSON.stringify([
-          q.headroom_db ?? 0,
-          Math.round((q.master_gain_reduction_db ?? 0) * 10) / 10,
-          Math.round((q.cue_gain_reduction_db ?? 0) * 10) / 10,
-        ])
-      : "[]";
-  });
-  const [headroom, master, cue] = JSON.parse(summary) as number[];
-  if (!headroom) return null;
-  return (
-    <div
-      className={`output-protection ${master > 0.1 || cue > 0.1 ? "limiting" : ""}`}
-      title="Stereo-linked output protection. Lower trim when gain reduction persists. The meters show protected output; source clipping cannot be repaired."
-    >
-      <span>HEADROOM {headroom} dB</span>
-      <span>
-        LIMIT {master.toFixed(1)} dB · CUE {cue.toFixed(1)} dB
-      </span>
-    </div>
-  );
 }
 function livePosition(id: number) {
   const deck = engineStore.getTransport().decks[id];
@@ -1693,7 +1657,6 @@ function Mixer({
             onChange={(mix) => command({ type: "set_cue_mix", mix })}
           />
         </div>
-        <OutputProtection />
         <div className="fx-row">
           <button
             className="fx-selector"
@@ -1796,6 +1759,30 @@ export default function App() {
   const [snapSeek, setSnapSeek] = useState(false);
   const [showSampler, setShowSampler] = useState(false);
   const [appMenu, setAppMenu] = useState(false);
+  const [agentSetup, setAgentSetup] = useState(false);
+  const agentSetupTouched = useRef(false);
+  function openAgentSetup() {
+    agentSetupTouched.current = true;
+    setAgentSetup(true);
+  }
+  function closeAgentSetup() {
+    agentSetupTouched.current = true;
+    setAgentSetup(false);
+    if (isDesktop)
+      void control("skills.welcome", { dismiss: true }).catch(() => {});
+  }
+  useEffect(() => {
+    if (!isDesktop) return;
+    let active = true;
+    void control<{ show: boolean }>("skills.welcome")
+      .then((result) => {
+        if (active && !agentSetupTouched.current) setAgentSetup(result.show);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
   const appMenuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!appMenu) return;
@@ -1913,19 +1900,12 @@ export default function App() {
       reason?: string;
       decision_required?: boolean;
     }>("mix-queue-notice", ({ payload }) => save(payload))
-      .then(async (unlisten) => {
+      .then((unlisten) => {
         if (disposed) {
           unlisten();
           return;
         }
         stop = unlisten;
-        const q = await control<{
-          queue_id: string;
-          state: string;
-          reason?: string;
-          decision_required?: boolean;
-        }>("mix.queue.status", {});
-        if (q.decision_required) save(q);
       })
       .catch(() => {});
     return () => {
@@ -3120,6 +3100,8 @@ export default function App() {
         setSamplerBank(n - 1);
       },
       "notice-dismiss": () => setNotice(null),
+      "agent-skills": (v) =>
+        controlBoolean(v) ? openAgentSetup() : closeAgentSetup(),
       "playlist-form": (v) => setNewPlaylist(controlBoolean(v)),
       "playlist-name": (v) => setPlaylistName(controlString(v)),
       "playlist-submit": async () => {
@@ -3142,6 +3124,7 @@ export default function App() {
             "library",
             "spotify",
             "ytmusic",
+            "skills",
             "roadmap",
           ]),
         ),
@@ -3218,6 +3201,7 @@ export default function App() {
       sampler_bank: samplerBank + 1,
       settings,
       settings_tab: settingsTab,
+      agent_skills: agentSetup,
       playlist_form: newPlaylist,
       playlist_name: playlistName,
       notice,
@@ -3240,22 +3224,7 @@ export default function App() {
       <PerformanceDiagnostics />
       <header className="topbar" data-tauri-drag-region>
         <div className="brand" data-tauri-drag-region>
-          <svg
-            className="brand-mark"
-            viewBox="0 0 22 22"
-            aria-hidden="true"
-            data-tauri-drag-region
-          >
-            {BRAND_DOTS.map(([x, y]) => (
-              <circle
-                key={`${x}-${y}`}
-                cx={x}
-                cy={y}
-                r={1.45}
-                className={x === 11 && y === 11 ? "live" : undefined}
-              />
-            ))}
-          </svg>
+          <BrandMark />
           <strong data-tauri-drag-region>PulseDeck</strong>
         </div>
         <div className="topbar-center" data-tauri-drag-region />
@@ -4068,6 +4037,7 @@ export default function App() {
           </button>
         </div>
       )}
+      {agentSetup && <AgentSetup close={closeAgentSetup} />}
       {settings && (
         <div className="modal-backdrop" onClick={() => setSettings(false)}>
           <section
@@ -4080,9 +4050,7 @@ export default function App() {
             <div className="modal-heading">
               <div>
                 <h2 id="settings-title">Set up your session</h2>
-                <p>
-                  Native audio, controller connections, and library migration.
-                </p>
+                <p>Audio, controllers, library and agent skills.</p>
               </div>
               <button
                 className="icon-button"
@@ -4100,6 +4068,7 @@ export default function App() {
                 "library",
                 "spotify",
                 "ytmusic",
+                "skills",
                 "roadmap",
               ].map((t) => (
                 <button
@@ -4107,15 +4076,18 @@ export default function App() {
                   className={settingsTab === t ? "selected" : ""}
                   onClick={() => setSettingsTab(t)}
                 >
-                  {t === "midi"
-                    ? "Controller"
-                    : t === "ytmusic"
-                      ? "YouTube Music"
-                      : t[0].toUpperCase() + t.slice(1)}
+                  {t === "skills"
+                    ? "Agent skills"
+                    : t === "midi"
+                      ? "Controller"
+                      : t === "ytmusic"
+                        ? "YouTube Music"
+                        : t[0].toUpperCase() + t.slice(1)}
                 </button>
               ))}
             </div>
             <div className="settings-body">
+              {settingsTab === "skills" && <AgentSetup embedded />}
               {settingsTab === "appearance" && (
                 <section
                   className="appearance-settings"

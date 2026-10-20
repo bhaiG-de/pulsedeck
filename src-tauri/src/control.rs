@@ -256,6 +256,16 @@ pub fn ui_reply(
         }
     }
 }
+pub fn show_main_window(app: &tauri::AppHandle) -> Result<()> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| ControlError::new("ui_unavailable", "Main window is unavailable"))?;
+    window.show().map_err(failure)?;
+    window.unminimize().map_err(failure)?;
+    window.set_focus().map_err(failure)?;
+    Ok(())
+}
+
 pub fn prepare_exit(app: &tauri::AppHandle) -> Result<()> {
     let Some(state) = app.try_state::<AppState>() else {
         return Ok(());
@@ -834,12 +844,7 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
         "mix.queue.edit" => return edit_successor_queue(app, request),
         "mix.queue.stop" => return stop_successor_queue(app, request),
         "app.show" => {
-            let window = app
-                .get_webview_window("main")
-                .ok_or_else(|| ControlError::new("ui_unavailable", "Main window is unavailable"))?;
-            window.show().map_err(failure)?;
-            window.unminimize().map_err(failure)?;
-            window.set_focus().map_err(failure)?;
+            show_main_window(app)?;
             Value::Null
         }
         "app.open_url" => {
@@ -848,6 +853,19 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
                 ControlError::new("open_failed", "Could not open the default browser")
             })?;
             Value::Null
+        }
+        "skills.welcome" => {
+            json!({"show": crate::agent_skills::welcome(&state.data_dir, optional::<bool>(a, "dismiss")?.unwrap_or(false)).map_err(failure)?})
+        }
+        "skills.install" => {
+            let agents = arg::<Vec<crate::agent_skills::Agent>>(a, "agents")?;
+            let source = app
+                .path()
+                .resource_dir()
+                .map_err(failure)?
+                .join("dj-skills");
+            let home = app.path().home_dir().map_err(failure)?;
+            serialized(crate::agent_skills::install(&source, &home, agents).map_err(failure)?)?
         }
         "app.hide" => {
             app.get_webview_window("main")

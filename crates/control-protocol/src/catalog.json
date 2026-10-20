@@ -3095,5 +3095,54 @@
     },
     "description": "Audition the prepared incoming passage on headphone cue behind a closed master channel; stop resets and revalidates the planned entry",
     "example_cli": "pulsedeckctl call mix.preview --args '{\"prepared_id\":\"PREPARED_ID\",\"enabled\":true}' --json"
+  },
+  {
+    "command": "skills.welcome",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "dismiss": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "Read first-launch welcome state; set dismiss=true after the user dismisses or completes agent setup.",
+    "example_cli": "pulsedeckctl call skills.welcome --args '{}' --json"
+  },
+  {
+    "command": "skills.install",
+    "example_args": {
+      "agents": [
+        "codex",
+        "claude"
+      ]
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "agents": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "codex",
+              "claude"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "agents"
+      ]
+    },
+    "description": "Install the three bundled DJ skills for selected agents; backs up existing packages outside the skill discovery folder. Requires user authorization.",
+    "example_cli": "pulsedeckctl call skills.install --args '{\"agents\":[\"codex\",\"claude\"]}' --json"
   }
 ]

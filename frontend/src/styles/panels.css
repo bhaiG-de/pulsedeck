@@ -571,5 +571,204 @@
   overflow-wrap: anywhere;
 }
 
-.grid-editor > small { flex-basis: 100%; color: var(--ink-3); font-size: 9px; }
-.transport .play { font-size: 9px; }
+.grid-editor > small {
+  flex-basis: 100%;
+  color: var(--ink-3);
+  font-size: 9px;
+}
+.transport .play {
+  font-size: 9px;
+}
+
+/* Agent setup shares the instrument's metal surfaces and orange status light. */
+dialog.agent-setup {
+  width: min(540px, calc(100vw - 32px));
+  max-height: 90vh;
+  margin: auto;
+  padding: 0;
+  overflow: auto;
+  border: 1px solid var(--seam);
+  border-radius: 18px;
+  color: var(--ink);
+  background: linear-gradient(var(--plate-top), var(--plate) 160px);
+  box-shadow: var(--float-shadow);
+}
+dialog.agent-setup::backdrop {
+  background: var(--backdrop);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.agent-setup-brand,
+.agent-setup-brand > span,
+.agent-setup-brand small,
+.agent-setup-choice-heading,
+.agent-setup-agent-detail,
+.agent-setup-success,
+.agent-setup-footer > div {
+  display: flex;
+  align-items: center;
+}
+.agent-setup-brand {
+  justify-content: space-between;
+  padding: 20px 26px;
+  border-bottom: 1px solid var(--seam-soft);
+}
+.agent-setup-brand > span {
+  gap: 9px;
+  font-size: 17px;
+  letter-spacing: -0.5px;
+}
+.agent-setup-brand small,
+.agent-setup-eyebrow {
+  font: 10px var(--font-mono);
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+}
+.agent-setup-brand small {
+  gap: 6px;
+}
+.agent-setup-brand i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--signal);
+}
+.agent-setup-body {
+  padding: 28px 26px 24px;
+}
+.agent-setup h2 {
+  margin: 12px 0;
+  font-size: 29px;
+  font-weight: 500;
+  letter-spacing: -0.035em;
+}
+#agent-setup-description {
+  color: var(--ink-2);
+  font-size: 14px;
+  line-height: 1.6;
+  max-width: 410px;
+}
+.agent-setup-choices {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin: 24px 0 14px;
+}
+.agent-setup-choices label {
+  min-width: 0;
+  padding: 18px 16px;
+  border: 1px solid var(--key-edge);
+  border-radius: 11px;
+  background: linear-gradient(var(--key-top), var(--key-bottom));
+  box-shadow:
+    inset 0 1px 0 var(--key-hi),
+    0 1px 2px var(--key-shadow);
+  cursor: pointer;
+}
+.agent-setup-choices label.selected {
+  border-color: var(--signal);
+  box-shadow: inset 0 0 0 1px var(--signal);
+}
+.agent-setup-choices label:focus-within {
+  outline: 2px solid var(--signal);
+  outline-offset: 3px;
+}
+.agent-setup-choice-heading {
+  justify-content: space-between;
+  gap: 10px;
+}
+.agent-setup-choice-heading strong {
+  font-size: 16px;
+  font-weight: 600;
+}
+.agent-setup-choice-heading input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--signal);
+}
+.agent-setup-agent-detail {
+  gap: 5px;
+  margin-top: 10px;
+  color: var(--ink-3);
+  font: 11px var(--font-mono);
+}
+.agent-setup-note,
+.agent-setup-backups {
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--ink-3);
+}
+.agent-setup-error {
+  display: block;
+  color: var(--fault-ink);
+  font-size: 12px;
+  line-height: 1.5;
+  margin-top: 12px;
+  overflow-wrap: anywhere;
+}
+.agent-setup-success {
+  gap: 8px;
+  align-items: flex-start;
+  margin-top: 18px;
+  color: var(--ok-ink);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.agent-setup-success svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.agent-setup-backups {
+  margin-top: 12px;
+  overflow-wrap: anywhere;
+}
+.agent-setup-backups p {
+  margin-top: 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+.agent-setup-footer {
+  padding: 18px 26px 22px;
+  border-top: 1px solid var(--seam-soft);
+}
+.agent-setup-footer > span {
+  font-size: 11px;
+  color: var(--ink-3);
+}
+.agent-setup-footer > div {
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+.agent-setup-footer button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 14px;
+  font-size: 12px;
+}
+.agent-setup.embedded .agent-setup-body {
+  padding: 0 0 22px;
+}
+.agent-setup.embedded .agent-setup-footer {
+  padding: 18px 0 0;
+}
+@media (max-width: 420px) {
+  .agent-setup-choices {
+    grid-template-columns: 1fr;
+  }
+}
+
+dialog.agent-setup.legacy-dialog {
+  display: block;
+  position: fixed;
+  z-index: 80;
+  top: 50%;
+  left: 50%;
+  margin: 0;
+  transform: translate(-50%, -50%);
+  box-shadow:
+    var(--float-shadow),
+    0 0 0 100vmax var(--backdrop);
+}

@@ -1,4 +1,4 @@
-name: macOS DMG release
+name: macOS ZIP release
 on:
   push:
     tags: ['v*']
@@ -14,7 +14,7 @@ concurrency:
   group: macos-release-${{ github.event.inputs.tag || github.ref_name }}
   cancel-in-progress: false
 jobs:
-  dmg:
+  release:
     runs-on: macos-15
     timeout-minutes: 60
     permissions:
@@ -68,36 +68,32 @@ jobs:
       - name: Report large-library latency
         continue-on-error: true
         run: cargo test -p pulsedeck library::tests::browser_pages_filter_and_sort_in_sql_without_reading_large_analysis_or_cues -- --test-threads=1
-      - name: Build Apple Silicon DMG
+      - name: Build Apple Silicon app ZIP
         run: npm run package:macos
       - name: Verify bundle and checksum
         run: |
           codesign --verify --deep --strict target/release/bundle/macos/PulseDeck.app
           python3 tools/verify-release.py target/release/bundle/macos/PulseDeck.app
-          cd target/release/bundle/dmg
-          shasum -a 256 *.dmg > SHA256SUMS.txt
-      - name: Test installed app from the DMG
+          cd target/release/bundle/zip
+          shasum -a 256 *.zip > SHA256SUMS.txt
+      - name: Test installed app from the ZIP
         run: |
           python3 - <<'PYTHON'
           import pathlib, subprocess, tempfile
-          image = next(pathlib.Path('target/release/bundle/dmg').glob('*.dmg')).resolve()
-          with tempfile.TemporaryDirectory(prefix='pulsedeck-dmg-test-') as temporary:
-              mount = pathlib.Path(temporary).resolve() / 'mounted'
-              subprocess.run(['hdiutil', 'attach', '-readonly', '-nobrowse', '-mountpoint', str(mount), str(image)], check=True)
-              try:
-                  subprocess.run(['python3', 'tools/test-release.py', str(mount / 'PulseDeck.app')], check=True)
-              finally:
-                  subprocess.run(['hdiutil', 'detach', str(mount)], check=True)
+          archive = next(pathlib.Path('target/release/bundle/zip').glob('*.zip')).resolve()
+          with tempfile.TemporaryDirectory(prefix='pulsedeck-zip-test-') as temporary:
+              extracted = pathlib.Path(temporary).resolve()
+              subprocess.run(['ditto', '-x', '-k', str(archive), str(extracted)], check=True)
+              subprocess.run(['python3', 'tools/test-release.py', str(extracted / 'PulseDeck.app')], check=True)
           PYTHON
       - uses: actions/upload-artifact@v4
         with:
           name: PulseDeck-${{ env.RELEASE_TAG }}-${{ github.sha }}
           path: |
-            target/release/bundle/dmg/*.dmg
-            target/release/bundle/dmg/SHA256SUMS.txt
+            target/release/bundle/zip/*.zip
+            target/release/bundle/zip/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 30
-      # Flowbar uses this action to publish its DMG; v3 uses the supported Node 24 runtime.
       - name: Publish or update downloadable release
         uses: softprops/action-gh-release@v3
         with:
@@ -105,8 +101,8 @@ jobs:
           name: PulseDeck ${{ env.RELEASE_TAG }}
           body_path: .github/release-notes.md
           files: |
-            target/release/bundle/dmg/*.dmg
-            target/release/bundle/dmg/SHA256SUMS.txt
+            target/release/bundle/zip/*.zip
+            target/release/bundle/zip/SHA256SUMS.txt
           fail_on_unmatched_files: true
           overwrite_files: true
           draft: false
