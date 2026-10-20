@@ -18,12 +18,12 @@ impl Default for QueuePolicy {
             playlist: None,
             provider: None,
             energy_direction: "keep".into(),
-            max_stretch_percent: 2.,
+            max_stretch_percent: 100.,
             techniques: None,
             review_confirmed: false,
             replace_prepared: false,
             duration_seconds: None,
-            max_skips: 3,
+            max_skips: 0,
         }
     }
 }
@@ -41,8 +41,8 @@ impl QueuePolicy {
             .is_some_and(|p| !["local", "spotify"].contains(&p))
             || !["keep", "raise", "lower"].contains(&self.energy_direction.as_str())
             || !self.max_stretch_percent.is_finite()
-            || !(0. ..=6.).contains(&self.max_stretch_percent)
-            || !(1..=10).contains(&self.max_skips)
+            || !(0. ..=100.).contains(&self.max_stretch_percent)
+            || self.max_skips > 512
             || self
                 .playlist
                 .as_ref()
@@ -55,9 +55,6 @@ impl QueuePolicy {
         }
         if let Some(seconds) = self.duration_seconds {
             mix_session_duration(seconds)?;
-        }
-        if !self.review_confirmed {
-            return Err(mix_error("review_required", "Confirm the queue's inferred phrase/vocal evidence and musical policy before unattended execution"));
         }
         if let Some(techniques) = &self.techniques {
             let capabilities = crate::next_move::capabilities();
@@ -143,6 +140,21 @@ impl QueueRecord {
     }
     fn summary(&self) -> Value {
         let mut value = serde_json::to_value(self).expect("Queue record serialization");
+        let ready = self.completed_moves > 0
+            || self
+                .items
+                .iter()
+                .any(|item| matches!(item.state.as_str(), "armed" | "transitioning" | "completed"));
+        value["readiness"] = json!(if !self.active() {
+            self.state.as_str()
+        } else if ready {
+            "ready"
+        } else {
+            "preparing"
+        });
+        value["handoff"] = json!({"owner":"application","agent_can_finish":self.active() && ready,
+            "notification_event":"mix.queue.notice","status_command":"mix.queue.status",
+            "instruction":if !self.active() { "Queue ended; inspect its outcome and recover when attention is required." } else if ready { "First successor armed. The app owns execution; observe or hand off as requested by the user." } else { "Wait for the first armed successor or an actionable failure before handing off." }});
         value["terminal"] = json!(!self.active());
         value["decision_required"] = json!(matches!(
             self.state.as_str(),
@@ -180,7 +192,7 @@ impl QueueRecord {
         self.current_item = None;
         self.consecutive_skips += 1;
         self.revision += 1;
-        if self.consecutive_skips >= self.policy.max_skips {
+        if self.policy.max_skips > 0 && self.consecutive_skips >= self.policy.max_skips {
             self.finish("needs_attention", &format!("skip_limit_reached: {reason}"));
         }
     }
@@ -247,6 +259,7 @@ fn queue_event_feedback(summary: &Value) -> Value {
             .and_then(|items| items.iter().rev().find(|i| i["state"] != "pending"))
     });
     json!({"queue_id":summary["queue_id"],"revision":summary["revision"],"state":summary["state"],
+        "readiness":summary["readiness"],"handoff":summary["handoff"],
         "reason":summary["reason"],"terminal":summary["terminal"],"decision_required":summary["decision_required"],
         "operation_id":summary["operation_id"],"current_item":current,"item":item,"completed_moves":summary["completed_moves"],
         "consecutive_skips":summary["consecutive_skips"],"event_sequence":summary["event_sequence"]})
@@ -307,6 +320,19 @@ fn queue_item_metadata(app: &tauri::AppHandle, items: &mut [QueueItem]) -> Resul
             }
         })
         .map_err(failure)
+}
+
+fn queue_analysis_candidate<'a>(
+    coverage: &'a crate::library::PlannerCoverage,
+    reference_artist: Option<&str>,
+) -> Option<&'a crate::library::PlannerMember> {
+    // Metadata chooses what to prepare, never a beatmatch or a musical passage.
+    coverage.needs_analysis.iter().rev().max_by_key(|member| {
+        (
+            member.duration_seconds >= 180.,
+            reference_artist.is_some_and(|artist| !artist.is_empty() && member.artist == artist),
+        )
+    })
 }
 fn start_successor_queue(
     app: &tauri::AppHandle,
@@ -463,13 +489,12 @@ fn start_successor_queue(
         }
         return Err(error);
     }
+    // Capture before the worker starts so a fast startup failure cannot be skipped.
+    let event_sequence = control.event_sequence.load(Ordering::Acquire);
     let runtime = app.clone();
     std::thread::spawn(move || run_successor_queue(&runtime, &id));
     let mut summary = summary;
-    summary["event_sequence"] = json!(control.event_sequence.load(Ordering::Acquire));
-    summary["handoff"] = json!({"owner":"application","agent_can_finish":true,
-        "notification_event":"mix.queue.notice","status_command":"mix.queue.status",
-        "instruction":"Queue owns selection, preparation, transitions and duration. End the agent turn; do not follow or poll a healthy continuous queue."});
+    summary["event_sequence"] = json!(event_sequence);
     Ok(("accepted", summary))
 }
 fn status_successor_queue(
@@ -704,13 +729,22 @@ fn prepare_queue_source(
         .is_some_and(|t| t.path != source)
         && !policy.replace_prepared
     {
-        let completed = control
+        let owned = control
             .mix_queue
             .lock()
             .map_err(failure)?
             .as_ref()
-            .map_or(0, |q| q.record.completed_moves);
-        if completed == 0 {
+            .is_some_and(|q| {
+                q.record.completed_moves > 0
+                    || q.record.items.iter().any(|item| {
+                        snapshot.decks[target]
+                            .track
+                            .as_ref()
+                            .is_some_and(|track| item.source == track.path)
+                            && item.state == "skipped"
+                    })
+            });
+        if !owned {
             return Err(mix_error(
                 "deck_protected",
                 "Confirm replacement of the paused prepared source before starting this queue",
@@ -1041,7 +1075,7 @@ fn successor_queue_tick(app: &tauri::AppHandle, id: &str) -> Result<bool> {
             "Queue reached its bounded history limit",
         ));
     }
-    let source = if record.mode == "ordered" {
+    let mut source = if record.mode == "ordered" {
         let Some(item) = record.items.iter().find(|i| i.state == "pending") else {
             let mut stored = control.mix_queue.lock().map_err(failure)?;
             let queue = stored.as_mut().unwrap();
@@ -1080,6 +1114,69 @@ fn successor_queue_tick(app: &tauri::AppHandle, id: &str) -> Result<bool> {
         record.policy.planner_request(source.as_deref())?,
     ))
     .map_err(failure)?;
+    list.options.retain(|option| {
+        !record.items.iter().any(|item| {
+            item.source == option.source && ["completed", "skipped"].contains(&item.state.as_str())
+        })
+    });
+    if record.mode == "collection"
+        && list.options.is_empty()
+        && list.coverage.needs_analysis_members > 0
+    {
+        let state = app.state::<AppState>();
+        let mut excluded = state.play_history.lock().map_err(failure)?.played().clone();
+        excluded.extend(record.items.iter().map(|item| item.source.clone()));
+        let snapshot = state
+            .engine
+            .scheduled_snapshot()
+            .map_err(scheduled_failure)?;
+        let reference = list
+            .reference_deck
+            .and_then(|deck| snapshot.decks[deck].track.as_ref());
+        if let Some(track) = reference {
+            excluded.insert(track.path.clone());
+        }
+        let coverage = state
+            .library
+            .lock()
+            .map_err(failure)?
+            .planner_coverage_excluding(
+                record.policy.playlist.as_deref(),
+                None,
+                record.policy.provider.as_deref(),
+                &excluded,
+            )
+            .map_err(failure)?;
+        if let Some(candidate) = queue_analysis_candidate(
+            &coverage,
+            reference.and_then(|track| track.artist.as_deref()),
+        ) {
+            let mut stored = control.mix_queue.lock().map_err(failure)?;
+            let Some(queue) = stored
+                .as_mut()
+                .filter(|q| q.record.queue_id == id && q.record.active())
+            else {
+                return Ok(false);
+            };
+            let next = queue
+                .record
+                .items
+                .iter()
+                .map(|item| item.id)
+                .max()
+                .unwrap_or(0)
+                + 1;
+            let mut item = QueueItem::pending(next, candidate.source.clone());
+            item.title = candidate.title.clone();
+            item.artist = candidate.artist.clone();
+            item.state = "planning".into();
+            queue.record.items.push(item);
+            queue.record.current_item = Some(next);
+            queue.record.coverage = serialized(&coverage)?;
+            queue.record.revision += 1;
+            source = Some(candidate.source.clone());
+        }
+    }
     if let Some(source) = source
         .as_deref()
         .filter(|_| list.coverage.needs_analysis_members > 0)
@@ -1102,6 +1199,7 @@ fn successor_queue_tick(app: &tauri::AppHandle, id: &str) -> Result<bool> {
                 "track_not_found",
                 "timeout",
                 "source_unavailable",
+                "needs_analysis",
             ]
             .contains(&error.code.as_str())
             {
@@ -1149,12 +1247,16 @@ fn successor_queue_tick(app: &tauri::AppHandle, id: &str) -> Result<bool> {
         queue.record.coverage = serialized(&list.coverage)?;
         if queue.record.mode == "collection" {
             if let Some(option) = &option {
-                let next = queue.record.items.iter().map(|i| i.id).max().unwrap_or(0) + 1;
-                queue.record.current_item = Some(next);
-                queue
-                    .record
-                    .items
-                    .push(QueueItem::pending(next, option.source.clone()));
+                if queue.record.current_item.is_none() {
+                    let next = queue.record.items.iter().map(|i| i.id).max().unwrap_or(0) + 1;
+                    queue.record.current_item = Some(next);
+                    queue
+                        .record
+                        .items
+                        .push(QueueItem::pending(next, option.source.clone()));
+                }
+            } else if queue.record.current_item.is_some() {
+                queue.record.skip(list.reasons.join("; "));
             } else {
                 queue
                     .record
@@ -1264,15 +1366,15 @@ mod successor_queue_tests {
         }
     }
     #[test]
-    fn queue_requires_explicit_repertoire_review_and_bounded_musical_policy() {
+    fn queue_scope_and_engine_ranges_are_validated_without_musical_review_gate() {
         let mut policy = QueuePolicy::default();
         assert!(policy.validate(false).is_err());
-        assert_eq!(policy.validate(true).unwrap_err().code, "review_required");
+        assert!(policy.validate(true).is_ok());
         policy.review_confirmed = true;
         assert!(policy.validate(true).is_ok());
         policy.provider = Some("local".into());
         assert!(policy.validate(false).is_ok());
-        policy.max_stretch_percent = 7.;
+        policy.max_stretch_percent = 101.;
         assert!(policy.validate(true).is_err());
         policy.max_stretch_percent = 2.;
         policy.techniques = Some(vec!["stem_blend".into()]);
@@ -1281,6 +1383,73 @@ mod successor_queue_tests {
         assert!(policy.validate(true).is_ok());
         policy.duration_seconds = Some(f64::NAN);
         assert!(policy.validate(true).is_err());
+    }
+    #[test]
+    fn handoff_requires_an_armed_successor_not_just_acceptance_or_loading() {
+        let mut queue = record();
+        for state in [
+            "pending",
+            "planning",
+            "analysing",
+            "preparing",
+            "ready",
+            "arming",
+        ] {
+            queue.items[0].state = state.into();
+            assert_eq!(
+                queue.summary()["handoff"]["agent_can_finish"],
+                false,
+                "{state}"
+            );
+            assert_eq!(queue.summary()["readiness"], "preparing");
+        }
+        queue.items[0].state = "armed".into();
+        assert_eq!(queue.summary()["handoff"]["agent_can_finish"], true);
+        assert_eq!(queue_event_feedback(&queue.summary())["readiness"], "ready");
+        queue.finish("needs_attention", "launch failed");
+        assert_eq!(queue.summary()["handoff"]["agent_can_finish"], false);
+        assert_eq!(queue.summary()["readiness"], "needs_attention");
+    }
+    #[test]
+    fn collection_can_select_unanalysed_members_without_treating_metadata_as_a_grid() {
+        let coverage = crate::library::PlannerCoverage {
+            scope: Some("spotify:liked".into()),
+            total_members: Some(2),
+            indexed_members: 2,
+            analysed_members: 0,
+            needs_analysis_members: 2,
+            complete: true,
+            needs_analysis: vec![
+                crate::library::PlannerMember {
+                    source: "short".into(),
+                    title: "Short".into(),
+                    artist: "Other".into(),
+                    duration_seconds: 60.,
+                },
+                crate::library::PlannerMember {
+                    source: "long".into(),
+                    title: "Long".into(),
+                    artist: "Other".into(),
+                    duration_seconds: 240.,
+                },
+            ],
+            needs_analysis_truncated: false,
+        };
+        let candidate = queue_analysis_candidate(&coverage, Some("Current artist")).unwrap();
+        assert_eq!(candidate.source, "long");
+        let request = record()
+            .policy
+            .planner_request(Some(&candidate.source))
+            .unwrap();
+        assert_eq!(request.sources, Some(vec!["long".into()]));
+        assert!(queue_analysis_candidate(
+            &crate::library::PlannerCoverage {
+                needs_analysis: vec![],
+                ..coverage
+            },
+            None
+        )
+        .is_none());
     }
     #[test]
     fn editing_preserves_the_active_move_and_rejects_stale_or_ambiguous_changes_atomically() {
@@ -1316,6 +1485,18 @@ mod successor_queue_tests {
         assert_eq!(queue.items[0].state, "preparing");
         assert_eq!(queue.operation_id.as_deref(), Some("move-1"));
         assert_eq!(queue.revision, 2);
+    }
+    #[test]
+    fn default_queue_keeps_searching_after_musical_rejections() {
+        let mut queue = record();
+        assert_eq!(queue.policy.max_skips, 0);
+        assert_eq!(queue.policy.max_stretch_percent, 100.);
+        for _ in 0..12 {
+            queue.skip("No suitable passage for this source".into());
+        }
+        assert!(queue.active());
+        assert_eq!(queue.consecutive_skips, 12);
+        assert_eq!(queue.completed_moves, 0);
     }
     #[test]
     fn failed_sources_have_a_finite_skip_budget_and_never_claim_completed_handovers() {

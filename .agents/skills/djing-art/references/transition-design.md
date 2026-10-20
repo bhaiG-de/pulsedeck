@@ -32,7 +32,7 @@ A transition must also lead somewhere: inspect the passage after B’s arrival. 
 
 ## Plan the blend in bars
 
-For the requested lively house/tech set, use **8–16 bars of useful audible overlap** as the starting range. In 4/4 this is **32–64 beat intervals**; use the actual meter and event grid for other material. Choose both ends from credible phrase boundaries, then count the intervals between them. Quantizing a launch to one downbeat does not establish that relationship. Silent pre-roll is separate from the audible blend, and one fader's ramp need not span its entire length.
+Choose both ends from the songs first: inspect waveform bands, cue context and beat events around the outgoing statement, incoming entry and desired arrival. Then count the intervals between those anchors. An eight-bar recipe or a round fade duration is not evidence for that overlap length. A compatible house pair may support 8–16 bars (32–64 beat intervals in 4/4), while another pair needs a different span; use the actual meter and event grid. Quantizing a launch to one downbeat does not establish that relationship. Silent pre-roll is separate from the audible blend, and one fader's ramp need not span its entire length.
 
 Use 8 bars when a concise exchange protects dense foregrounds or keeps momentum; allow 16 when complementary rhythm and texture can develop without competing hooks or tedious repetition. Let A deliver a worthwhile statement, then use an interesting viable mix window instead of automatically waiting for its final outro. Actual pickups, irregular phrases and a different musical brief can justify another count; record why rather than stretching or chopping material to satisfy the range.
 

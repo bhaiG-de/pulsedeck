@@ -15,8 +15,8 @@ If installed under your home folder, use `~/Applications/PulseDeck.app/Contents/
 # Bounded analysed opener shortlist; no repeated Spotify page fetches.
 pd call mix.openers --args '{"playlist":"spotify:liked","provider":"spotify","min_bpm":118,"max_bpm":126,"limit":8}' --json
 
-# After loading/playing the chosen opener, submit the continuous set once.
-pd mix queue start --playlist spotify:liked --provider spotify --energy-direction keep --max-stretch-percent 2 --duration-seconds 3600 --review-confirmed --request-id my-set-1 --json
+# Optional autonomous selection after loading/playing the opener.
+pd mix queue start --playlist spotify:liked --provider spotify --energy-direction keep --duration-seconds 3600 --request-id my-set-1 --wait-ready --json
 
 # Explicit status/stop when requested or an actionable outcome needs attention.
 pd mix queue status --queue-id QUEUE_ID --json
@@ -27,9 +27,11 @@ pd commands list --prefix mix. --json
 pd commands describe mix.queue.start --json
 ```
 
+`--wait-ready` waits on startup events until the first successor is armed or preparation fails, then returns. Acceptance alone does not establish readiness. It does not follow a healthy queue for the rest of the set. Collection queues prepare unanalysed candidates when the analysed pool has no feasible move.
+
 `mix.options` defaults to a compact shortlist with evidence/warnings; `detail:true` exposes full passage/guard data. `commands list` returns concise names/descriptions; `--detail` opts into the full catalog. Request IDs make uncertain retries idempotent. Read-only field selection, event cursors and source/control revision guards are shared with the UI.
 
-Native events are available to background integrations. An event subscription alone does not automatically resume an agent session; do not simulate that integration by repeatedly waking a model to read an idle CLI. Interactive `--follow` remains available for people or host-owned background processes.
+Native events are available to background integrations. An event subscription alone does not automatically resume an agent session; do not simulate that integration by repeatedly waking a model to read an idle CLI. Agents can follow individual moves or use direct native controls when making their own musical decisions. Interactive `--follow` and focused event/state reads are available for performing and observing.
 
 ## Skills and workflow references
 

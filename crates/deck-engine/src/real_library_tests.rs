@@ -42,7 +42,10 @@ fn restore_mixer(state: &EngineSnapshot) -> Mixer {
             !analysis.path.starts_with("spotify:"),
             "This check uses local files only"
         );
-        assert!(!expected.sync_enabled, "Current recipes use fixed rates");
+        assert!(
+            !expected.sync_enabled,
+            "Manifest starts before the native follower is enabled"
+        );
         let mut decoded =
             decode::decode_file_playable(Path::new(&analysis.path), Some(analysis.clone()))
                 .unwrap();
@@ -151,10 +154,17 @@ fn render_actual_local_library_planner_transitions() {
         let mut peak = 0_f32;
         let mut silence_windows = 0;
         let mut max_speed_change_percent = [0_f64; 2];
+        let mut max_phase_error = 0_f64;
+        let mut max_tempo_difference = 0_f64;
+        let mut overlap_samples = 0usize;
+        let mut window_tempo_sum = 0_f64;
+        let mut window_samples = 0usize;
+        let mut max_mean_tempo_difference = 0_f64;
         let speed_limit = manifest.schedule.intent["max_stretch_percent"]
             .as_f64()
             .unwrap_or(2.);
         let mut stalled = false;
+        let mut recovery_logged = false;
         for frame in 0..frames {
             if manifest.stall_incoming_after_launch && !stalled && mixer.decks[carrier].playing {
                 // Model a failed/stalled incoming launch without a manual-control revision.
@@ -162,6 +172,18 @@ fn render_actual_local_library_planner_transitions() {
                 stalled = true;
             }
             let (raw_master, _) = mixer.frame();
+            if !recovery_logged
+                && mixer
+                    .scheduled
+                    .as_ref()
+                    .is_some_and(|b| b.state == scheduled::BatchLifecycle::Recovering)
+            {
+                recovery_logged = true;
+                println!(
+                    "REAL_RECOVERY {}",
+                    serde_json::json!({"path":path,"completed":mixer.scheduled.as_ref().unwrap().completed,"decks":mixer.decks.each_ref().map(|d| serde_json::json!({"seconds":d.seconds(),"beat":d.grid_position(d.seconds()),"bpm":d.local_grid_bpm().map(|b|b*d.actual_rate()),"rate":d.actual_rate(),"limited":d.sync_rate_limited}))})
+                );
+            }
             assert!(
                 raw_master.iter().all(|sample| sample.is_finite()),
                 "Invalid mixer bus at frame {frame}"
@@ -172,11 +194,37 @@ fn render_actual_local_library_planner_transitions() {
                 mixer.sample_rate,
             );
             for (deck, maximum) in mixer.decks.iter().zip(&mut max_speed_change_percent) {
-                *maximum = maximum.max((deck.rate() - 1.).abs() * 100.);
+                *maximum = maximum.max((deck.actual_rate() - 1.).abs() * 100.);
                 assert!(
                     *maximum <= speed_limit + 0.01,
                     "Recipe exceeded its natural-speed limit"
                 );
+            }
+            if frame % 256 == 0
+                && mixer
+                    .decks
+                    .iter()
+                    .all(|d| d.playing && d.channel_fader.target > 0.05)
+            {
+                let a = &mixer.decks[clock];
+                let b = &mixer.decks[carrier];
+                let phase = (a.grid_position(a.seconds()) - b.grid_position(b.seconds()) + 0.5)
+                    .rem_euclid(1.)
+                    - 0.5;
+                let signed_difference = a.local_grid_bpm().unwrap() * a.actual_rate()
+                    - b.local_grid_bpm().unwrap() * b.actual_rate();
+                let difference = signed_difference.abs();
+                max_phase_error = max_phase_error.max(phase.abs());
+                max_tempo_difference = max_tempo_difference.max(difference);
+                overlap_samples += 1;
+                window_tempo_sum += signed_difference;
+                window_samples += 1;
+                if window_samples * 256 >= 4 * mixer.sample_rate as usize {
+                    max_mean_tempo_difference = max_mean_tempo_difference
+                        .max((window_tempo_sum / window_samples as f64).abs());
+                    window_samples = 0;
+                    window_tempo_sum = 0.;
+                }
             }
             assert!(
                 master.iter().all(|sample| sample.is_finite()),
@@ -207,6 +255,11 @@ fn render_actual_local_library_planner_transitions() {
             assert!(mixer.decks[clock].playing);
             assert!(mixer.decks[clock].channel_fader.target >= 0.999);
             assert!(mixer.decks[carrier].channel_fader.target <= 0.001);
+            assert!(
+                !mixer.decks[carrier].playing,
+                "Recovered incoming deck must be available for preparation"
+            );
+            assert_eq!(mixer.master_deck, clock);
         } else {
             assert_eq!(
                 batch.state,
@@ -225,6 +278,26 @@ fn render_actual_local_library_planner_transitions() {
             );
             assert!(mixer.decks[carrier].playing);
             assert!(mixer.decks[carrier].channel_fader.target >= 0.999);
+            assert!(mixer.decks[carrier]
+                .eq
+                .iter()
+                .all(|band| (band.target - 1.).abs() < 0.002));
+            assert!(mixer.decks[carrier].filter.target.abs() < 0.002);
+            assert_eq!(mixer.master_deck, carrier);
+            assert!(!mixer.decks[carrier].sync_enabled);
+            assert!(overlap_samples > 0);
+            assert!(
+                max_phase_error <= 0.12,
+                "Audible overlap phase drifted {max_phase_error} beats"
+            );
+            if window_samples > 0 {
+                max_mean_tempo_difference =
+                    max_mean_tempo_difference.max((window_tempo_sum / window_samples as f64).abs());
+            }
+            assert!(
+                max_mean_tempo_difference <= 0.6,
+                "Audible overlap mean tempo difference {max_mean_tempo_difference} BPM"
+            );
             assert!(!mixer.decks[clock].playing);
             assert!(mixer.decks[clock].channel_fader.target <= 0.001);
         }
@@ -242,6 +315,7 @@ fn render_actual_local_library_planner_transitions() {
                 "rendered_seconds":seconds,"sample_rate":mixer.sample_rate,
                 "actions_total":batch.len,"actions_completed":batch.receipts.iter().take(batch.len).filter(|r|r.state==2).count(),"min_100ms_rms":min_rms,"peak":peak,
             "max_speed_change_percent":max_speed_change_percent,
+                "overlap_samples":overlap_samples,"max_phase_error_beats":max_phase_error,"max_tempo_difference_bpm":max_tempo_difference,"max_mean_tempo_difference_bpm":max_mean_tempo_difference,
                 "silent_windows":silence_windows,"state":batch.state,"fault_injected":stalled
             })
         );

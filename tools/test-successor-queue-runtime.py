@@ -22,6 +22,7 @@ def main():
     parser.add_argument('--library', type=Path, default=ROOT / 'artifacts/query-stress-2026-10-18/normal-before.sqlite3')
     parser.add_argument('--manifest', type=Path, default=ROOT / 'artifacts/single-call-moves-2026-10-19/eq_blend.json')
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--cold-collection', action='store_true', help='Exercise a collection whose only successor has never been analysed')
     args = parser.parse_args()
     capture = json.loads(args.manifest.read_text())
     opener = Path(capture['snapshot']['decks'][capture['option']['reference_deck']]['track']['path'])
@@ -34,7 +35,7 @@ def main():
     report = {'passed': False, 'hardware_output': False, 'clock': 'accelerated only during native batches; not wall-clock/performance evidence',
               'sources': [str(p) for p in (opener, second, third)], 'events': []}
     with tempfile.TemporaryDirectory(prefix='pd-successor-runtime-') as temporary:
-        profile = Path(temporary)
+        profile = Path(temporary).resolve()
         data = profile / 'data'
         data.mkdir()
         output_db = sqlite3.connect(data / 'library.sqlite3')
@@ -54,7 +55,10 @@ def main():
                 connection.settimeout(timeout + 2)
                 connection.connect(str(address))
                 connection.sendall(json.dumps(request).encode() + b'\n')
-                result = json.loads(connection.makefile('rb').readline())
+                frame = connection.makefile('rb').readline()
+                if not frame:
+                    raise RuntimeError(f"Control connection closed during {method}; app exit={app.poll() if app else None}: " + (profile / 'app.log').read_text()[-4000:])
+                result = json.loads(frame)
             if not result.get('ok'):
                 raise RuntimeError(json.dumps({'request': request, 'response': result}))
             return result.get('result')
@@ -93,9 +97,22 @@ def main():
                 {'type': 'play', 'deck': 0},
             ]:
                 call('engine.command', command)
-            started = call('mix.queue.start', {'sources': [str(second), str(third)], 'provider': 'local',
-                'energy_direction': 'keep', 'max_stretch_percent': 2, 'review_confirmed': True,
-                'replace_prepared': True, 'max_skips': 3}, request_id='actual-two-successors')
+            repertoire = {'sources': [str(second), str(third)]}
+            if args.cold_collection:
+                cold = profile / 'cold-collection-successor.mp3'
+                shutil.copyfile(second, cold)
+                imported = call('library.import', {'paths': [str(cold)], 'summary': True})
+                playlist = call('playlist.create', {'name': 'Only unanalysed successor'})
+                scope = f"local:{playlist['id']}"
+                call('playlist.add', {'playlist': scope, 'track': f"local:{imported[0]['id']}"})
+                coverage = call('mix.openers', {'playlist': scope, 'provider': 'local'})['coverage']
+                assert coverage['analysed_members'] == 0 and coverage['needs_analysis_members'] == 1, coverage
+                repertoire = {'playlist': scope}
+            started = call('mix.queue.start', {**repertoire, 'provider': 'local',
+                'energy_direction': 'keep',
+                'replace_prepared': True}, request_id='actual-two-successors')
+            assert started['readiness'] == 'preparing' and not started['handoff']['agent_can_finish'], started
+            assert started['policy']['max_stretch_percent'] == 100 and started['policy']['max_skips'] == 0, started
             queue_id = started['queue_id']
             cursor = started.get('event_sequence', 0)
             deadline = time.monotonic() + 240
@@ -104,10 +121,19 @@ def main():
                 cursor = events['sequence']
                 report['events'].extend(events['events'])
                 queue = call('mix.queue.status', {'queue_id': queue_id})
-                if queue['terminal']:
+                if queue['terminal'] or (args.cold_collection and queue['completed_moves'] >= 1):
                     break
             else:
                 raise TimeoutError('Actual queue did not finish two native moves')
+            if args.cold_collection:
+                assert queue['completed_moves'] == 1, queue
+                assert any(item['source'] == str(cold) and item['state'] == 'completed' for item in queue['items']), queue
+                assert any(event['data'].get('item', {}).get('availability') == 'analysing' for event in report['events'] if event['data'].get('item')), report
+                report['cold_collection_completion'] = queue
+                report['passed'] = True
+                call('mix.queue.stop', {'queue_id': queue_id})
+                print(json.dumps({'passed': True, 'unanalysed_collection_native_completions': 1, 'hardware_output': False}))
+                return
             assert queue['state'] == 'completed' and queue['completed_moves'] >= 2, queue
             assert [item['source'] for item in queue['items'] if item['state'] == 'completed'] == [str(second), str(third)], queue
             report['two_native_completions'] = queue

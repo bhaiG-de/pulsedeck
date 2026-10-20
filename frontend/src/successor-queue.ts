@@ -13,6 +13,12 @@ export interface SuccessorQueue {
   revision: number;
   state: string;
   terminal: boolean;
+  readiness?: string;
+  coverage?: {
+    indexed_members: number;
+    analysed_members: number;
+    needs_analysis_members: number;
+  } | null;
   reason?: string | null;
   mode?: "ordered" | "collection";
   items: QueueTrack[];

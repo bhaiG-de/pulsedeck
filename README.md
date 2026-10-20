@@ -129,11 +129,11 @@ For a source checkout, install the skills with `python3 tools/install-dj-skills.
 | Prepare cues | “Set a hot cue named ‘Mix in’ at 00:32 on [track]. Preserve its other cues and leave playback unchanged.” |
 | Prepare a set | “Plan a one-hour progressive house set from my local playlist. Show the order and transition ideas without starting playback.” |
 | Maintain the library | “Check these tracks for missing analysis, update it, and preserve my saved cues and beatgrids.” |
-| Play a mix | “Mix my Spotify Liked Songs for one hour using the successor queue, keeping tempos close.” |
+| Play a mix | “DJ a smooth one-hour mix from my Spotify Liked Songs. Choose the phrases and techniques yourself.” |
 | Record | “Record a 30-minute mix from this local playlist and save the WAV.” |
 
 You can invoke `$pulsedeck-library`, `$djing-art` or `$pulsedeck-control` in Codex, and `/pulsedeck-library`, `/djing-art` or `/pulsedeck-control` in Claude Code.
 
-For continuous sets, the agent selects an opener and submits the queue once. **PulseDeck owns timing and subsequent transitions**, so the agent can finish its turn after acceptance. Tags and cue edits use explicit instructions; automatic cue generation and verified vocal/phrase classification are not built in.
+An agent can DJ successive moves and direct controls itself or choose the optional app-owned successor queue. With the queue, PulseDeck chooses subsequent transitions; `--wait-ready` verifies the first armed successor before an optional handoff. Collection queues prepare unanalysed candidates as needed; indexing alone does not establish mix readiness. Tags and cue edits use explicit instructions; automatic cue generation and verified vocal/phrase classification are not built in.
 
 [CLI examples and execution details](docs/CLI.md) · [Skill reference](.agents/skills/README.md) · [Known limits](docs/DEVELOPMENT.md#current-limits) · [Image notes](docs/images/README.md) · [Licenses](NOTICE.md)

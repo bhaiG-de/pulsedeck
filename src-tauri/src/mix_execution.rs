@@ -15,6 +15,8 @@ struct PreparedMix {
     preparation_deadline: Option<Instant>,
     restored: bool,
     arm_confirmation_deadline: Option<Instant>,
+    recovery_attempts: u8,
+    takeover_revision: u64,
 }
 
 fn mix_error(code: &str, message: &str) -> ControlError {
@@ -45,6 +47,7 @@ fn mix_summary(prepared: &PreparedMix) -> Value {
     json!({"prepared_id":prepared.id,"operation_id":prepared.id,"state":prepared.state,
         "option":prepared.option,"job_id":prepared.job_id,"error":prepared.error,
         "automatic":prepared.automatic,"fallback_used":prepared.fallback_used,"restored":prepared.restored,
+        "recovery_attempts":prepared.recovery_attempts,
         "terminal":mix_terminal(&prepared.state),"event_sequence":null,
         "ready":prepared.state=="ready","previewing":prepared.state=="previewing","transport_started":prepared.state=="previewing", "preview_remaining_seconds":prepared.preview_deadline.map(|deadline|deadline.saturating_duration_since(Instant::now()).as_secs_f64())})
 }
@@ -332,6 +335,8 @@ fn begin_mix(
                 fallback_used: false,
                 restored: false,
                 arm_confirmation_deadline: None,
+                recovery_attempts: 0,
+                takeover_revision: c.mix_takeover_revision.load(Ordering::Acquire),
                 preparation_deadline: automatic.then(|| {
                     let reference = &initial.decks[option.reference_deck];
                     let remaining = (crate::next_move::useful_end_seconds(reference)
@@ -702,8 +707,11 @@ fn compile_mix_recipe(
     }
     // Reserve two beat events for endpoint verification before pausing the old carrier.
     deck_engine::event_seconds(s, a, clear + 2).map_err(scheduled_failure)?;
-    let require = json!({"deck":b,"ready":true,"playing":true,"advanced_from_seconds":s.decks[b].position_seconds,"min_advanced_beats":1.,"phase_tolerance_beats":0.25});
+    let require = json!({"deck":b,"ready":true,"playing":true,"advanced_from_seconds":s.decks[b].position_seconds,"min_advanced_beats":1.,"phase_tolerance_beats":0.10});
     let mut steps = vec![
+        json!({"action_id":"clock-master","command":"engine.command","args":{"type":"set_master","deck":a},"expected_load_revision":s.load_revisions[a],"at_event":launch}),
+        json!({"action_id":"sync-limits","command":"engine.command","args":{"type":"set_sync_rate_limits","deck":b,"limits":{"min_rate":(1.-o.max_stretch_percent/100.).max(0.1),"max_rate":(1.+o.max_stretch_percent/100.).min(2.),"max_slew_per_second":0.01}},"expected_load_revision":s.load_revisions[b],"at_event":launch}),
+        json!({"action_id":"follow-clock","command":"engine.command","args":{"type":"set_sync","deck":b,"enabled":true},"expected_load_revision":s.load_revisions[b],"at_event":launch}),
         json!({"action_id":"launch","command":"engine.command","args":{"type":"play","deck":b},"expected_load_revision":s.load_revisions[b],"at_event":launch}),
     ];
     let mut ramp = |label: &str, at: i64, end: i64, deck: usize, target: &str, value: f64| {
@@ -722,7 +730,11 @@ fn compile_mix_recipe(
         ramp("carrier-open", handover, clear, b, "channel_fader", 1.);
         ramp("outgoing-clear", handover, clear, a, "channel_fader", 0.);
     } else if o.technique == "echo_out" || o.technique == "reverb_exit" {
-        let effect = if o.technique == "echo_out" {"echo"} else {"reverb"};
+        let effect = if o.technique == "echo_out" {
+            "echo"
+        } else {
+            "reverb"
+        };
         ramp("tail-send", audible, handover, a, effect, 0.55);
         ramp("entrance", audible, handover, b, "channel_fader", 1.);
         ramp("outgoing-clear", handover, clear, a, "channel_fader", 0.);
@@ -731,6 +743,9 @@ fn compile_mix_recipe(
         ramp("entrance", audible, handover, b, "channel_fader", 1.);
         ramp("outgoing-clear", handover, clear, a, "channel_fader", 0.);
     }
+    steps.push(json!({"action_id":"restore-tone","command":"engine.command","args":{"type":"set_eq","deck":b,"low":1.,"mid":1.,"high":1.},"expected_load_revision":s.load_revisions[b],"at_event":clear,"require":require}));
+    steps.push(json!({"action_id":"restore-filter","command":"engine.command","args":{"type":"set_filter","deck":b,"amount":0.},"expected_load_revision":s.load_revisions[b],"at_event":clear,"require":require}));
+    steps.push(json!({"action_id":"restore-fx","command":"engine.command","args":{"type":"set_fx","deck":b,"echo":0.,"reverb":0.},"expected_load_revision":s.load_revisions[b],"at_event":clear,"require":require}));
     steps.sort_by_key(|step| step["at_event"].as_i64().unwrap_or(0));
     Ok(Request::new(
         "batch.run",
@@ -750,6 +765,13 @@ fn uncertain_mix_job(error: &ControlError) -> Option<&str> {
     (error.code == "timeout")
         .then(|| error.details["job_id"].as_str())
         .flatten()
+}
+fn mix_native_operation_id(prepared: &PreparedMix) -> String {
+    if prepared.recovery_attempts == 0 {
+        prepared.id.clone()
+    } else {
+        format!("{}:retry-{}", prepared.id, prepared.recovery_attempts)
+    }
 }
 fn arm_mix(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, Value)> {
     let id: String = arg(&request.args, "prepared_id")?;
@@ -795,7 +817,13 @@ fn arm_mix(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, V
         validate_mix_readiness(&prepared.option, &snapshot)?;
         crate::next_move::revalidate_prepared_window(&snapshot, &prepared.option, false)
             .map_err(|e| mix_error("stale_preparation", &e))?;
-        let mut batch = compile_mix_recipe(&id, &prepared.option, &snapshot)?;
+        // A fresh recovery plan needs a fresh native idempotency key, while
+        // callers continue following the original high-level mix operation.
+        let mut batch = compile_mix_recipe(
+            &mix_native_operation_id(&prepared),
+            &prepared.option,
+            &snapshot,
+        )?;
         batch.timeout_ms = request.timeout_ms;
         {
             let mut stored = c.mix_prepared.lock().map_err(failure)?;
@@ -821,6 +849,7 @@ fn arm_mix(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, V
             p.state = "armed".into();
             p.job_id = receipt["job_id"].as_str().map(str::to_owned);
             receipt["prepared_id"] = json!(id);
+            receipt["operation_id"] = json!(id);
             receipt["state"] = json!("armed");
             event(app, "mix.updated", mix_summary(p));
             let job_id = p.job_id.clone();
@@ -982,6 +1011,8 @@ fn restored_mix_operation(record: &Value, native_state: Option<&str>) -> Result<
         preparation_deadline: None,
         restored: true,
         arm_confirmation_deadline: None,
+        recovery_attempts: 0,
+        takeover_revision: 0,
     })
 }
 fn restore_mix_operations(app: &tauri::AppHandle, records: &Value) -> Result<()> {
@@ -1007,9 +1038,25 @@ fn restore_mix_operations(app: &tauri::AppHandle, records: &Value) -> Result<()>
 }
 
 fn fail_mix_operation(app: &tauri::AppHandle, id: &str, error: ControlError) {
+    let mut retry = false;
     if let Ok(mut stored) = app.state::<Control>().mix_prepared.lock() {
         if let Some(p) = stored.get_mut(id) {
-            if p.cancelled.load(Ordering::Acquire) {
+            if can_retry_mix(
+                p,
+                &app.state::<AppState>().engine.transport_snapshot(),
+                app.state::<Control>()
+                    .mix_takeover_revision
+                    .load(Ordering::Acquire),
+                error.details["native"]["reason"]
+                    .as_str()
+                    .unwrap_or(&error.code),
+            ) {
+                p.recovery_attempts += 1;
+                p.fallback_used = true;
+                p.state = "recovering".into();
+                p.job_id = None;
+                retry = true;
+            } else if p.cancelled.load(Ordering::Acquire) {
                 p.state = "cancelled".into();
             } else {
                 p.state = "failed".into();
@@ -1018,9 +1065,202 @@ fn fail_mix_operation(app: &tauri::AppHandle, id: &str, error: ControlError) {
             event(app, "mix.updated", mix_summary(p));
         }
     }
+    if retry {
+        let runtime = app.clone();
+        let id = id.to_string();
+        std::thread::spawn(move || {
+            if let Err(error) = retry_mix_operation(&runtime, &id) {
+                fail_mix_operation(&runtime, &id, error);
+            }
+        });
+    }
 }
 
 /// Observe native state changes; never place fader timing on this observer thread.
+fn can_retry_mix(
+    p: &PreparedMix,
+    s: &deck_engine::EngineSnapshot,
+    takeover: u64,
+    reason: &str,
+) -> bool {
+    let a = p.option.reference_deck;
+    p.automatic
+        && p.recovery_attempts == 0
+        && !p.cancelled.load(Ordering::Acquire)
+        && takeover == p.takeover_revision
+        && ([
+            "grid_changed",
+            "deadline_expired",
+            "prerequisite_failed",
+            "endpoint_failed",
+        ]
+        .contains(&reason)
+            || (matches!(reason, "stale_preparation" | "stale_option")
+                && p.snapshot.as_ref().is_some_and(|old| {
+                    old.decks
+                        .iter()
+                        .zip(&s.decks)
+                        .any(|(before, after)| before.grid_revision != after.grid_revision)
+                })))
+        && s.running
+        && s.engine_epoch == p.option.engine_epoch
+        && s.decks[a].playing
+        && p.snapshot.as_ref().is_some_and(|old| {
+            old.load_revisions == s.load_revisions
+                && old.deck_control_revisions == s.deck_control_revisions
+        })
+        && s.decks[a].position_revision == p.option.reference_position_revision
+        && p.snapshot.as_ref().is_some_and(|old| {
+            (crate::next_move::useful_end_seconds(&old.decks[a]) - s.decks[a].position_seconds)
+                / s.decks[a].actual_playback_rate
+                > 20.
+        })
+}
+
+fn mix_retry_preserves_session(
+    p: &PreparedMix,
+    native_operation: &str,
+    s: &deck_engine::EngineSnapshot,
+    takeover: u64,
+    reason: &str,
+) -> bool {
+    // Only the first native attempt can have an owned retry in flight. A failed
+    // retry has its own native ID and must still terminate the session.
+    native_operation == p.id
+        && (can_retry_mix(p, s, takeover, reason)
+            || (p.automatic
+                && p.recovery_attempts == 1
+                && matches!(
+                    p.state.as_str(),
+                    "recovering" | "preparing" | "ready" | "arming"
+                )
+                && !p.cancelled.load(Ordering::Acquire)
+                && takeover == p.takeover_revision
+                && s.running
+                && s.engine_epoch == p.option.engine_epoch))
+}
+
+fn retry_mix_operation(app: &tauri::AppHandle, id: &str) -> Result<()> {
+    let c = app.state::<Control>();
+    let state = app.state::<AppState>();
+    let result = {
+        let _preparing = c.mix_preparing.lock().map_err(failure)?;
+        let p = c
+            .mix_prepared
+            .lock()
+            .map_err(failure)?
+            .get(id)
+            .cloned()
+            .ok_or_else(|| mix_error("not_found", "Retry receipt disappeared"))?;
+        let _submission = c.scheduled_submission.lock().map_err(failure)?;
+        let mut current = state
+            .engine
+            .scheduled_snapshot()
+            .map_err(scheduled_failure)?;
+        if p.cancelled.load(Ordering::Acquire)
+            || c.mix_takeover_revision.load(Ordering::Acquire) != p.takeover_revision
+            || p.snapshot.as_ref().is_none_or(|old| {
+                old.load_revisions != current.load_revisions
+                    || old.deck_control_revisions != current.deck_control_revisions
+            })
+            || !current.decks[p.option.reference_deck].playing
+        {
+            return Err(mix_error(
+                "manual_takeover",
+                "Recovery yielded to changed sources or controls",
+            ));
+        }
+        let a = p.option.reference_deck;
+        let b = p.option.target_deck;
+        let sources = current.load_revisions;
+        for command in [
+            EngineCommand::SetChannelFader { deck: a, value: 1. },
+            EngineCommand::SetChannelFader { deck: b, value: 0. },
+            EngineCommand::SetEq {
+                deck: a,
+                low: 1.,
+                mid: 1.,
+                high: 1.,
+            },
+            EngineCommand::SetFilter {
+                deck: a,
+                amount: 0.,
+            },
+            EngineCommand::SetFx {
+                deck: a,
+                echo: 0.,
+                reverb: 0.,
+            },
+            EngineCommand::SetSync {
+                deck: b,
+                enabled: false,
+            },
+            EngineCommand::Pause { deck: b },
+        ] {
+            check_mix_cancelled(&p.cancelled)?;
+            if current.load_revisions != sources
+                || c.mix_takeover_revision.load(Ordering::Acquire) != p.takeover_revision
+            {
+                return Err(mix_error(
+                    "manual_takeover",
+                    "Sources changed during recovery",
+                ));
+            }
+            let expected_control_revision = current.control_revision.wrapping_add(1);
+            let mut request = Request::new("engine.command", serialized(&command)?);
+            request.expected_load_revision = command.deck().map(|deck| sources[deck]);
+            apply_with_control_guard(app, &request, command, Some(current.control_revision))?;
+            current = state
+                .engine
+                .scheduled_snapshot()
+                .map_err(scheduled_failure)?;
+            if current.control_revision != expected_control_revision {
+                return Err(mix_error(
+                    "manual_takeover",
+                    "Controls changed during recovery",
+                ));
+            }
+        }
+        drop(_submission);
+        let option = crate::next_move::recovery_option(&current, &p.option)
+            .map_err(|reason| mix_error("no_feasible_fallback", &reason))?;
+        {
+            let mut stored = c.mix_prepared.lock().map_err(failure)?;
+            let active = stored
+                .get_mut(id)
+                .ok_or_else(|| mix_error("not_found", "Retry receipt disappeared"))?;
+            check_mix_cancelled(&active.cancelled)?;
+            active.state = "preparing".into();
+            active.option = option.clone();
+            active.job_id = None;
+            active.error = None;
+            active.preparation_deadline = Some(Instant::now() + Duration::from_secs(30));
+            event(app, "mix.updated", mix_summary(active));
+        }
+        let mut request = Request::new("mix.execute", json!({"allow_fallback":true}));
+        request.timeout_ms = 30_000;
+        finish_mix_preparation(
+            app,
+            &request,
+            MixPreparation {
+                id: id.into(),
+                option,
+                token: p.cancelled,
+                initial: current,
+                matches: true,
+                automatic: true,
+            },
+        )
+    };
+    result?;
+    let _submission = c.scheduled_submission.lock().map_err(failure)?;
+    arm_mix(
+        app,
+        &Request::new("mix.arm", json!({"prepared_id":id,"review_confirmed":true})),
+    )?;
+    Ok(())
+}
+
 fn poll_mix_operations(app: &tauri::AppHandle) -> Result<()> {
     let c = app.state::<Control>();
     let wanted: Vec<String> = c
@@ -1050,6 +1290,7 @@ fn poll_mix_operations(app: &tauri::AppHandle) -> Result<()> {
     // against transport captured before its final controls were applied.
     let current = app.state::<AppState>().engine.transport_snapshot();
     let mut unconfirmed = Vec::new();
+    let mut retries = Vec::new();
     for p in stored.values_mut() {
         if mix_terminal(&p.state) {
             continue;
@@ -1110,6 +1351,22 @@ fn poll_mix_operations(app: &tauri::AppHandle) -> Result<()> {
         if state == p.state {
             continue;
         }
+        if matches!(state, "failed" | "recovered" | "yielded")
+            && can_retry_mix(
+                p,
+                &current,
+                c.mix_takeover_revision.load(Ordering::Acquire),
+                job["reason"].as_str().unwrap_or(""),
+            )
+        {
+            p.recovery_attempts += 1;
+            p.fallback_used = true;
+            p.state = "recovering".into();
+            p.job_id = None;
+            retries.push(p.id.clone());
+            event(app, "mix.updated", mix_summary(p));
+            continue;
+        }
         p.state = state.into();
         if matches!(state, "failed" | "recovered" | "interrupted" | "yielded") {
             p.error = Some(mix_error(
@@ -1120,6 +1377,14 @@ fn poll_mix_operations(app: &tauri::AppHandle) -> Result<()> {
         event(app, "mix.updated", mix_summary(p));
     }
     drop(stored);
+    for id in retries {
+        let runtime = app.clone();
+        std::thread::spawn(move || {
+            if let Err(error) = retry_mix_operation(&runtime, &id) {
+                fail_mix_operation(&runtime, &id, error);
+            }
+        });
+    }
     if !unconfirmed.is_empty() {
         let mut jobs = c.jobs.lock().map_err(failure)?;
         for id in unconfirmed {
@@ -1146,6 +1411,11 @@ mod mix_execution_tests {
             bpm: Some(120.),
             bpm_source: Some("manual".into()),
             beatgrid_source: Some("manual".into()),
+            waveform_bands: Some(audio_analysis::WaveformBands {
+                low: vec![0.1; 16],
+                mid: vec![0.1; 16],
+                high: vec![0.1; 16],
+            }),
             ..Default::default()
         };
         let mut a = crate::next_move::analysis_deck(&track).unwrap();
@@ -1181,6 +1451,77 @@ mod mix_execution_tests {
         .is_none());
     }
     #[test]
+    fn automatic_retry_requires_retained_ownership_and_live_runway_and_is_bounded() {
+        let (option, s) = fixture("filter_blend");
+        let record = json!({"operation_id":"retry-test","option":option,"state":"armed","automatic":true,"job_id":null,"error":null});
+        let mut p = restored_mix_operation(&record, None).unwrap();
+        p.cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        p.snapshot = Some(s.clone());
+        assert_eq!(mix_native_operation_id(&p), "retry-test");
+        p.recovery_attempts = 1;
+        assert_eq!(mix_native_operation_id(&p), "retry-test:retry-1");
+        assert_eq!(p.id, "retry-test");
+        p.recovery_attempts = 0;
+        let mut current = s;
+        current.decks[1].grid_revision += 1;
+        for deck in &mut current.decks {
+            deck.track = None;
+        }
+        assert!(can_retry_mix(&p, &current, 0, "grid_changed"));
+        assert!(can_retry_mix(&p, &current, 0, "deadline_expired"));
+        assert!(can_retry_mix(&p, &current, 0, "stale_preparation"));
+        let mut same_grid = current.clone();
+        same_grid.decks[1].grid_revision -= 1;
+        assert!(!can_retry_mix(&p, &same_grid, 0, "stale_preparation"));
+        assert!(!can_retry_mix(&p, &current, 1, "grid_changed"));
+        assert!(!can_retry_mix(&p, &current, 0, "manual_takeover"));
+        assert!(mix_retry_preserves_session(
+            &p,
+            "retry-test",
+            &current,
+            0,
+            "grid_changed"
+        ));
+        p.recovery_attempts = 1;
+        assert!(!can_retry_mix(&p, &current, 0, "grid_changed"));
+        p.state = "recovering".into();
+        assert!(mix_retry_preserves_session(
+            &p,
+            "retry-test",
+            &current,
+            0,
+            "grid_changed"
+        ));
+        assert!(!mix_retry_preserves_session(
+            &p,
+            "retry-test:retry-1",
+            &current,
+            0,
+            "grid_changed"
+        ));
+        assert!(!mix_retry_preserves_session(
+            &p,
+            "retry-test",
+            &current,
+            1,
+            "grid_changed"
+        ));
+        p.state = "failed".into();
+        assert!(!mix_retry_preserves_session(
+            &p,
+            "retry-test",
+            &current,
+            0,
+            "grid_changed"
+        ));
+        p.recovery_attempts = 0;
+        current.decks[0].position_seconds = 295.;
+        assert!(!can_retry_mix(&p, &current, 0, "grid_changed"));
+        current.decks[0].position_seconds = 0.;
+        current.load_revisions[1] += 1;
+        assert!(!can_retry_mix(&p, &current, 0, "grid_changed"));
+    }
+    #[test]
     fn restart_retains_operation_identity_and_emits_an_honest_terminal_state() {
         let (o, _) = fixture("eq_blend");
         let record = json!({"operation_id":"move-before-restart","state":"preparing","option":o,
@@ -1195,6 +1536,16 @@ mod mix_execution_tests {
         );
         let completed = restored_mix_operation(&record, Some("completed")).unwrap();
         assert_eq!(completed.state, "completed");
+    }
+    #[test]
+    fn full_rate_range_recipe_stays_inside_engine_sync_bounds() {
+        let (mut option, snapshot) = fixture("eq_blend");
+        option.max_stretch_percent = 100.;
+        let request = compile_mix_recipe("wide-rate", &option, &snapshot).unwrap();
+        let (_, commands) = scheduled_commands_at(&request, Some(&snapshot)).unwrap();
+        assert!(commands.iter().any(|step| matches!(&step.command,
+            EngineCommand::SetSyncRateLimits { limits: Some(limits), .. }
+                if limits.min_rate == 0.1 && limits.max_rate == 2.)));
     }
     #[test]
     fn tempo_readiness_uses_entry_rate_and_not_the_outgoing_instantaneous_bpm() {
@@ -1221,14 +1572,32 @@ mod mix_execution_tests {
     }
     #[test]
     fn all_recipes_gate_every_transfer_on_the_incoming_carrier() {
-        for technique in ["eq_blend", "filter_blend", "short_exchange", "echo_out", "reverb_exit"] {
+        for technique in [
+            "eq_blend",
+            "filter_blend",
+            "short_exchange",
+            "echo_out",
+            "reverb_exit",
+        ] {
             let (o, s) = fixture(technique);
             validate_mix_readiness(&o, &s).unwrap();
             let request = compile_mix_recipe("test-operation", &o, &s).unwrap();
             let (schedule, commands) = scheduled_commands_at(&request, Some(&s)).unwrap();
             deck_engine::validate_scheduled_plan(&schedule, commands.clone(), &s).unwrap();
             let mut unguarded = commands.clone();
-            unguarded.iter_mut().find(|step| matches!(step.command, EngineCommand::Ramp {target:deck_engine::ControlTarget::ChannelFader{..},..} | EngineCommand::SetChannelFader{..})).unwrap().require = None;
+            unguarded
+                .iter_mut()
+                .find(|step| {
+                    matches!(
+                        step.command,
+                        EngineCommand::Ramp {
+                            target: deck_engine::ControlTarget::ChannelFader { .. },
+                            ..
+                        } | EngineCommand::SetChannelFader { .. }
+                    )
+                })
+                .unwrap()
+                .require = None;
             assert!(
                 deck_engine::validate_scheduled_plan(&schedule, unguarded, &s).is_err(),
                 "The native compiler must reject a missing carrier proof"
@@ -1238,14 +1607,14 @@ mod mix_execution_tests {
             assert!(schedule.pause_outgoing);
             assert!(commands.len() < 16);
             assert!(matches!(
-                commands[0].command,
+                commands[3].command,
                 EngineCommand::PlayQuantized {
                     deck: 1,
                     clock: 0,
                     ..
                 }
             ));
-            for command in &commands[1..] {
+            for command in &commands[4..] {
                 command.command.validate().unwrap();
                 let proof = command
                     .require
@@ -1427,6 +1796,8 @@ mod mix_execution_tests {
             preparation_deadline: None,
             restored: false,
             arm_confirmation_deadline: None,
+            recovery_attempts: 0,
+            takeover_revision: 0,
         };
         assert!(!mix_transport_invalidates(&prepared, &current));
         for deck in 0..2 {
@@ -1449,10 +1820,12 @@ mod mix_execution_tests {
         current.engine_epoch += 1;
         assert!(mix_transport_invalidates(&prepared, &current));
         current.engine_epoch -= 1;
-        current.decks[prepared.option.reference_deck].position_seconds = prepared.option.launch_seconds;
+        current.decks[prepared.option.reference_deck].position_seconds =
+            prepared.option.launch_seconds;
         assert!(mix_transport_invalidates(&prepared, &current));
         current.decks[prepared.option.reference_deck].position_seconds =
-            prepared.snapshot.as_ref().unwrap().decks[prepared.option.reference_deck].position_seconds;
+            prepared.snapshot.as_ref().unwrap().decks[prepared.option.reference_deck]
+                .position_seconds;
         current.running = false;
         assert!(mix_transport_invalidates(&prepared, &current));
     }
@@ -1552,7 +1925,10 @@ fn mix_deck_revisions_changed(
         || old.decks[deck].grid_revision != current.decks[deck].grid_revision
         || old.decks[deck].position_revision != current.decks[deck].position_revision
 }
-fn mix_transport_invalidates(prepared: &PreparedMix, current: &deck_engine::EngineSnapshot) -> bool {
+fn mix_transport_invalidates(
+    prepared: &PreparedMix,
+    current: &deck_engine::EngineSnapshot,
+) -> bool {
     // Fast transport deliberately omits metadata; load revisions carry identity.
     !current.running
         || prepared.snapshot.as_ref().is_some_and(|old| {
@@ -1877,10 +2253,26 @@ fn export_real_library_recipe_manifests() {
     let value: Value = serde_json::from_slice(&std::fs::read(input).unwrap()).unwrap();
     let captured: deck_engine::EngineSnapshot =
         serde_json::from_value(value["snapshot"].clone()).unwrap();
-    let options: Vec<crate::next_move::MoveOption> =
+    let previous: Vec<crate::next_move::MoveOption> =
         serde_json::from_value(value["options"].clone()).unwrap();
+    let reference = previous[0].reference_deck;
+    let mut options = crate::next_move::generate(
+        &captured,
+        reference,
+        &captured.decks[1 - reference],
+        crate::suggest::EnergyDirection::Keep,
+        2.,
+        None,
+    );
+    options.sort_by(|a, b| b.score.total_cmp(&a.score));
     std::fs::create_dir_all(&directory).unwrap();
-    for technique in ["eq_blend", "filter_blend", "short_exchange", "echo_out", "reverb_exit"] {
+    for technique in [
+        "eq_blend",
+        "filter_blend",
+        "short_exchange",
+        "echo_out",
+        "reverb_exit",
+    ] {
         let option = options
             .iter()
             .find(|o| o.technique == technique)

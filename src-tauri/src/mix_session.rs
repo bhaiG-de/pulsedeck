@@ -355,7 +355,32 @@ fn poll_mix_session(app: &tauri::AppHandle) -> Result<()> {
         } else {
             return Ok(());
         }
-    } else if let Some(reason) = session_failure(session, &snapshot, now) {
+    } else if let Some(reason) = session_failure(session, &snapshot, now).filter(|reason| {
+        if *reason != "transition_interrupted" {
+            return true;
+        }
+        let native_operation = control.jobs.lock().ok().and_then(|jobs| {
+            jobs.values()
+                .find(|job| job.native_id == Some(snapshot.scheduled_batch.id))
+                .and_then(|job| job.status["operation_id"].as_str().map(str::to_owned))
+        });
+        let native_reason =
+            serde_json::to_value(snapshot.scheduled_batch.reason).unwrap_or_default();
+        let retry_owned = native_operation.as_ref().is_some_and(|operation| {
+            control.mix_prepared.lock().ok().is_some_and(|prepared| {
+                prepared.values().any(|p| {
+                    mix_retry_preserves_session(
+                        p,
+                        operation,
+                        &snapshot,
+                        control.mix_takeover_revision.load(Ordering::Acquire),
+                        native_reason.as_str().unwrap_or(""),
+                    )
+                })
+            })
+        });
+        !retry_owned
+    }) {
         session.finish("interrupted", reason);
     } else if now.saturating_duration_since(session.started) >= session.duration {
         let result = (|| -> Result<(u64, u64)> {

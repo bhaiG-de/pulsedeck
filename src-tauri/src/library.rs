@@ -378,6 +378,15 @@ impl Library {
         sources: Option<&[String]>,
         provider: Option<&str>,
     ) -> Result<PlannerCoverage, String> {
+        self.planner_coverage_excluding(scope, sources, provider, &Default::default())
+    }
+    pub(crate) fn planner_coverage_excluding(
+        &self,
+        scope: Option<&str>,
+        sources: Option<&[String]>,
+        provider: Option<&str>,
+        excluded: &std::collections::HashSet<String>,
+    ) -> Result<PlannerCoverage, String> {
         let (mut members, mut complete) = if let Some(scope) = scope {
             self.suggestion_scope(scope)?
         } else {
@@ -441,7 +450,7 @@ impl Library {
         let needs_analysis_members = members.len().saturating_sub(analysed.len());
         let mut unknown = members
             .iter()
-            .filter(|s| !analysed.contains(*s))
+            .filter(|s| !analysed.contains(*s) && !excluded.contains(*s))
             .collect::<Vec<_>>();
         unknown.sort_unstable();
         let mut needs_analysis = Vec::new();
@@ -3692,6 +3701,18 @@ mod tests {
         assert_eq!(coverage.needs_analysis_members, 101);
         assert_eq!(coverage.needs_analysis.len(), 100);
         assert!(coverage.needs_analysis_truncated);
+        let excluded = coverage
+            .needs_analysis
+            .iter()
+            .map(|m| m.source.clone())
+            .collect();
+        let remaining = lib
+            .planner_coverage_excluding(None, Some(&sources), Some("spotify"), &excluded)
+            .unwrap();
+        assert_eq!(remaining.indexed_members, 101);
+        assert_eq!(remaining.needs_analysis_members, 101);
+        assert_eq!(remaining.needs_analysis.len(), 1);
+        assert!(!excluded.contains(&remaining.needs_analysis[0].source));
         let only_local = lib
             .planner_coverage(None, Some(&sources), Some("local"))
             .unwrap();

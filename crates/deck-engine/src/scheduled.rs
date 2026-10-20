@@ -721,6 +721,58 @@ pub(crate) fn compile(
                 .into(),
         );
     }
+    if !b.open {
+        let d = &s.decks[b.completion_carrier];
+        for (target, current, desired) in [
+            (
+                ControlTarget::EqLow {
+                    deck: b.completion_carrier,
+                },
+                d.eq_low,
+                1.,
+            ),
+            (
+                ControlTarget::EqMid {
+                    deck: b.completion_carrier,
+                },
+                d.eq_mid,
+                1.,
+            ),
+            (
+                ControlTarget::EqHigh {
+                    deck: b.completion_carrier,
+                },
+                d.eq_high,
+                1.,
+            ),
+            (
+                ControlTarget::Filter {
+                    deck: b.completion_carrier,
+                },
+                d.filter,
+                0.,
+            ),
+            (
+                ControlTarget::Echo {
+                    deck: b.completion_carrier,
+                },
+                d.echo,
+                0.,
+            ),
+            (
+                ControlTarget::Reverb {
+                    deck: b.completion_carrier,
+                },
+                d.reverb,
+                0.,
+            ),
+        ] {
+            if (b.expected_endpoints[target.index()].unwrap_or(current) - desired).abs() > 0.001 {
+                return Err("Handover must restore incoming EQ to unity, filter to neutral and effect sends to zero".into());
+            }
+            b.expected_endpoints[target.index()] = Some(desired);
+        }
+    }
     let mut recovery_endpoints = [None; crate::CONTROL_TARGET_COUNT];
     for (i, c) in schedule.recovery.controls.iter().enumerate() {
         c.validate()?;
@@ -777,7 +829,7 @@ pub(crate) fn compile(
             s.decks[b.carrier].eq_high,
         ),
     ] {
-        if ((current - 1.).abs() > 0.001 || b.expected_endpoints[target.index()].is_some())
+        if ((current - 1.).abs() > 0.001 || b.targets & (1 << target.index()) != 0)
             && recovery_endpoints[target.index()] != Some(1.)
         {
             return Err("Recovery must settle every affected carrier EQ band to full tone".into());
@@ -833,6 +885,9 @@ fn compile_actions(
                 if (d.snapped_grid_time(d.position_seconds).ok_or("Incoming event unavailable")?-d.position_seconds).abs()>0.001 {return Err("Seek the paused incoming deck to its selected effective beat event before arming".into());}
                 a.launched[*deck]=true;
             },
+            EngineCommand::SetMaster{deck} if *deck == queue_clock => {},
+            EngineCommand::SetSync{deck,enabled:true} if *deck != queue_clock && s.decks[*deck].beatgrid_valid && s.decks[queue_clock].beatgrid_valid => {},
+            EngineCommand::SetSyncRateLimits{deck,..} if *deck != queue_clock => {},
             EngineCommand::SetChannelFader{..}|EngineCommand::SetDeckGain{..}|EngineCommand::SetEq{..}|EngineCommand::SetFilter{..}|EngineCommand::SetFx{..}=>{},
             _=>return Err("Command unsupported inside a scheduled batch; prepare sources/tempo/grid beforehand".into()),
         }

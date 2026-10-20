@@ -2213,7 +2213,7 @@
         "max_stretch_percent": {
           "type": "number",
           "minimum": 0,
-          "maximum": 6
+          "maximum": 100
         },
         "allow_half_double": {
           "type": "boolean"
@@ -2513,7 +2513,7 @@
         "max_stretch_percent": {
           "type": "number",
           "minimum": 0,
-          "maximum": 6
+          "maximum": 100
         },
         "limit": {
           "type": "integer",
@@ -2746,7 +2746,7 @@
         "max_stretch_percent": {
           "type": "number",
           "minimum": 0,
-          "maximum": 6
+          "maximum": 100
         },
         "techniques": {
           "type": "array",
@@ -2768,16 +2768,15 @@
         },
         "max_skips": {
           "type": "integer",
-          "minimum": 1,
-          "maximum": 10
+          "minimum": 0,
+          "maximum": 512,
+          "description": "Optional consecutive skip limit; 0 (default) continues searching while preparation runway remains."
         }
       },
-      "required": [
-        "review_confirmed"
-      ],
+      "required": [],
       "additionalProperties": false
     },
-    "description": "Start an app-owned ordered-source or scoped-collection successor queue using the shared native move executor. Default returns an app-owned handoff immediately; agents end their turn on acceptance. Optional --follow is for interactive terminals. Actionable outcomes emit mix.queue.notice; progress never needs model polling.",
+    "description": "Start an optional app-owned successor queue. Acceptance starts preparation; --wait-ready waits for the first armed successor. Agents may observe or hand off as requested. Musical choices can also be made per move or with direct controls.",
     "example_cli": "pulsedeckctl call mix.queue.start --args '{\"provider\":\"local\",\"energy_direction\":\"keep\",\"duration_seconds\":3600,\"review_confirmed\":true}' --json"
   },
   {

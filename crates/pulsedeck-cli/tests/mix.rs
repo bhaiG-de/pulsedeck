@@ -213,3 +213,87 @@ fn detached_queue_returns_without_opening_an_event_follower() {
     drop(server);
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[cfg(unix)]
+#[test]
+fn startup_wait_stops_at_first_armed_successor_and_surfaces_failure_or_resync() {
+    use control_protocol::{ipc::Server, Response};
+    use serde_json::json;
+    use std::sync::{Arc, Mutex};
+    for outcome in ["armed", "failed", "resync"] {
+        let root =
+            std::env::temp_dir().join(format!("pd-startup-{}-{outcome}", std::process::id()));
+        let socket = root.join("control.sock");
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let seen = calls.clone();
+        let server = Server::start(socket.clone(), move |r| {
+            seen.lock().unwrap().push(r.command.clone());
+            let result = match r.command.as_str() {
+                // An old unconditional handoff receipt must not hide startup failure.
+                "mix.queue.start" => json!({"queue_id":"startup","state":"running","terminal":false,"event_sequence":1,"handoff":{"agent_can_finish":true}}),
+                "events.get" if outcome == "resync" => json!({"resync_required":true,"sequence":99}),
+                "mix.queue.status" => json!({"queue_id":"startup","state":"running","terminal":false,"readiness":"ready","event_sequence":99}),
+                "events.get" if r.args["since"] == 1 => json!({"sequence":2,"events":[{"type":"mix.queue.updated","data":{"queue_id":"startup","state":"running","terminal":false,"item":{"state":"preparing"}}}]}),
+                "events.get" => json!({"sequence":3,"events":[{"type":"mix.queue.updated","data":if outcome == "armed" {
+                    json!({"queue_id":"startup","state":"running","terminal":false,"item":{"state":"armed"}})
+                } else { json!({"queue_id":"startup","state":"needs_attention","terminal":true,"reason":"No usable successor"}) }}]}),
+                _ => panic!("Unexpected startup request {}", r.command),
+            };
+            Response::success(&r, "applied", result)
+        }).unwrap();
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_pulsedeckctl"))
+            .args([
+                "mix",
+                "queue",
+                "start",
+                "--playlist",
+                "spotify:liked",
+                "--review-confirmed",
+                "--wait-ready",
+                "--socket",
+                socket.to_str().unwrap(),
+            ])
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.success(),
+            outcome != "failed",
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        assert_eq!(calls.lock().unwrap().len(), 3);
+        assert_eq!(
+            calls
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|c| *c == "mix.queue.start")
+                .count(),
+            1
+        );
+        if outcome == "failed" {
+            assert!(String::from_utf8_lossy(&output.stdout).contains("queue_incomplete"));
+        }
+        drop(server);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
+fn startup_wait_cannot_follow_a_whole_set_or_an_unrelated_command() {
+    let parse = |args: &[&str]| {
+        pulsedeck_cli::parse(&args.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+    };
+    assert!(parse(&["status", "--wait-ready"]).is_err());
+    assert!(parse(&[
+        "mix",
+        "queue",
+        "start",
+        "--playlist",
+        "spotify:liked",
+        "--review-confirmed",
+        "--wait-ready",
+        "--follow"
+    ])
+    .is_err());
+}

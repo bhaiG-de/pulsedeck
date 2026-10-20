@@ -1,6 +1,6 @@
 # Execute the musical handover
 
-For supported recipes, use [assisted next moves](assisted-next-moves.md): `mix.execute` owns preparation and the full handover in one action. The procedures below are for custom transitions that need primitive controls.
+For supported recipes, including variable-length EQ/filter/echo/reverb blends, use [assisted next moves](assisted-next-moves.md): `mix.execute` owns preparation and the full handover in one action. The procedures below are for custom transitions that need primitive controls.
 
 Use `$djing-art` to choose the musical relationship, and [deck preparation](deck-preparation.md) to establish a ready isolated incoming source. Read the [persistent command contract](../../references/timed-execution.md) once for exact input/output shapes. Planning-only requests do not enqueue changes.
 
@@ -11,6 +11,8 @@ Retain both source identities and load revisions, current positions and position
 For a beatmix, require credible local timing and review any `rhythm_error`, repaired pulse, ambiguity or stale-grid warning. Read [analysis semantics](../../references/musical-evidence.md) rather than assuming a high score validates the clock. Confirm bar and arrangement progression separately from beat phase. For same-meter validated origins, a two-beat difference in 4/4 can be fractional-beat aligned and still in the wrong part of the bar.
 
 Bind the musical plan's chosen absolute launch, B entry/arrival, audible entrance, band/foreground transfers and A clearance to actual source events. Allow verification before B reaches master. Preparation completion is a dependency, not a phrase cue. A queued `deck launch` alone schedules only the start, not the subsequent fader/EQ movements.
+
+An absolute BPM setter matches the incoming entry once; it does not keep variable-tempo tracks matched throughout an overlap. Check sustained actual playback tempo and beat phase across the passage, not only remembered target BPM or a single jittery four-beat fit. A target setter is not evidence that both audible rhythms stayed matched. Use supported follower Sync with credible grids when ongoing correction is needed; otherwise choose a stable passage or a different pair before opening the incoming channel.
 
 ## Check that the controls deliver the requested technique
 
@@ -48,11 +50,13 @@ Native ramps directly change their engine targets and do not reproduce Smart Fad
 
 PulseDeck has independent main and headphone echo/reverb returns. Main sends follow channel/crossfader gain; headphone sends are pre-fader. Closing the send or pausing/replacing its source leaves existing return audio to decay for at most eight seconds. Use assisted `echo_out` or `reverb_exit` for the native guarded recipe; custom sends can use the `echo`/`reverb` ramp targets. Returns remain under master gain/protection. Reset effect sends deliberately; do not mistake a lingering return for an advancing incoming carrier.
 
+Include the complete incoming end state in the scheduled handover: channel fader at its intended full level, all intentionally cut EQ bands restored to their intended values (normally unity), filter neutral and effect sends reset unless the musical plan explicitly retains them. A halfway fader or bass cut is preparation, not a finished handover. Verify those endpoints from actual state before pausing A; command registration or a successful launch cannot establish them.
+
 Before pausing/unloading A, verify B source/revision, healthy advancing playback, readiness, intended tempo/Sync/master/loop state, final EQ/filter/FX/fader and actual master route. Verify A isolated and all relevant ramps complete. An `applied` zero target alone does not prove smoothing settled. Prepare the released deck promptly after verified clearance.
 
 ## Failure and takeover
 
-Inspect structured errors once and correct the specific problem from discovery. If timing or preparation misses its boundary, update pending work to a credible alternative; do not replay stale Play or the entire blend. Cancellation leaves already-applied knobs in place. Inspect current audible contributions before choosing a supported stabilization within the requested task.
+Inspect structured errors once and correct the specific problem from discovery. For an automatic shared recipe, let its one bounded owned retry resolve under the same operation ID; a terminal failure is an immediate recovery decision while music remains. Inspect which linked actions executed and cancel obsolete dependants; preserve the audible carrier, then re-arm a complete handover at a newly inspected reachable boundary. If timing or preparation misses its boundary, update pending work to a credible alternative; do not replay stale Play or the entire blend. Cancellation leaves already-applied knobs in place. Inspect current audible contributions before choosing a supported stabilization within the requested task.
 
 Source/position/grid/tempo changes and manual takeover can cancel conflicting native work. Preserve the user's values rather than resetting them. An unrelated headphone or listening-level change need not cancel independent work. Respect ownership; do not silently cancel another operation's ramps.
 

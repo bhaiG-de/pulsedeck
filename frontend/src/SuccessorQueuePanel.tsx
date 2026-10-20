@@ -33,8 +33,7 @@ export default function SuccessorQueuePanel({
     scope === "liked" ? "liked" : "local",
   );
   const [minutes, setMinutes] = useState("");
-  const [stretch, setStretch] = useState("2");
-  const [reviewed, setReviewed] = useState(false);
+  const [stretch, setStretch] = useState("100");
   const [replace, setReplace] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -124,7 +123,13 @@ export default function SuccessorQueuePanel({
     <details className="suggest-successor-queue">
       <summary>
         Successor queue{" "}
-        <span>{queue?.queue_id ? queue.state : `${draft.length} planned`}</span>
+        <span>
+          {queue?.queue_id
+            ? queue.readiness === "preparing"
+              ? "Preparing next track"
+              : queue.state
+            : `${draft.length} planned`}
+        </span>
       </summary>
       <div className="suggest-queue-content">
         <p>
@@ -132,6 +137,14 @@ export default function SuccessorQueuePanel({
           {policyDirection} energy · {techniqueLabel}. Start a playing carrier
           first.
         </p>
+        {queue?.coverage?.indexed_members != null && (
+          <p>
+            {queue.coverage.indexed_members} tracks indexed ·{" "}
+            {queue.coverage.analysed_members} analysed
+            {queue.coverage.needs_analysis_members > 0 &&
+              " · New candidates are prepared as needed"}
+          </p>
+        )}
         {!running && !queue?.queue_id && (
           <div className="suggest-queue-policy">
             <label>
@@ -181,7 +194,7 @@ export default function SuccessorQueuePanel({
                 aria-label="Queue maximum stretch"
                 type="number"
                 min="0"
-                max="6"
+                max="100"
                 step="0.25"
                 value={stretch}
                 onChange={(e) => setStretch(e.target.value)}
@@ -286,14 +299,6 @@ export default function SuccessorQueuePanel({
             <label className="suggest-review">
               <input
                 type="checkbox"
-                checked={reviewed}
-                onChange={(e) => setReviewed(e.target.checked)}
-              />
-              Allow inferred phrase and vocal evidence for this queue
-            </label>
-            <label className="suggest-review">
-              <input
-                type="checkbox"
                 checked={replace}
                 onChange={(e) => setReplace(e.target.checked)}
               />
@@ -304,7 +309,6 @@ export default function SuccessorQueuePanel({
               disabled={
                 !isDesktop ||
                 busy ||
-                !reviewed ||
                 (mode === "ordered" && !draft.length) ||
                 !Number.isFinite(Number(stretch)) ||
                 (minutes !== "" && Number(minutes) <= 0)
@@ -326,7 +330,6 @@ export default function SuccessorQueuePanel({
                       ...(technique !== "all"
                         ? { techniques: [technique] }
                         : {}),
-                      review_confirmed: reviewed,
                       replace_prepared: replace,
                       max_skips: 3,
                       ...(minutes

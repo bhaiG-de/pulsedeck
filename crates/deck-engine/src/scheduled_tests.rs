@@ -366,6 +366,59 @@ fn rejected_launch_never_clears_the_healthy_outgoing_channel() {
     );
     assert!(batch.receipts[1..4].iter().all(|r| r.state != 2));
 }
+
+#[test]
+fn incomplete_incoming_tone_is_rejected_before_any_handover() {
+    let m = mixer();
+    let (schedule, mut steps) = plan(&m);
+    for step in &mut steps {
+        if let EngineCommand::Ramp {
+            target: ControlTarget::EqLow { deck: 1 },
+            value,
+            ..
+        } = &mut step.command
+        {
+            *value = 0.5;
+        }
+    }
+    assert!(compile(1, &schedule, steps, &snapshot(&m))
+        .err()
+        .unwrap()
+        .contains("restore incoming EQ"));
+}
+
+#[test]
+fn identical_grid_publication_preserves_armed_transition_and_restores_master() {
+    let mut m = mixer();
+    let grid = Arc::new(audio_analysis::NeuralRhythm {
+        beats_seconds: (0..480).map(|i| i as f64 * 0.5).collect(),
+        downbeats_seconds: (0..120).map(|i| i as f64 * 2.).collect(),
+        bpm: 120.,
+        beat_confidence: 0.8,
+        downbeat_confidence: 0.8,
+        model: "same-timing".into(),
+        analysis_seconds: 0.,
+        bar_evidence: vec![],
+        beats_per_bar: Some(4),
+    });
+    m.update_grid(0, grid.clone());
+    let (schedule, steps) = plan(&m);
+    let revision = m.grid_revisions[0];
+    m.arm_batch(compile(1, &schedule, steps, &snapshot(&m)).unwrap());
+    let mut republished = (*grid).clone();
+    republished.beat_confidence = 0.9;
+    m.update_grid(0, Arc::new(republished));
+    assert_eq!(m.grid_revisions[0], revision);
+    render(&mut m, 14.);
+    assert_eq!(
+        m.scheduled.as_ref().unwrap().state,
+        BatchLifecycle::Completed
+    );
+    assert_eq!(m.master_deck, 1);
+    assert_eq!(m.decks[1].eq[0].target, 1.);
+    assert_eq!(m.decks[1].channel_fader.target, 1.);
+    assert!(!m.decks[0].playing);
+}
 #[test]
 fn failed_group_prerequisite_applies_none_of_its_controls() {
     let mut m = mixer();

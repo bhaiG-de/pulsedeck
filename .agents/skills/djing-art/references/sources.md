@@ -54,3 +54,8 @@ These sources extend the initial research. They teach concepts or report finding
 - [Chen and colleagues: DJtransGAN](https://arxiv.org/html/2110.06525) — separates cue choice from mixer control; listening evaluation with fixed cue boundaries does not establish one universal best mixer recipe.
 
 The updated policy treats a smooth blend as a distinct musical objective: useful audible introduction and development precede clearance. Cuts remain legitimate for an appropriate brief, but a numerically aligned cut cannot satisfy a requested developed blend. Examples of bass/foreground ownership are teaching models, not claims of stem detection or verified listening.
+
+
+## Instructor studies checked 21 October 2026
+
+[The style manual](style-and-phrase-manual.md) and [transition studies](worked-cases.md) connect the sources to musical choices. The latter uses instructor-authored explanations, not a claimed independent decoding of the videos. The BPM Supreme whole routines remain a study queue pending verified segment analysis. Examples and genre tendencies are suggestions; the user has explicitly removed universal BPM/key/overlap policies and mandatory autonomous-queue handoff.

@@ -1,42 +1,50 @@
-# Continuous sets
+# Continuous sets: active DJing or optional automation
 
-PulseDeck owns continuous execution. The agent supplies repertoire and musical policy, starts it, and returns. `pd` below means the checkout's `target/debug/pulsedeckctl` (or the intended configured binary).
+Choose how much musical control the task calls for. An agent can perform a set through individually chosen moves and direct controls, or delegate selection and execution to the application. The autonomous queue is optional; it is not a policy that an agent must hand over after the opener.
 
-## Check and choose one opener
+## Start on the intended instance
 
-Use one compact status read to identify the instance, currently playing/prepared material and output. For Spotify, check `spotify.native.status`: library login and native deck playback are separate. `restoring:true` means saved authorization is still loading: allow restoration to complete before judging sign-in. `connected:true` with `playback_permission:true` authorizes native preparation; `account:null` is normal for streaming-only authorization and does not mean signed out. Actual sign-in failure is a blocker; report it instead of searching another provider. Respect user-prepared material and preserve healthy playback on takeover.
+Use the installed client for the Applications app. Check the current source/deck/output state; for Spotify also inspect `spotify.native.status`. Allow `restoring:true` to settle before diagnosing login. Native `connected:true` and `playback_permission:true` permit preparation even when `account` is null. Respect audible music, genuine user takeovers and stops.
 
-An indexed opener query supplies a bounded analysed shortlist without Spotify pagination or per-source inspection:
-
-```sh
-pd call mix.openers --args '{"playlist":"spotify:liked","provider":"spotify","min_bpm":118,"max_bpm":126,"limit":8}' --json
-```
-
-Choose a suitable opener from the returned artist/title, duration, BPM, key and energy. Adjust BPM bounds or add `search` for the requested musical style when needed; these example bounds are for house, not all genres. Metadata does not prove musical quality. If `coverage.complete` is false, run `pd call mix.index_scope --args '{"scope":"spotify:liked"}' --json` once and repeat the opener query. Do not fetch the collection again with `spotify.liked` page loops. Existing complete scope is reusable; refresh only when the user requests fresher membership or evidence shows it changed.
-
-Load the chosen source on a free isolated deck. Both `track` and `uri` accept complete Spotify track URIs. Await this one readiness receipt before Play; combine known sequential commands in one tool invocation where practical. Use the actual chosen source in place of SOURCE_URI:
+For Liked Songs, a scoped opener query is an efficient first look:
 
 ```sh
-pd call deck.load --args '{"deck":"A","track":"SOURCE_URI"}' --timeout 120s --json
-pd deck A play --json
+pd call mix.openers --args '{"playlist":"spotify:liked","provider":"spotify","limit":8}' --json
 ```
 
-Loading normalizes loudness independently of trim. Do not multiply master/trim gain to compensate for that correction. A healthy opener needs sufficient music for successor preparation and overlap.
+Search or browse the requested collection as useful for the musical decision. A complete indexed scope is reusable; `mix.index_scope` can fetch missing membership. Indexing is not audio analysis. An unanalysed song can be prepared on demand; waiting for an entire collection to finish is unnecessary.
 
-## Submit once and finish
+Load an appropriate opener on a free isolated deck, wait for source readiness, then start it audibly. Native loading already applies loudness normalization; adjust gain for the actual musical balance rather than multiplying it to undo that correction. Keep the next preparation ahead of the current track's useful exit.
 
-Start immediately after the opener is audible; do not spend its runway browsing possible successors. Collection mode already selects across the indexed analysed pool. An ordered set uses `--sources` instead of collection flags.
+## When the agent is making the musical choices
+
+Read the art manual's relevant style/example, inspect useful passages and choose the relationship yourself. `mix.options` offers ranked proposals with their evidence and uncertainty:
 
 ```sh
-pd mix queue start --playlist spotify:liked --provider spotify --energy-direction keep --max-stretch-percent 2 --duration-seconds 3600 --review-confirmed --replace-prepared --request-id SET_UNIQUE_ID --json
+pd call mix.options --args '{"playlist":"spotify:liked","provider":"spotify","limit":12}' --json
+pd mix execute --option-id OPTION_ID --follow --request-id MOVE_UNIQUE_ID
 ```
 
-Set duration and energy/tempo/technique policy to the user's request. Omit `--techniques` to allow all available techniques. `--review-confirmed` accepts inferred phrase/vocal uncertainty, not a claim of listening. `--replace-prepared` requires authorization to replace a paused preparation.
+Use a proposal when its actual entry, arrival and mixer shape suit the idea. A four-bar short exchange and an EQ bass swap are not compulsory answers to every pair. For a different phrase relationship, loops, more selective mid/high control or another supported gesture, use the individual/direct workflow in [transition execution](transitions.md) and [sessions](session.md). Hardware capabilities and ownership still apply.
 
-On `ok:true`, `stage:accepted`, retain the queue/request IDs, report the handoff and **end the turn**. `handoff.agent_can_finish:true` means no ongoing agent work is needed. Do not use `--follow`, `events wait/watch`, `write_stdin`, sleeps or periodic status for a healthy continuous queue. The app advances the set and enforces the endpoint after the agent exits. Watching an empty stream still spends model tokens when a tool times out.
+Follow feedback and prepare the subsequent move at clearance; react to a failed source while a carrier remains. Observing and continuing a set is allowed. Schedule known actions on the native clock, and use events or focused state reads for the next decision rather than letting model response timing drive the faders. Keep an original finish timestamp for a bounded set, including any recovery time.
 
-## Actionable outcomes
+## When application-owned selection is wanted
 
-Native `mix.queue.updated` events serve UI progress; `mix.queue.notice` reports terminal completion or attention. The app shows a persistent outcome notice and retains the final queue summary. External hosts can subscribe to `events.get` with `queue_id` and `types:["mix.queue.notice"]` outside model inference; an event transport alone does not automatically resume a Codex chat. Do not keep the model alive to simulate it.
+```sh
+pd mix queue start --playlist spotify:liked --provider spotify --energy-direction keep --duration-seconds 3600 --replace-prepared --request-id SET_UNIQUE_ID --wait-ready --json
+```
 
-When the user asks for status or an actionable notice actually arrives, use one `mix queue status --queue-id QUEUE_ID --json` if its evidence is insufficient. A manual takeover yields ownership: do not automatically restart. Stop uses `mix queue stop`; it cancels owned automation while ordinary playback continues. A duration endpoint stops playback; a failed or exhausted queue preserves the carrier and requests attention. Recover from actual state and report any observed gap.
+This delegates the *musical selection and windows* as well as execution. The application does not read the art manual or understand vocal meaning. Tempo/key scores, waveform changes and grid priors are limited evidence; a ready queue is not a guarantee of good phrasing or of a completed hour.
+
+Tempo limits, technique subsets and a consecutive-skip cutoff can be supplied when desired. The planner otherwise uses the engine's supported rate range, ranks musical fit, and treats key and continuation-budget concerns as advice. `max_skips:0` means no arbitrary consecutive-skip cutoff; preparation runway, source availability and bounded runtime history still constrain what can execute.
+
+Acceptance starts preparation. `--wait-ready` consumes startup events and exits when the first successor is armed or startup fails. Resume a yielded CLI handle to consume its result; a timeout does not cancel the queue. Retain the queue ID instead of submitting duplicates.
+
+The application can run after the agent returns when that suits the request. For an observed/performed set, remain involved as useful. `mix.queue.notice` reports an actionable outcome; an external event stream or passive file alone does not wake an idle model. A slow heartbeat can miss the remaining musical runway.
+
+## Failures and the endpoint
+
+A terminal queue may preserve ordinary playback while no longer preparing anything. Treat that as a decision while music remains, not as evidence that the requested duration completed. Inspect the exact rejection and use musical judgment: another source, passage, technique or workflow may work. A repeated identical failed queue is not recovery.
+
+If a gap occurs, report it and establish audible playback from an actually ready entry before rebuilding the transition plan. A stopped outgoing clock cannot launch a future action. Preserve the original endpoint when recovering. Queue stop cancels automation but leaves ordinary playback; a genuine duration endpoint stops playback. Honor an explicit user stop or takeover.

@@ -708,6 +708,12 @@ impl Mixer {
                 };
                 if b.state == L::Failed {
                     b.reason = R::EndpointFailed;
+                } else {
+                    let other = 1 - b.carrier;
+                    if self.decks[other].channel_fader.value < 0.002 {
+                        self.command(EngineCommand::Pause { deck: other });
+                    }
+                    self.command(EngineCommand::SetMaster { deck: b.carrier });
                 }
             }
         } else if self.rendered_frames >= b.expires_frame {
@@ -795,6 +801,11 @@ impl Mixer {
                     && self.decks[b.completion_carrier].playing
                     && !self.decks[b.completion_carrier].preparation_pending()
                 {
+                    if b.pause_outgoing && b.completion_carrier != b.clock {
+                        self.command(EngineCommand::SetMaster {
+                            deck: b.completion_carrier,
+                        });
+                    }
                     b.state = L::Completed;
                     b.frame = self.rendered_frames;
                     if b.pause_outgoing

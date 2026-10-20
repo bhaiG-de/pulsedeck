@@ -10,15 +10,15 @@ Start a healthy audible carrier first. Preserve an existing preparation unless r
 target/debug/pulsedeckctl mix queue start \
   --playlist spotify:liked --provider spotify --energy-direction keep \
   --max-stretch-percent 2 --duration-seconds 3600 \
-  --review-confirmed --replace-prepared --follow --request-id liked-set-1 --json
+  --review-confirmed --replace-prepared --wait-ready --request-id liked-set-1 --json
 
 target/debug/pulsedeckctl mix queue start \
   --sources '["local:42","local:17","local:9"]' --provider local \
   --techniques '["eq_blend","filter_blend","echo_out","reverb_exit"]' \
-  --review-confirmed --replace-prepared --follow --request-id ordered-set-1 --json
+  --review-confirmed --replace-prepared --wait-ready --request-id ordered-set-1 --json
 ```
 
-Explicit sources retain order. Local IDs resolve to canonical library paths. Spotify URIs must remain exact. Collection selection uses all indexed analysed candidates in the chosen scope, the existing play history and the same planner policy as Suggest. `energy_direction`, `max_stretch_percent` and `techniques` are enforced musical constraints; the queue does not infer a genre from an arbitrary prose label. For a genre-specific set, select its repertoire explicitly or supply an appropriately curated playlist.
+Explicit sources retain order. Local IDs resolve to canonical library paths. Spotify URIs must remain exact. Collection selection prefers indexed analysed candidates in the chosen scope and prepares an unanalysed member when no analysed passage fits, the existing play history and the same planner policy as Suggest. `energy_direction`, `max_stretch_percent` and `techniques` are enforced musical constraints; the queue does not infer a genre from an arbitrary prose label. For a genre-specific set, select its repertoire explicitly or supply an appropriately curated playlist.
 
 Collection mode rejects incomplete playlist membership with `scope_incomplete` and coverage details. The existing full indexing action follows all provider pages; the latest cache page is never treated as the full collection. Indexing is distinct from PCM analysis. A single queued unknown source is prepared on the isolated target before its exact-source passages are planned.
 
@@ -33,7 +33,7 @@ Edits atomically replace only pending ordered sources. Preparing/active moves re
 
 ## Ownership and lifecycle
 
-`mix.queue.start` returns an accepted queue ID. A worker plans the next move whenever the other deck becomes available. It uses app-native completion receipts to advance; an agent does not need to wake up and sequence each phase. `mix.queue.updated` supplies compact feedback; the UI receives full queue snapshots through `mix-queue-updated`. Queue status is read once on UI attachment or event-buffer resynchronization, not repeatedly polled by the UI or CLI follower.
+`mix.queue.start` returns an accepted queue ID with `readiness:preparing` and `handoff.agent_can_finish:false`. The CLI’s `--wait-ready` option consumes startup events until the first armed successor or an actionable failure, then exits; acceptance alone is not readiness. A worker plans the next move whenever the other deck becomes available. It uses app-native completion receipts to advance; an agent does not need to wake up and sequence each phase. `mix.queue.updated` supplies compact feedback; the UI receives full queue snapshots through `mix-queue-updated`. Queue status is read once on UI attachment or event-buffer resynchronization, not repeatedly polled by the UI or CLI follower.
 
 Each item moves through pending/planning, optional isolated loading/analysis, preparation, arming and native transition to completion. A completed handover increments `completed_moves`. Recovery, source failure, cancellation and restart do not count as completed handovers. Failed sources can be skipped up to `max_skips` consecutive failures (default three, maximum ten). The limit resets after a successful handover. Unsupported grids, insufficient runway, protected prepared material or lost ownership request attention.
 
@@ -60,6 +60,27 @@ It requires the newly built debug app, the explicit retained library snapshot an
 
 The **test-only null renderer** requires all of: debug build, `PULSEDECK_ISOLATED=1`, explicit temporary `PULSEDECK_DATA_DIR`, private `PULSEDECK_SOCKET` and `PULSEDECK_TEST_NULL_AUDIO=1`. Main refuses unsafe/release activation. It reuses actual `RenderState`, PCM, commands, native scheduling and DSP, discarding the output instead of opening a device. Fixed preallocated buffers and a 15-minute wall limit bound work; preparation uses a paced clock, while armed native batches are accelerated. Stop/shutdown use the existing lifecycle. This establishes functional source/control integration; accelerated timing is not wall-clock, latency, CPU-deadline or listening evidence.
 
+### Cold collection and startup readiness regression, 20 October 2026
+
+The live Spotify attempt indexed 1,492 liked tracks but initially had only the opener analysed. Two accepted collection queues ended with no feasible pair, no completed moves and no incoming deck load. Collection mode previously never entered the unknown-source preparation branch. It now prepares one unanalysed collection member when the analysed pool has no feasible option, replans using the loaded source, and skips rejected members within the existing bounded budget. Already played/attempted sources are excluded before the bounded metadata shortlist is cut off.
+
+An accepted queue now reports `readiness:preparing` and cannot claim an agent handoff until a successor is armed. `--wait-ready` consumes only startup events, reports terminal startup failures, supports event-gap resynchronization and exits after readiness. The event cursor is captured before spawning the worker so a fast failure cannot fall between acceptance and subscription.
+
+The isolated `--cold-collection` runtime check imported a fresh local copy into a one-track playlist with zero analysed members, observed isolated analysis and completed one native handover. Evidence: `artifacts/queue-readiness-2026-10-20/cold-collection.json`. It used a private database/socket and null renderer; the live Spotify app was unchanged. An initial control-connection failure did not reproduce in the successful run; a separate test assertion was corrected to compare canonical temporary paths on macOS. This check does not establish Spotify provider latency or audible quality.
+
+The next live observations were a supported move yielding with `grid_changed`, custom session actions failing dependencies or missing starts, and the user's reports of tempo mismatch and incomplete incoming control restoration. Before one proposed overlap, outgoing actual playback BPM was 123.379 while the isolated incoming was 122.57 with Sync off, despite an outgoing remembered target of 122.25. That snapshot establishes different measured rates at preparation, not the phase throughout a completed blend. At that point the planner fixed overlap length by technique (EQ 16 bars, filter/echo/reverb 8, short exchange 4). The corrections below address those supported-recipe failures. Arbitrary custom low-level performances still require their own musical plan and execution validation.
+
 ### Actual runtime result
 
 The integration run passed with **two completed native handovers**, an observed uncached local-source job stopped during preparation, the healthy carrier preserved, and a killed/restarted queue restored as interrupted without replay. Retrying its original start request retrieved the same receipt and did not restart playback. The isolated app then shut down cleanly. See [runtime evidence](../artifacts/queue-audio-2026-10-19/successor-runtime.json) and its sibling app log. The source files and original library snapshot were unchanged; no audio device was opened.
+
+
+### Mixing corrections, 20 October 2026
+
+Version 0.2.3 replaces technique-specific overlap lengths with a bounded search of outgoing boundaries and incoming passages. Confirmed cues and measured band changes rank the candidate starts; incoming boundaries can position the internal handover. Ordinary selections retain 30 seconds of outgoing recovery music, and the following-track continuation budget also allows 30 seconds for recovery. Unconfirmed grid priors remain explicit warnings.
+
+Native launch now chooses the outgoing clock as master, enables an incoming follower within the requested rate/slew limits and checks phase before every audible transfer. Completion requires the incoming fader at full level, unity EQ, neutral filter and closed effect sends, then promotes its master role and pauses the outgoing deck. Successful native recovery isolates and pauses the failed incoming deck so the next preparation is possible. Identical neural timing publications no longer invalidate an armed plan. Automatic moves can replan and retry once under the same public operation ID after an owned grid/timing/prerequisite/endpoint failure; the new native attempt has a separate idempotency key. The session watchdog retains its original duration through the owned retry. Changed sources, manual ownership, insufficient runway and repeated failure still yield.
+
+Real-song offline checks exercise EQ, filter, short exchange, echo and reverb recipes using unchanged local PCM. The selected EQ/filter overlap was 26 bars, with maximum observed phase error under 0.047 beat, maximum four-second mean tempo difference under 0.35 BPM and no digital-silence windows. Individual four-beat BPM estimates still differ transiently (up to about 2.13 BPM in these fixtures), so the gate uses phase plus bounded Sync rather than falsely cancelling a phase-aligned mix on one instantaneous fit. These are control/audio-render measurements, not a listening-quality certification or Spotify service latency test.
+
+The stalled-incoming fault fixture recovered onto the outgoing carrier without digital silence and left the incoming deck paused and isolated. The current debug app also completed two chained native handovers, preparation cancellation and restart-without-replay checks, plus the zero-analysed-member collection test. Evidence is retained in `artifacts/mixing-fixes-2026-10-20/`. Workspace regressions, Clippy, the isolated library-query timing gate, frontend checks and skill packaging validation passed before packaging.

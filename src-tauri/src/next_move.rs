@@ -11,7 +11,7 @@ use std::{
 };
 use tauri::Manager;
 
-pub const PLANNER_VERSION: u32 = 3;
+pub const PLANNER_VERSION: u32 = 5;
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct OptionsRequest {
@@ -454,9 +454,9 @@ pub async fn options(
     request: OptionsRequest,
 ) -> Result<OptionsList, String> {
     let start = Instant::now();
-    let stretch = request.max_stretch_percent.unwrap_or(2.);
-    if !stretch.is_finite() || !(0. ..=6.).contains(&stretch) {
-        return Err("max_stretch_percent must be 0..6; default 2% preserves natural speed".into());
+    let stretch = request.max_stretch_percent.unwrap_or(100.);
+    if !stretch.is_finite() || !(0. ..=100.).contains(&stretch) {
+        return Err("max_stretch_percent must be finite and 0..100".into());
     }
     let limit = request.limit.unwrap_or(12);
     if !(1..=30).contains(&limit) {
@@ -599,7 +599,7 @@ fn diversify(options: &[MoveOption], limit: usize) -> Vec<MoveOption> {
 }
 
 #[cfg(test)]
-fn generate(
+pub(crate) fn generate(
     snapshot: &EngineSnapshot,
     reference: usize,
     next: &DeckSnapshot,
@@ -651,7 +651,7 @@ struct WindowSelection<'a> {
 /// Reserve a provider load, one recovery attempt, decision time, and the next short overlap.
 fn continuation_budget(bpm: f64) -> (f64, f64) {
     let preparation = 60.;
-    (preparation, preparation + 15. + 15. + 20. * 60. / bpm)
+    (preparation, preparation + 30. + 15. + 20. * 60. / bpm)
 }
 
 fn generate_windows(
@@ -725,8 +725,8 @@ fn generate_windows(
     }
     let Some(native_a) = a.bpm else { return vec![] };
     let Some(native_b) = b.bpm else { return vec![] };
-    if (rate - 1.).abs() * 100. > stretch + 0.05 || (native_a - native_b).abs() > 3. {
-        reject("native_tempo_policy");
+    if (rate - 1.).abs() * 100. > stretch + 0.05 {
+        reject("tempo_correction_limit");
         return vec![];
     }
     let target = 1 - reference;
@@ -748,22 +748,23 @@ fn generate_windows(
     let outgoing_boundaries = boundaries(outgoing);
     let current = outgoing.position_seconds;
     let mut result = Vec::new();
-    for (technique, bars) in [
-        ("eq_blend", 16),
-        ("filter_blend", 8),
-        ("short_exchange", 4),
-        ("echo_out", 8),
-        ("reverb_exit", 8),
+    for technique in [
+        "eq_blend",
+        "filter_blend",
+        "short_exchange",
+        "echo_out",
+        "reverb_exit",
     ] {
         if techniques.is_some_and(|v| !v.iter().any(|t| t == technique)) {
             continue;
         }
-        let beats = (bars * meter) as i64;
+        let reserved_end = useful_end_seconds(outgoing);
         let mut exits: Vec<_> = outgoing_boundaries
             .iter()
             .filter(|x| {
                 x.seconds > current + (budget + 4.) * rate
                     && x.seconds < a.duration_seconds - 4. * 60. / native_a
+                    && at(outgoing, x.event + 2).is_some_and(|clear| clear <= reserved_end)
                     && original.is_none_or(|old| fallback || x.event == old.clear_event)
             })
             .collect();
@@ -779,243 +780,300 @@ fn generate_windows(
         }
         for exit in exits
             .into_iter()
-            .take(if original.is_some() { usize::MAX } else { 3 })
+            .take(if original.is_some() { usize::MAX } else { 12 })
         {
-            let launch_event = exit.event - beats;
-            let Some(launch) = at(outgoing, launch_event) else {
-                continue;
-            };
-            if (launch - current) / rate < budget + 4. {
-                reject("preparation_deadline");
-                continue;
-            }
-            let handover_event = launch_event + beats / 2;
-            let Some(handover) = at(outgoing, handover_event) else {
-                continue;
-            };
-            let Some(audible) = at(outgoing, launch_event + 2) else {
-                continue;
-            };
-            let Some(pa) = passage(outgoing, launch, exit.seconds) else {
-                continue;
-            };
-            if pa.pulse_spread > 0.025 || pa.level < 0.008 {
-                reject("outgoing_pulse_or_silence");
-                continue;
-            }
-            let mut entries: Vec<_> = incoming_boundaries
+            let mut starts = outgoing_boundaries
                 .iter()
-                .filter(|x| x.seconds < 120. && x.seconds >= 0.)
-                .collect();
-            entries.sort_by(|x, y| {
-                (y.contrast + if y.confirmed { 1. } else { 0. })
-                    .total_cmp(&(x.contrast + if x.confirmed { 1. } else { 0. }))
-                    .then_with(|| x.seconds.total_cmp(&y.seconds))
+                .filter(|start| {
+                    let beats = exit.event - start.event;
+                    let max = if technique == "short_exchange" {
+                        16
+                    } else {
+                        128
+                    };
+                    (16..=max).contains(&beats)
+                        && beats % meter as i64 == 0
+                        && start.seconds > current + (budget + 4.) * rate
+                        && original.is_none_or(|old| fallback || start.event == old.launch_event)
+                })
+                .collect::<Vec<_>>();
+            starts.sort_by(|a, b| {
+                (b.contrast + if b.confirmed { 1. } else { 0. })
+                    .total_cmp(&(a.contrast + if a.confirmed { 1. } else { 0. }))
             });
-            if let Some(old) = original {
-                entries.retain(|entry| (entry.seconds - old.entry_seconds).abs() < 0.05);
+            let mut launches = starts
+                .into_iter()
+                .take(4)
+                .map(|start| start.event)
+                .collect::<Vec<_>>();
+            if technique == "short_exchange" && launches.is_empty() {
+                launches.push(exit.event - 16);
             }
-            for entry in entries.into_iter().take(4) {
-                let Some(end) = at(next, entry.event + beats + meter as i64 * 4) else {
+            for launch_event in launches {
+                let beats = exit.event - launch_event;
+                let bars = beats as usize / meter;
+
+                let Some(launch) = at(outgoing, launch_event) else {
                     continue;
                 };
-                if end > b.duration_seconds - 2. {
-                    reject("insufficient_incoming_continuation");
+                if (launch - current) / rate < budget + 4. {
+                    reject("preparation_deadline");
                     continue;
                 }
-                let Some(pb) = passage(next, entry.seconds, end) else {
-                    continue;
-                };
-                if pb.pulse_spread > 0.025 || pb.level < 0.008 {
-                    reject("incoming_pulse_or_silence");
-                    continue;
-                }
-                let Some(entry_end) = at(next, entry.event + 4) else {
+                let Some(audible) = at(outgoing, launch_event + 2) else {
                     continue;
                 };
-                let entry_bpm = 240. / (entry_end - entry.seconds);
-                // Use the selected future passage, not the playhead's jittering four-beat BPM.
-                let playing = original.map_or(pa.local_bpm * rate, |old| old.target_bpm);
-                let percent = (playing / entry_bpm - 1.) * 100.;
-                if percent.abs() > stretch || ((playing / pa.local_bpm) - 1.).abs() * 100. > stretch
-                {
-                    reject("tempo_correction_limit");
-                    continue;
-                }
-                // Both robust tails must fit the rate envelope, not just the medians.
-                if percent.abs() + pb.pulse_spread * 50. > stretch + 0.15 {
-                    reject("rate_envelope");
-                    continue;
-                }
-                // Fixed-rate recipes must preserve phase throughout the overlap, not only at launch.
-                let incoming_rate = playing / entry_bpm;
-                let Some(verified_clear) = at(outgoing, exit.event + 2) else {
+                let Some(pa) = passage(outgoing, launch, exit.seconds) else {
                     continue;
                 };
-                if verified_clear > useful_end_seconds(outgoing) {
-                    reject("outgoing_audible_end");
+                if pa.pulse_spread > 0.025 || pa.level < 0.008 {
+                    reject("outgoing_pulse_or_silence");
                     continue;
                 }
-                if b.audio_measurements
-                    .as_ref()
-                    .and_then(|m| m.audible_start_seconds())
-                    .is_some_and(|start| entry.seconds < start)
-                {
-                    reject("incoming_audible_start");
-                    continue;
-                }
-                let continuation = (useful_end_seconds(next) - entry.seconds) / incoming_rate
-                    - (verified_clear - launch) / rate;
-                let (next_preparation, minimum_continuation) = continuation_budget(playing);
-                if continuation < minimum_continuation {
-                    reject("next_transition_runway");
-                    continue;
-                }
-                let mut max_drift = 0.0_f64;
-                for k in 1..=beats {
-                    let Some(ta) = at(outgoing, launch_event + k) else {
-                        max_drift = f64::INFINITY;
-                        break;
-                    };
-                    let Some(tb) = at(next, entry.event + k) else {
-                        max_drift = f64::INFINITY;
-                        break;
-                    };
-                    let drift = ((ta - launch) / rate - (tb - entry.seconds) / incoming_rate).abs()
-                        * playing
-                        / 60.;
-                    max_drift = max_drift.max(drift);
-                }
-                if max_drift > 0.20 {
-                    reject("fixed_rate_phase_drift");
-                    continue;
-                }
-                let pitch_preserved = (outgoing.keylock || (rate - 1.).abs() < 0.0005)
-                    && outgoing.pitch_semitones.abs() < 0.01;
-                let key = KeyRelation::between(
-                    if pitch_preserved {
-                        a.camelot.as_deref().and_then(Camelot::parse)
-                    } else {
-                        None
-                    },
-                    b.camelot.as_deref().and_then(Camelot::parse),
-                );
-                if key == KeyRelation::Clash && bars >= 8 {
-                    reject("tonal_clash");
-                    continue;
-                }
-                let tempo_fit = 1. - percent.abs() / stretch.max(0.1);
-                let delta = ((pb.level / pa.level).log10() / 2.).clamp(-1., 1.) as f32;
-                let energy = suggest::energy_fit(delta, direction) as f64;
-                let spectral = 1. - ((pa.mid - pb.mid).abs() / (pa.mid + pb.mid + 1e-6));
-                let boundary = (exit.contrast + entry.contrast).min(1.);
-                let key_fit = suggest::key_score(key, a.key_confidence, b.key_confidence) as f64;
-                let score = 0.25 * tempo_fit
-                    + 0.2 * energy
-                    + 0.15 * spectral
-                    + 0.2 * key_fit
-                    + 0.2 * boundary;
-                let mut warnings=vec!["Vocal activity and foreground phrases are unknown; review the overlap and accept this uncertainty or audition before execution".into()];
-                if key == KeyRelation::Clash {
-                    warnings.push("Known key clash: this short exchange limits tonal overlap; audition the handoff before accepting it".into());
-                }
-                if !exit.confirmed || !entry.confirmed {
-                    warnings.push("Phrase boundaries are inferred from energy change/grid priors, not verified arrangement labels".into());
-                }
-                if !outgoing.keylock || !next.keylock {
-                    warnings.push("Enable key lock before preparation; unlocked tempo changes alter playing pitch".into());
-                }
-                if outgoing.pitch_semitones.abs() > 0.01 {
-                    warnings.push("Outgoing pitch is transposed; native key labels are excluded from tonal ranking".into());
-                }
-                let review_required = true;
-                let mut evidence=vec![exit.evidence.clone(),entry.evidence.clone(),format!("Local pulse spread {:.1}% / {:.1}%; maximum fixed-rate drift {max_drift:.2} beat",pa.pulse_spread*100.,pb.pulse_spread*100.),format!("{native_a:.1} → {native_b:.1} native BPM; {playing:.1} playing BPM; {percent:+.2}% incoming"),format!("{bars} bars of overlap; {} source beats counted on the effective grid",beats)];
-                if let Some(m) = &b.audio_measurements {
-                    if let Some(lufs) = m.integrated_lufs {
-                        evidence.push(format!("Measured {lufs:.1} LUFS; normalization {:+.1} dB toward -18 LUFS with -1 dBTP source cap",m.normalization_gain_db));
-                    }
-                    evidence.push("Runway uses full PCM audible bounds at -60 dBFS".into());
-                } else {
-                    warnings.push("PCM loudness and precise bounds unavailable until this source is loaded; runway uses waveform evidence".into());
-                }
-                let id = identity((
-                    PLANNER_VERSION,
-                    &a.path,
-                    &b.path,
-                    &b.source_fingerprint,
-                    reference,
-                    snapshot.load_revisions,
-                    snapshot.decks[reference].grid_revision,
-                    snapshot.decks[reference].position_revision,
-                    snapshot.deck_control_revisions[reference],
-                    technique,
-                    launch_event,
-                    exit.event,
-                    entry.event,
-                    playing,
-                ));
-                result.push(MoveOption {
-                    id,
-                    source: b.path.clone(),
-                    title: b.title.clone(),
-                    artist: b.artist.clone().unwrap_or_default(),
-                    spotify: b.path.starts_with("spotify:"),
-                    reference_deck: reference,
-                    target_deck: target,
-                    technique: technique.into(),
-                    overlap_bars: bars,
-                    entry_seconds: entry.seconds,
-                    launch_seconds: launch,
-                    audible_seconds: audible,
-                    handover_seconds: handover,
-                    clear_seconds: exit.seconds,
-                    launch_event,
-                    handover_event,
-                    clear_event: exit.event,
-                    target_bpm: playing,
-                    native_bpm: pb.local_bpm,
-                    tempo_percent: percent,
-                    max_stretch_percent: stretch,
-                    reference_source: a.path.clone(),
-                    reference_load_revision: snapshot.load_revisions[reference],
-                    reference_grid_revision: outgoing.grid_revision,
-                    reference_position_revision: outgoing.position_revision,
-                    reference_control_revision: snapshot.deck_control_revisions[reference],
-                    engine_epoch: snapshot.engine_epoch,
-                    review_required,
-                    evidence,
-                    warnings,
-                    score,
-                    score_components: HashMap::from([
-                        ("tempo_preservation".into(), tempo_fit),
-                        ("energy_direction".into(), energy),
-                        ("spectral_relation".into(), spectral),
-                        ("tonal_estimate".into(), key_fit),
-                        ("boundary_contrast".into(), boundary),
-                    ]),
-                    outgoing: pa.clone(),
-                    incoming: pb,
-                    launch_in_seconds: (launch - current) / rate,
-                    prepare_within_seconds: (launch - current) / rate - budget,
-                    preparation_budget_seconds: budget,
-                    continuation_seconds: continuation,
-                    minimum_continuation_seconds: minimum_continuation,
-                    next_preparation_budget_seconds: next_preparation,
-                    next_decision_within_seconds: continuation - minimum_continuation + 15.,
-                    readiness: if snapshot.decks[target].playing {
-                        "target_playing"
-                    } else if snapshot.decks[target].track.is_some()
-                        && snapshot.decks[target].channel_fader > 0.001
-                    {
-                        "target_requires_isolation"
-                    } else if already_loaded {
-                        "source_loaded"
-                    } else {
-                        "suggested"
-                    }
-                    .into(),
-                    incoming_fingerprint: b.source_fingerprint.clone(),
+                let mut entries: Vec<_> = incoming_boundaries
+                    .iter()
+                    .filter(|x| x.seconds < 120. && x.seconds >= 0.)
+                    .collect();
+                entries.sort_by(|x, y| {
+                    (y.contrast + if y.confirmed { 1. } else { 0. })
+                        .total_cmp(&(x.contrast + if x.confirmed { 1. } else { 0. }))
+                        .then_with(|| x.seconds.total_cmp(&y.seconds))
                 });
+                if let Some(old) = original {
+                    entries.retain(|entry| (entry.seconds - old.entry_seconds).abs() < 0.05);
+                }
+                for entry in entries.into_iter().take(4) {
+                    let arrival = incoming_boundaries
+                        .iter()
+                        .filter(|point| {
+                            let offset = point.event - entry.event;
+                            offset >= beats / 4
+                                && offset <= beats * 3 / 4
+                                && (point.confirmed || point.contrast > 0.14)
+                        })
+                        .max_by(|a, b| a.contrast.total_cmp(&b.contrast));
+                    let handover_offset =
+                        arrival.map_or(beats / 2, |point| point.event - entry.event);
+                    let handover_event = launch_event + handover_offset;
+                    let Some(handover) = at(outgoing, handover_event) else {
+                        continue;
+                    };
+                    let Some(end) = at(next, entry.event + beats + meter as i64 * 4) else {
+                        continue;
+                    };
+                    if end > b.duration_seconds - 2. {
+                        reject("insufficient_incoming_continuation");
+                        continue;
+                    }
+                    let Some(pb) = passage(next, entry.seconds, end) else {
+                        continue;
+                    };
+                    if pb.pulse_spread > 0.025 || pb.level < 0.008 {
+                        reject("incoming_pulse_or_silence");
+                        continue;
+                    }
+                    let Some(entry_end) = at(next, entry.event + 4) else {
+                        continue;
+                    };
+                    let entry_bpm = 240. / (entry_end - entry.seconds);
+                    // Use the selected future passage, not the playhead's jittering four-beat BPM.
+                    let playing = original.map_or(pa.local_bpm * rate, |old| old.target_bpm);
+                    let percent = (playing / entry_bpm - 1.) * 100.;
+                    if percent.abs() > stretch
+                        || ((playing / pa.local_bpm) - 1.).abs() * 100. > stretch
+                    {
+                        reject("tempo_correction_limit");
+                        continue;
+                    }
+                    // Both robust tails must fit the rate envelope, not just the medians.
+                    if percent.abs() + pb.pulse_spread * 50. > stretch + 0.15 {
+                        reject("rate_envelope");
+                        continue;
+                    }
+                    // Fixed-rate recipes must preserve phase throughout the overlap, not only at launch.
+                    let incoming_rate = playing / entry_bpm;
+                    let Some(verified_clear) = at(outgoing, exit.event + 2) else {
+                        continue;
+                    };
+                    if verified_clear > useful_end_seconds(outgoing) {
+                        reject("outgoing_audible_end");
+                        continue;
+                    }
+                    if b.audio_measurements
+                        .as_ref()
+                        .and_then(|m| m.audible_start_seconds())
+                        .is_some_and(|start| entry.seconds < start)
+                    {
+                        reject("incoming_audible_start");
+                        continue;
+                    }
+                    let continuation = (useful_end_seconds(next) - entry.seconds) / incoming_rate
+                        - (verified_clear - launch) / rate;
+                    let (next_preparation, minimum_continuation) = continuation_budget(playing);
+                    let mut max_drift = 0.0_f64;
+                    for k in 1..=beats {
+                        let Some(ta) = at(outgoing, launch_event + k) else {
+                            max_drift = f64::INFINITY;
+                            break;
+                        };
+                        let Some(tb) = at(next, entry.event + k) else {
+                            max_drift = f64::INFINITY;
+                            break;
+                        };
+                        let drift = ((ta - launch) / rate - (tb - entry.seconds) / incoming_rate)
+                            .abs()
+                            * playing
+                            / 60.;
+                        max_drift = max_drift.max(drift);
+                    }
+                    if max_drift > 0.20 {
+                        reject("fixed_rate_phase_drift");
+                        continue;
+                    }
+                    let pitch_preserved = (outgoing.keylock || (rate - 1.).abs() < 0.0005)
+                        && outgoing.pitch_semitones.abs() < 0.01;
+                    let key = KeyRelation::between(
+                        if pitch_preserved {
+                            a.camelot.as_deref().and_then(Camelot::parse)
+                        } else {
+                            None
+                        },
+                        b.camelot.as_deref().and_then(Camelot::parse),
+                    );
+                    let tempo_fit = 1. - percent.abs() / stretch.max(0.1);
+                    let delta = ((pb.level / pa.level).log10() / 2.).clamp(-1., 1.) as f32;
+                    let energy = suggest::energy_fit(delta, direction) as f64;
+                    let spectral = 1. - ((pa.mid - pb.mid).abs() / (pa.mid + pb.mid + 1e-6));
+                    let start_boundary = outgoing_boundaries
+                        .iter()
+                        .find(|point| point.event == launch_event);
+                    let boundary = ((exit.contrast
+                        + entry.contrast
+                        + start_boundary.map_or(0., |point| point.contrast)
+                        + arrival.map_or(0., |point| point.contrast))
+                        / 4.)
+                        .min(1.);
+                    let key_fit =
+                        suggest::key_score(key, a.key_confidence, b.key_confidence) as f64;
+                    let score = 0.25 * tempo_fit
+                        + 0.2 * energy
+                        + 0.15 * spectral
+                        + 0.2 * key_fit
+                        + 0.2 * boundary;
+                    let mut warnings=vec!["Vocal activity and foreground phrases are unknown; waveform evidence does not identify a completed lyric or a suitable vocal overlap".into()];
+                    if key == KeyRelation::Clash {
+                        warnings.push("Estimated keys differ; choose the tonal overlap and transition style by musical judgment".into());
+                    }
+                    if continuation < minimum_continuation {
+                        warnings.push(format!("Short continuation: {continuation:.1}s remains after clearance; prepare the following move promptly"));
+                    }
+                    if !exit.confirmed || !entry.confirmed {
+                        warnings.push("Phrase boundaries are inferred from energy change/grid priors, not verified arrangement labels".into());
+                    }
+                    if !outgoing.keylock || !next.keylock {
+                        warnings.push("Unlocked tempo changes alter playing pitch; key lock is available when preserving pitch suits the plan".into());
+                    }
+                    if outgoing.pitch_semitones.abs() > 0.01 {
+                        warnings.push("Outgoing pitch is transposed; native key labels are excluded from tonal ranking".into());
+                    }
+                    let review_required = false;
+                    let arrival_evidence = arrival.map_or(
+                        "Overlap midpoint; musical arrival unconfirmed".to_string(),
+                        |point| point.evidence.clone(),
+                    );
+                    let mut evidence=vec![exit.evidence.clone(),entry.evidence.clone(),format!("Local pulse spread {:.1}% / {:.1}%; maximum fixed-rate drift {max_drift:.2} beat",pa.pulse_spread*100.,pb.pulse_spread*100.),format!("{native_a:.1} → {native_b:.1} native BPM; {playing:.1} playing BPM; {percent:+.2}% incoming"),format!("{bars} bars of overlap; {} source beats counted on the effective grid",beats)];
+                    evidence.push(format!("Handover after {handover_offset} beats: {arrival_evidence}; bounded native Sync follows the outgoing pulse"));
+                    if let Some(start) = start_boundary {
+                        evidence.push(format!("Outgoing entrance: {}", start.evidence));
+                    }
+                    if let Some(m) = &b.audio_measurements {
+                        if let Some(lufs) = m.integrated_lufs {
+                            evidence.push(format!("Measured {lufs:.1} LUFS; normalization {:+.1} dB toward -18 LUFS with -1 dBTP source cap",m.normalization_gain_db));
+                        }
+                        evidence.push("Runway uses full PCM audible bounds at -60 dBFS".into());
+                    } else {
+                        warnings.push("PCM loudness and precise bounds unavailable until this source is loaded; runway uses waveform evidence".into());
+                    }
+                    let id = identity((
+                        PLANNER_VERSION,
+                        &a.path,
+                        &b.path,
+                        &b.source_fingerprint,
+                        reference,
+                        snapshot.load_revisions,
+                        snapshot.decks[reference].grid_revision,
+                        snapshot.decks[reference].position_revision,
+                        snapshot.deck_control_revisions[reference],
+                        technique,
+                        launch_event,
+                        exit.event,
+                        entry.event,
+                        playing,
+                    ));
+                    result.push(MoveOption {
+                        id,
+                        source: b.path.clone(),
+                        title: b.title.clone(),
+                        artist: b.artist.clone().unwrap_or_default(),
+                        spotify: b.path.starts_with("spotify:"),
+                        reference_deck: reference,
+                        target_deck: target,
+                        technique: technique.into(),
+                        overlap_bars: bars,
+                        entry_seconds: entry.seconds,
+                        launch_seconds: launch,
+                        audible_seconds: audible,
+                        handover_seconds: handover,
+                        clear_seconds: exit.seconds,
+                        launch_event,
+                        handover_event,
+                        clear_event: exit.event,
+                        target_bpm: playing,
+                        native_bpm: pb.local_bpm,
+                        tempo_percent: percent,
+                        max_stretch_percent: stretch,
+                        reference_source: a.path.clone(),
+                        reference_load_revision: snapshot.load_revisions[reference],
+                        reference_grid_revision: outgoing.grid_revision,
+                        reference_position_revision: outgoing.position_revision,
+                        reference_control_revision: snapshot.deck_control_revisions[reference],
+                        engine_epoch: snapshot.engine_epoch,
+                        review_required,
+                        evidence,
+                        warnings,
+                        score,
+                        score_components: HashMap::from([
+                            ("tempo_preservation".into(), tempo_fit),
+                            ("energy_direction".into(), energy),
+                            ("spectral_relation".into(), spectral),
+                            ("tonal_estimate".into(), key_fit),
+                            ("boundary_contrast".into(), boundary),
+                        ]),
+                        outgoing: pa.clone(),
+                        incoming: pb,
+                        launch_in_seconds: (launch - current) / rate,
+                        prepare_within_seconds: (launch - current) / rate - budget,
+                        preparation_budget_seconds: budget,
+                        continuation_seconds: continuation,
+                        minimum_continuation_seconds: minimum_continuation,
+                        next_preparation_budget_seconds: next_preparation,
+                        next_decision_within_seconds: (continuation - minimum_continuation + 15.)
+                            .max(0.),
+                        readiness: if snapshot.decks[target].playing {
+                            "target_playing"
+                        } else if snapshot.decks[target].track.is_some()
+                            && snapshot.decks[target].channel_fader > 0.001
+                        {
+                            "target_requires_isolation"
+                        } else if already_loaded {
+                            "source_loaded"
+                        } else {
+                            "suggested"
+                        }
+                        .into(),
+                        incoming_fingerprint: b.source_fingerprint.clone(),
+                    });
+                }
             }
         }
     }
@@ -1062,6 +1120,33 @@ pub(crate) fn refresh_prepared_option(
         return Err("Incoming content identity changed; regenerate options".into());
     }
     revalidate_prepared_window(&s, old, false)
+}
+
+pub(crate) fn recovery_option(s: &EngineSnapshot, old: &MoveOption) -> Result<MoveOption, String> {
+    for technique in [&old.technique, &"short_exchange".to_string()] {
+        let mut options = generate_windows(
+            s,
+            old.reference_deck,
+            &s.decks[old.target_deck],
+            EnergyDirection::Keep,
+            old.max_stretch_percent,
+            WindowSelection {
+                techniques: Some(std::slice::from_ref(technique)),
+                original: None,
+                fallback: true,
+            },
+            &mut HashMap::new(),
+        );
+        options.sort_by(|a, b| {
+            a.launch_seconds
+                .total_cmp(&b.launch_seconds)
+                .then_with(|| b.score.total_cmp(&a.score))
+        });
+        if let Some(option) = options.into_iter().next() {
+            return Ok(option);
+        }
+    }
+    Err("No future passage remains for a safe retry of the prepared source".into())
 }
 
 pub(crate) fn revalidate_prepared_window(
@@ -1188,12 +1273,32 @@ mod tests {
             && o.handover_seconds < o.clear_seconds
             && o.tempo_percent.abs() < 2.
             && o.clear_seconds < 296.
-            && o.review_required));
+            && !o.review_required));
+    }
+    #[test]
+    fn overlap_length_follows_source_boundaries_instead_of_a_technique_preset() {
+        let (mut s, b) = pair(120.);
+        s.decks[0].track.as_mut().unwrap().cue_points = vec![
+            audio_analysis::CuePoint::manual("start".into(), 52., "Outgoing blend entry".into()),
+            audio_analysis::CuePoint::manual("clear".into(), 72., "Outgoing statement ends".into()),
+        ];
+        let options = generate(
+            &s,
+            0,
+            &b,
+            EnergyDirection::Keep,
+            2.,
+            Some(&["filter_blend".into()]),
+        );
+        assert!(options
+            .iter()
+            .any(|o| o.launch_seconds == 52. && o.clear_seconds == 72. && o.overlap_bars == 10));
     }
     #[test]
     fn wide_tempo_and_expired_windows_abstain_instead_of_forcing_a_match() {
         let (s, b) = pair(130.);
         assert!(generate(&s, 0, &b, EnergyDirection::Keep, 2., None).is_empty());
+        assert!(!generate(&s, 0, &b, EnergyDirection::Keep, 100., None).is_empty());
         let (mut s, b) = pair(121.);
         s.decks[0].position_seconds = 290.;
         assert!(generate(&s, 0, &b, EnergyDirection::Keep, 2., None).is_empty());
@@ -1211,17 +1316,18 @@ mod tests {
         assert!(generate(&s, 0, &b, EnergyDirection::Keep, 2., None).is_empty());
     }
     #[test]
-    fn native_speed_preserves_key_without_keylock_and_known_clashes_exclude_long_blends() {
+    fn estimated_key_clash_changes_ranking_and_warnings_without_banning_long_blends() {
         let (mut s, mut b) = pair(121.);
         s.decks[0].track.as_mut().unwrap().camelot = Some("8A".into());
         s.decks[0].keylock = false;
         b.track.as_mut().unwrap().camelot = Some("3B".into());
         let options = generate(&s, 0, &b, EnergyDirection::Keep, 2., None);
         assert!(!options.is_empty());
-        assert!(options.iter().all(|o| o.technique == "short_exchange"));
-        assert!(options
+        assert!(options.iter().any(|o| o.overlap_bars >= 8));
+        assert!(options.iter().all(|o| o
+            .warnings
             .iter()
-            .all(|o| o.warnings.iter().any(|w| w.starts_with("Known key clash"))));
+            .any(|w| w.starts_with("Estimated keys differ"))));
     }
     #[test]
     fn duplicate_files_of_the_same_recording_share_content_identity() {
@@ -1277,25 +1383,21 @@ mod tests {
         assert!(useful_end_seconds(d) > 0.);
     }
     #[test]
-    fn measured_short_track_handover_requires_a_full_next_preparation_cycle() {
-        // Observed Do What You Want: entry 101.58, clearance ~134.07, duration 173.76.
-        let (preparation, required) = continuation_budget(123.);
-        assert_eq!(preparation, 60.);
-        assert!(173.76 - 134.07 < required);
-        assert!(required > preparation + 30.);
+    fn short_continuation_is_advisory_instead_of_excluding_the_song() {
         let (s, mut b) = pair(121.);
         b.track.as_mut().unwrap().duration_seconds = 110.;
         let mut rejected = HashMap::new();
         let options =
             generate_with_reasons(&s, 0, &b, EnergyDirection::Keep, 2., None, &mut rejected);
-        assert!(
-            !options.is_empty(),
-            "An early entry may still leave enough runway"
-        );
+        assert!(!options.is_empty());
         assert!(options
             .iter()
-            .all(|o| o.continuation_seconds >= o.minimum_continuation_seconds));
-        assert!(rejected.get("next_transition_runway").copied().unwrap_or(0) > 0);
+            .any(|o| o.continuation_seconds < o.minimum_continuation_seconds
+                && o.warnings
+                    .iter()
+                    .any(|w| w.starts_with("Short continuation"))));
+        assert!(!rejected.contains_key("next_transition_runway"));
+        assert!(options.iter().all(|o| o.next_decision_within_seconds >= 0.));
     }
 
     #[test]
@@ -1308,7 +1410,7 @@ mod tests {
         assert_eq!(refreshed.target_bpm, original.target_bpm);
         assert_eq!(refreshed.clear_event, original.clear_event);
         assert_eq!(refreshed.launch_event, original.launch_event);
-        assert!(refreshed.continuation_seconds >= refreshed.minimum_continuation_seconds);
+        assert!(refreshed.continuation_seconds > 0.);
         s.decks[0].position_seconds = original.launch_seconds + 0.1;
         assert!(revalidate_prepared_window(&s, &original, false).is_err());
         let fallback = revalidate_prepared_window(&s, &original, true).unwrap();
@@ -1316,7 +1418,7 @@ mod tests {
         assert_eq!(fallback.entry_seconds, original.entry_seconds);
         assert_eq!(fallback.technique, "short_exchange");
         assert!(fallback.launch_seconds > s.decks[0].position_seconds + 4.);
-        assert!(fallback.continuation_seconds >= fallback.minimum_continuation_seconds);
+        assert!(fallback.continuation_seconds > 0.);
     }
 
     #[test]
@@ -1342,9 +1444,7 @@ mod tests {
         ));
         let options = generate(&s, a, &s.decks[b], EnergyDirection::Keep, 2., None);
         assert!(!options.is_empty());
-        assert!(options
-            .iter()
-            .all(|o| o.continuation_seconds >= o.minimum_continuation_seconds));
+        assert!(options.iter().all(|o| o.continuation_seconds > 0.));
         if let Ok(path) = std::env::var("PULSEDECK_REAL_OPTIONS_EXPORT") {
             std::fs::write(
                 path,

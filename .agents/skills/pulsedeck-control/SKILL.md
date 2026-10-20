@@ -1,49 +1,38 @@
 ---
 name: pulsedeck-control
-description: Operate PulseDeck through pulsedeckctl for deck preparation, tempo/Sync, timed transitions, continuous sessions, audio/headphone/MIDI setup, recovery, WAV recording and takeover. Pair with djing-art for musical choices and pulsedeck-library for saved knowledge.
+description: Operate PulseDeck through pulsedeckctl for deck preparation, direct performance controls, supported native transitions, optional autonomous queues, recovery, audio setup and recording. Pair with djing-art for musical judgment and pulsedeck-library for source knowledge.
 ---
 
-# Controlling PulseDeck and workflows
+# Playing PulseDeck
 
-Turn a musical plan into supported, verified controls while preserving healthy playback. PulseDeck owns the audio clock. Use the running app and public CLI contract for real performance.
+Use the installed `/Applications/PulseDeck.app/Contents/MacOS/pulsedeckctl` for the configured Applications instance, or the checkout client for a development instance. `pd` in examples means the intended client. Read [CLI semantics](../references/cli.md) for unfamiliar transport or ownership details; discover an unfamiliar method with `commands describe METHOD`.
 
-**Continuous music is a hard requirement when the user asks for a mix or set. The incoming track must be audibly established before the outgoing track finishes. Never allow silence because preparation, planning or scheduling ran late.** A loaded track, a playing deck behind a closed fader, or an armed item on an ended clock does not satisfy this requirement. Use the [assisted move workflow](references/assisted-next-moves.md) for continuous sets; consult [custom-session continuity](references/session.md#continuity-is-a-hard-requirement) when building unsupported transitions yourself. Honor intentional musical breaks, the requested endpoint and explicit user stops.
+The agent is free to choose songs, passages, tempo strategy, loops, EQ, filters, FX and transition style within the actual tool capabilities and user's brief. A supported recipe is convenient, not compulsory. There is no requirement to delegate the set to AutoDJ, quit after the first arm, keep a universal BPM/key limit, or use a fixed number of bars. Artistic suggestions come from [DJing — the art](../djing-art/SKILL.md).
 
-## Continuous sets: start, then hand off
+## Choose the appropriate control path
 
-Read [continuous sets](references/continuous-sets.md) for a mix/set request. It is the complete normal workflow: check the intended running instance and native playback, choose one opener from `mix.openers`, load/play it, then submit **one `pd mix queue start` without `--follow`**. The accepted receipt owns subsequent selection, preparation, transitions, recovery and duration. **End the agent turn after acceptance.** Healthy continuous queues require no model monitoring, timed status reads, follower process, sleep loop or reads of an idle stream. PulseDeck emits `mix.queue.notice` for actionable outcomes, retains queue status and shows an outcome notice in the app. A host may subscribe outside inference; do not emulate a host subscription by keeping a model alive.
-
-Use the installed `/Applications/PulseDeck.app/Contents/MacOS/pulsedeckctl` (or `~/Applications/PulseDeck.app/Contents/MacOS/pulsedeckctl`), or the repository's `target/debug/pulsedeckctl` for a development instance (`pd` in examples). The continuous-set reference supplies exact commands; read [CLI semantics](../references/cli.md) only for unfamiliar transport/ownership details. Discover one unfamiliar method with `commands describe METHOD`; `commands list` is concise and supports `--prefix`/`--search`. Full schemas need `--detail`.
-
-For **one individually chosen move**, read [assisted next moves](references/assisted-next-moves.md): request `mix.options` once and submit `mix execute`. Only that single-move workflow may need a terminal-event wait before the next musical decision. For custom transitions use [continuous sessions](references/session.md). Read [state and ownership](references/state-and-ownership.md) for unfamiliar live material.
-
-| Work | Reference |
+| Approach | Reference |
 |---|---|
-| Choose and execute a supported next move | [Assisted next moves](references/assisted-next-moves.md): shared Suggest options, one-call execution, lifecycle events and optional audition |
-| Load, isolate, set an entry, prepare tempo/Sync | [Deck preparation](references/deck-preparation.md) |
-| Perform the chosen blend or exchange | [Transition execution](references/transitions.md), [persistent command contract](../references/timed-execution.md) |
-| Keep a set running through repeated handovers | [Continuous sets](references/continuous-sets.md); hand off after acceptance |
-| Diagnose audio, routing, headphones, MIDI or login | [Setup and recovery](references/setup-and-recovery.md) |
-| Capture and finalize an authorized WAV | [Recording](references/recording.md) |
+| Select a proposed move and let the native executor perform it | [Assisted next moves](references/assisted-next-moves.md) |
+| Choose and perform individual phrase/loop/EQ/FX gestures | [Transition execution](references/transitions.md), [persistent session contract](../references/timed-execution.md) |
+| Prepare the next deck, tempo and Sync | [Deck preparation](references/deck-preparation.md) |
+| Let the application choose subsequent songs and moves | [Optional continuous queue](references/continuous-sets.md) |
+| Keep a custom performance running to a requested endpoint | [Sessions and continuity](references/session.md) |
+| Inspect routing, audio, MIDI, headphones or login | [Setup and recovery](references/setup-and-recovery.md) |
+| Make an authorized recording | [Recording](references/recording.md) |
 
-Use [DJing — the art](../djing-art/SKILL.md) for the sound, entries, arrivals, layer transfers and exits. A smooth-set plan includes a positive audible overlap, prepared beatmatching, staged role transfer and outgoing clearance. A grouped Play B / fader B up / fader A down action is a cut; successful execution cannot establish that a blend happened. Use [Manage Library](../pulsedeck-library/SKILL.md) for collection reads and saved metadata.
+Use individual moves or direct controls when you want to decide the actual phrase relationship. The autonomous queue chooses its own windows from numeric evidence; it does not consume the art manual or a spoken musical plan. It is useful when that level of automation fits the request. Avoid competing owners for the same deck/controls; stop or yield the owned automation before replacing it with another workflow.
 
-“Plan” stays read-only. “Prepare B” leaves it paused unless audition is requested. “Mix now” or “play a set” authorizes necessary preparation and performance. Honor existing authorization. Recording, account setup and durable library edits need that intent.
+## Prepare ahead and follow the music
 
-## Keep execution ahead of the music
+A performance request authorizes the necessary preparation and playback. Planning alone stays read-only, and preparation alone leaves the incoming deck paused. Protect an audible or user-prepared source from accidental replacement. Source/load revisions bind actions to the intended recording; a preparation or accepted queue is not yet an executed handover.
 
-Protect contributing and user-prepared decks, global output and routing. Retain source/load, grid and position identities; source guards alone do not protect manual mixer changes. Load only into an available isolated deck without replacing playing material. Verify the intended source and current revision using the [loaded-source readiness check](references/deck-preparation.md#loaded-source-readiness); paused meters and provider placeholders cannot diagnose a failed load.
+Use native beat/event scheduling for known musical actions so model latency does not determine their execution. Follow lifecycle feedback for meaningful musical decisions and failures; inspect current state when it resolves an ambiguity. Observing a live set, choosing successive moves and following an event stream are allowed. There is no policy requiring an agent to disappear while the set is running.
 
-Use the shared [assisted next-move service](references/assisted-next-moves.md) for supported recipes. Submit the complete move once; PulseDeck performs preparation, selects a validated short fallback if needed, arms native timing and verifies clearance. For a single move, consume only feedback needed for its next decision. A continuous queue needs no model follower. Do not start a low-level persistent queue alongside it, reconstruct returned beat coordinates or read status after each lifecycle event.
+For a queue, `--wait-ready` is an optional bounded startup check. An agent can hand off after the first successor is armed when unattended operation was intended, or remain involved when performing/observing was requested. Retain the queue/operation identity and original finish time. A stopped or failed queue may leave ordinary music playing; prepare the next move before that carrier runs out. The current host may need to deliver an actionable event to resume an idle agent; a passive log alone does not do so.
 
-On a fresh start, prepare a suitable opener with enough music for the first load and transition. Start it, then start the requested successor queue immediately, with ordered sources or a fully indexed collection, energy/tempo/technique limits and the requested duration. The app prepares each successor when a deck is released. Hand off after acceptance. Resume only for an actionable outcome delivered by the host or a user request. For an individually chosen move, execute it immediately and honor its continuation/decision budget. The app preserves the healthy carrier when unavailable audio prevents progress.
+## Recover from what actually happened
 
-For genuinely custom transitions outside the supported recipes, use one persistent `pulsedeckctl session start --stdio` process and read the [transition](references/transitions.md) and [persistent command](../references/timed-execution.md) contracts. Those references describe the low-level path, not the default agent workflow.
+Inspect failed receipts and actual deck positions before retrying. Preserve healthy music and do not replay a partly completed sequence blindly. A source rejection is not a musical instruction: another song, another passage, another technique or another supported workflow may be appropriate.
 
-`registered` and `queued` are not completion. Verify acknowledged action/version `executed`, advancing incoming audio, intended routing/roles and final mixer state before pausing the outgoing deck. A `running` job can contain a failed launch: respond to the failed action immediately. Receipts and meters establish execution, not musical quality or speaker audibility.
-
-## Recover or yield
-
-On uncertainty, inspect receipts/state before retrying the same request. On failure, preserve healthy playback, cancel conflicting owned pending work and revise from actual positions and inherited controls. Applied steps remain applied. Do not replay an entire partly completed transition or open a failed incoming source. Use [session recovery](references/session.md#recover-before-the-healthy-track-ends).
-
-If both decks ended unintentionally, an ended clock cannot launch the successor. Verify a ready coherent entry and audible controls, plain-play it, then resume preparation; report the gap. On takeover, stop conflicting owned automation and preserve the user’s values. Session `op:stop` and broader `automation stop` cancel pending work; ordinary playback and recording have separate stop/finalization actions. Do not restart after an explicit stop.
+If both decks end unintentionally, report the gap, establish a ready incoming entry with audible controls and plain-play it before rebuilding a phrase plan. An ended outgoing clock cannot execute a future launch. Preserve the original endpoint rather than starting another full hour. Yield to a genuine user stop/takeover. Recording and durable library/account edits still require the corresponding user intent. Execution receipts do not certify listening quality.

@@ -1,38 +1,35 @@
 ---
 name: djing-art
-description: Use track metadata, beatgrids, arrangement evidence and live feedback to choose songs, musical entries/exits, phrase-aligned blends, harmonic overlap and set energy. Use for DJ planning and performance; pair with the available control workflow for playback.
+description: >-
+  A DJ musicianship reference: learn phrase choices and transition approaches for different styles from instructor breakdowns, then adapt them to the actual songs and brief. Pair with the available deck-control and library skills.
 ---
 
 # DJing — the art
 
-Create a musical relationship between passages: let the current idea speak, introduce the next idea coherently, and shape what the listener experiences. Analysis supplies beat/BPM/key/waveform evidence and coordinates; saved cues are manual or imported, and automatic section labels are unavailable. It does not choose the musical relationship or prove that a mix sounds good.
+Treat this as a musician's reference manual. Choose an appealing musical relationship, then use the tools to perform it. The examples offer things to try; they are not genre laws, minimum blend lengths, BPM/key vetoes or mandatory mixer recipes. The user wants artistic freedom, including loops, EQ, filters, effects, cuts and unusual pairings when they serve the set.
 
-For a continuous dance set, prefer a developed audible blend with complementary roles and phrase-aligned changes; an explicit smooth-set brief makes that the intended result. For the requested lively house/tech mixing, start with **8–16 bars of useful audible overlap**, shaped around the actual passages; see [transition design](references/transition-design.md#plan-the-blend-in-bars). Silently running B, then pausing A and opening B, is a cut. Do not use it as a shortcut around beatmatching or arranging a blend. Different techniques remain available when the user’s brief and musical purpose call for them.
+Start with the [style and phrase manual](references/style-and-phrase-manual.md) for a musical approach and [instructor transition studies](references/worked-cases.md) for concrete examples. A smooth café brief suggests an unhurried, coherent flow; it does not require every song to receive the same long fade or every transition to use an effect.
 
-For melodic/progressive house with bass-swap blends, choose successors with close native BPMs and keep actual tempo correction small. The user's preference is to preserve the song's natural speed and sound; apply the [tempo selection limits](references/selection-and-energy.md#keep-bass-swap-successors-close-in-tempo) before accepting a pair.
+## Read for the musical question
 
-## Read for the decision at hand
-
-For the shared Suggest workflow, review the option's passage evidence, uncertainty, technique, rate correction and continuation runway, then use the control skill's one-call execution. For continuous supported sets, choose ordered repertoire or a scoped collection and energy/tempo/technique policy, then use its app-owned successor queue; hand off after queue acceptance and resume for an actual actionable outcome or user feedback. Healthy queue progress needs no model monitoring. Native recipes already validate timing coordinates; do not redo their arithmetic or run the custom phrase checker for every suggested move. Read the references below when you need a musical judgment the returned evidence cannot supply. For custom handovers, read **data, phrases, blending and transition design** before constructing the first plan.
-
-| Decision | Reference and responsibility |
+| Question | Reference |
 |---|---|
-| What can the incoming data establish? | [Data to decisions](references/data-to-decisions.md): observations, uncertainty and a rolling musical map |
-| Which song and direction belong next? | [Selection and energy](references/selection-and-energy.md): purpose, pacing, protected material and successor choice |
-| Can these rhythms coexist? | [Beatmatching and groove](references/beatmatching-and-groove.md): pulse, phase, drift, meter and Sync limits |
-| Where should the musical changes meet? | [Phrasing and arrangement](references/phrasing-and-arrangement.md): entries, arrivals, exits, pickups and actual interval counts |
-| What should be heard throughout the overlap? | [Mixing and blending](references/mixing-and-blending.md): bass, body, foreground, levels and gradual revelation |
-| Will the overlapping tonal material fit? | [Harmony and pitch](references/harmony-and-pitch.md): key relationships, playing pitch and uncertainty |
-| Which technique serves these passages? | [Transition design](references/transition-design.md): technique choice, complete plan, deadline and musical fallback |
-| Are the chosen clock coordinates consistent? | [Checked phrase plans](references/checked-phrase-plans.md): read-only validator and its limits |
-| Need examples or evidence? | [Worked cases](references/worked-cases.md), [sources](references/sources.md), [artist studies](references/artist-references.md) |
+| Which sections might work together for this style? | [Style and phrase manual](references/style-and-phrase-manual.md) |
+| What did the instructor actually do, and why? | [Transition studies](references/worked-cases.md), [artist accounts](references/artist-references.md) |
+| What belongs next; should the energy change? | [Selection and energy](references/selection-and-energy.md) |
+| Where does the present idea finish and the new one arrive? | [Phrasing and arrangement](references/phrasing-and-arrangement.md) |
+| How should bass, foreground and supporting parts move? | [Mixing and blending](references/mixing-and-blending.md) |
+| Will the pulse and tonal material sit together? | [Beatmatching and groove](references/beatmatching-and-groove.md), [harmony and pitch](references/harmony-and-pitch.md) |
+| What can the available analysis actually tell me? | [Data to decisions](references/data-to-decisions.md) |
+| How do I count a chosen custom plan precisely? | [Checked phrase plans](references/checked-phrase-plans.md) |
+| Where did the advice come from? | [Sources](references/sources.md) |
 
-## Apply the art to the live pair
+A useful intention sounds like: “Let A finish its refrain, introduce B's percussion through A's thinning outro, and let B's bass take over as A's bass disappears.” That supplies a reason for the chosen passages. Equal BPM, a matching key, a waveform change or a completed queue supplies different evidence.
 
-Choose A’s complete statement and B’s desired arrival first. Inspect the entire overlap and the passage after that arrival. Count backward from those anchors using actual effective beat intervals; common phrase lengths are hypotheses. A downbeat is not automatically a phrase boundary, and equal BPM or key labels cannot establish a good pairing.
+Use the actual material to adapt the example. A song may have no drum intro, an early returning vocal, a pickup, an uneven phrase or a deliberately beatless ending. Describe uncertain content honestly: waveform bands show energy and texture, not the words or emotional meaning of a passage. Instructor explanations and known cues can supply context; do not claim to have listened when only numeric analysis is available.
 
-Give every overlap phase a foreground, a bass foundation and useful support. Keep playback entry, first audibility, bass exchange, foreground handover and outgoing clearance distinct. Prepare a feasible pulse/pitch strategy; check the chosen timing with the read-only checker before an anchored rhythmic handover. Its pass certifies coordinates, not audible blending or musical success. Revise after changed sources, entry, grid, tempo strategy or a missed boundary.
+## Perform with judgment
 
-Use [Manage Library](../pulsedeck-library/SKILL.md) for source evidence and authorized saved knowledge. Use [Controlling PulseDeck and workflows](../pulsedeck-control/SKILL.md) for isolated preparation, Sync, timed execution and recovery. Planning stays read-only; an authorized performance continues through the set. For individual/custom handovers, select and execute the successor early and choose the following move after clearance. A continuous successor queue performs those steps itself; end the agent turn after acceptance. Favor an earlier incoming entry when a late highlight would leave insufficient music for the next preparation cycle.
+Use [deck control](../pulsedeck-control/SKILL.md) for a supported one-call move, individually designed controls or an optional autonomous queue. Choose the workflow that expresses the musical idea. The queue's native selector does not read this manual or understand a verbal phrase plan: its successful timing receipt is not proof of good phrasing. Direct tool use is a normal artistic option, not a forbidden workaround.
 
-Verify execution against the intended anchors and actual beat/bar progression. Assess the result from available listening and user feedback. Unknown vocals stay unknown; manual cue labels still need passage context. If a mix sounds abrupt or thin, inspect the missing musical role instead of defending the timing receipt.
+Use [library knowledge](../pulsedeck-library/SKILL.md) to inspect the actual versions and passages. Close tempos, compatible keys and generous runway can make a blend easier; they are preferences to weigh, not reasons to forbid other music. Keep performance authorization, source ownership and truthful execution reporting intact. During a requested set, prepare ahead, react to failed work before the carrier ends, and distinguish a natural musical pause from an accidental gap.

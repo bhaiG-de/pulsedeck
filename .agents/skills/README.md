@@ -68,3 +68,5 @@ The entrypoints stay short; deeper references are grouped by the decisions they 
 The most recent phrase-check trial failed the requested musical objective: the agent chose abrupt deck exchanges. Its checked cue coordinates do not count as successful blends. The revised teaching has passed packaging and arithmetic checks; a new blind live set and listening review are still required to establish improved performance.
 
 Saved cues are manual or imported. Automatic cue placement and section classification, their settings, and vocabulary/section commands have been removed. Analysis still supplies tempo, beat/downbeat timing, key and waveform bands. The art skill must reason from available observations and human annotations; missing cues are not an analysis failure.
+
+The DJ skills are references, not a compulsory AutoDJ workflow. Agents can choose individual moves and direct tools. Start with the [style and phrase manual](djing-art/references/style-and-phrase-manual.md) and [instructor transition studies](djing-art/references/worked-cases.md). Musical estimates are guidance; explicitly requested limits and source/ownership protections still apply.

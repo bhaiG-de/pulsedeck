@@ -32,7 +32,7 @@ pub fn follow(socket: &Path, accepted: &Response) -> Result<(), ControlError> {
         .as_ref()
         .ok_or_else(|| ControlError::new("protocol_error", "Missing move receipt"))?;
     if summary["queue_id"].is_string() {
-        return follow_queue(socket, summary);
+        return follow_queue(socket, summary, false);
     }
     let operation = summary["operation_id"]
         .as_str()
@@ -82,13 +82,39 @@ pub fn follow(socket: &Path, accepted: &Response) -> Result<(), ControlError> {
     }
 }
 
-fn follow_queue(socket: &Path, initial: &Value) -> Result<(), ControlError> {
+pub fn wait_ready(socket: &Path, accepted: &Response) -> Result<(), ControlError> {
+    let summary = accepted
+        .result
+        .as_ref()
+        .filter(|r| r["queue_id"].is_string())
+        .ok_or_else(|| ControlError::new("protocol_error", "Missing queue receipt"))?;
+    follow_queue(socket, summary, true)
+}
+
+fn queue_ready(summary: &Value) -> bool {
+    summary["readiness"] == "ready"
+        || summary["completed_moves"].as_u64().is_some_and(|n| n > 0)
+        || summary["items"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .chain(std::iter::once(&summary["item"]))
+            .any(|item| {
+                matches!(
+                    item["state"].as_str(),
+                    Some("armed" | "transitioning" | "completed")
+                )
+            })
+}
+
+fn follow_queue(socket: &Path, initial: &Value, until_ready: bool) -> Result<(), ControlError> {
     let queue = initial["queue_id"].as_str().unwrap();
     let mut summary = initial.clone();
     let mut cursor = summary["event_sequence"].as_u64().unwrap_or(0);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
     loop {
         if summary["terminal"] == true {
-            return if summary["state"] == "completed" {
+            return if summary["state"] == "completed" && (!until_ready || queue_ready(&summary)) {
                 Ok(())
             } else {
                 Err(ControlError::new(
@@ -100,11 +126,29 @@ fn follow_queue(socket: &Path, initial: &Value) -> Result<(), ControlError> {
                 .with_detail("queue_id", queue))
             };
         }
+        if until_ready && queue_ready(&summary) {
+            return Ok(());
+        }
+        let wait_ms = if until_ready {
+            let remaining = deadline
+                .saturating_duration_since(std::time::Instant::now())
+                .as_millis() as u64;
+            if remaining == 0 {
+                return Err(ControlError::new(
+                    "timeout",
+                    "First successor is not armed; inspect the existing queue before retrying",
+                )
+                .with_detail("queue_id", queue));
+            }
+            remaining.min(30_000)
+        } else {
+            60_000
+        };
         let mut request = Request::new(
             "events.get",
-            json!({"since":cursor,"queue_id":queue,"wait_ms":60000}),
+            json!({"since":cursor,"queue_id":queue,"wait_ms":wait_ms}),
         );
-        request.timeout_ms = 61000;
+        request.timeout_ms = wait_ms + 1000;
         let response = call(socket, &request)?;
         if let Some(error) = response.error {
             return Err(error.with_detail("queue_id", queue));

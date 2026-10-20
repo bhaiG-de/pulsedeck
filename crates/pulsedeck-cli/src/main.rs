@@ -58,10 +58,17 @@ fn main() {
             .unwrap_or_else(|e| Response::failure(request.request_id.clone(), e));
         print(
             &response,
-            invocation.json || invocation.watch || invocation.follow,
+            invocation.json || invocation.watch || invocation.follow || invocation.wait_ready,
         );
         if let Some(error) = &response.error {
             std::process::exit(error.exit_code());
+        }
+        if invocation.wait_ready {
+            if let Err(error) = pulsedeck_cli::mix::wait_ready(&invocation.socket, &response) {
+                print(&Response::failure(&request.request_id, error.clone()), true);
+                std::process::exit(error.exit_code());
+            }
+            break;
         }
         if invocation.follow {
             if let Err(error) = pulsedeck_cli::mix::follow(&invocation.socket, &response) {

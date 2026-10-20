@@ -841,13 +841,17 @@ fn suggest(
     let Some((deck, track)) = deck.and_then(|d| metadata.tracks[d].as_ref().map(|t| (d, t))) else {
         return Ok(list);
     };
-    list.tempo_range = state
-        .controller
-        .lock()
-        .map_err(|_| crate::poisoned())?
-        .surface()
-        .tempo_ranges[1 - deck]
-        .min(max_stretch);
+    list.tempo_range = if options.max_stretch_percent.is_some() {
+        max_stretch
+    } else {
+        state
+            .controller
+            .lock()
+            .map_err(|_| crate::poisoned())?
+            .surface()
+            .tempo_ranges[1 - deck]
+            .min(max_stretch)
+    };
     let played = state
         .play_history
         .lock()

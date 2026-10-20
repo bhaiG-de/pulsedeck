@@ -707,6 +707,17 @@ impl Mixer {
         deck: usize,
         grid: Arc<audio_analysis::NeuralRhythm>,
     ) -> Option<Arc<audio_analysis::NeuralRhythm>> {
+        // Re-publishing identical timing must not cancel a valid armed handover.
+        if self.decks[deck].grid.as_ref().is_some_and(|old| {
+            old.beats_seconds == grid.beats_seconds
+                && old.downbeats_seconds == grid.downbeats_seconds
+                && old.bpm == grid.bpm
+                && old.beats_per_bar == grid.beats_per_bar
+                && old.bar_evidence.iter().any(|e| e.half_phase_corrected)
+                    == grid.bar_evidence.iter().any(|e| e.half_phase_corrected)
+        }) {
+            return self.decks[deck].grid.replace(grid);
+        }
         self.grid_revisions[deck] = self.grid_revisions[deck].wrapping_add(1);
         self.launches.fill(None);
         self.ramps.fill(None);
