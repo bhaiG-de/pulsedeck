@@ -1,0 +1,103 @@
+{
+  "status": "installed_and_paused_spotify_load_verified",
+  "user_findings": [
+    "large stretches altered songs",
+    "stretch feedback overcorrected into repeated end-of-song fades instead of beatmatching suitable records",
+    "repeated songs",
+    "provider playback-key failures despite sign-in"
+  ],
+  "book_basis": {
+    "Morse": [
+      "part0023: close natural tempo and roughly \u00b14% ordinary beatmix guideline",
+      "part0024: audible single-phrase overlap and bassline swap; fade/cut useful for deliberate tempo changes"
+    ],
+    "Broughton_Brewster": [
+      "ch08: phase versus lasting rate correction",
+      "ch09: audible overlap/EQ roles",
+      "ch13: mix placement beyond EOF joins"
+    ]
+  },
+  "changes": [
+    "Planner and queue default max_stretch_percent100\u21924, explicit override retained; planner version7; UI queue starts4",
+    "Skill first seeks suitable unplayed close-tempo successors and actual rhythmic/phrase overlap; resets have a distinct purpose",
+    "Audible set history and prior exclusions, emergency repeats disclosed, secure fallback before optional auth questions",
+    "Natural speed is percent0; absolute BPM setter uses local entry fit; promotion preserves effective rate",
+    "at_event uses raw beat_index not anchor-relative beat_position; verify resolved future timing before editing/arming",
+    "Source failures after sign-in classified source_unavailable, not auth_required",
+    "Playback-key refusal/timeout starts60s native cooldown retaining token; connected/permission preserved, readiness/last_error reflect cooldown",
+    "Batch analysis and successor queue stop source search on provider key blockage instead of hammering more songs"
+  ],
+  "verification": {
+    "app_unit_tests": {
+      "passed": 187,
+      "ignored": 6
+    },
+    "spotify_playback_tests_passed": 16,
+    "control_protocol_tests_passed": 12,
+    "skill_packaging_tests_passed": 7,
+    "repo_skill_examples_valid": 33,
+    "installed_skill_examples_valid": 60,
+    "native_event_index_regression_passed": true,
+    "live_provider_recheck": "Previously failing Big Jet Plane loaded completely on existing native sign-in, with no new OAuth flow; this was before new build installation.",
+    "frontend_tests_passed": 73,
+    "native_rate_role_regression_passed": true,
+    "written_behavior_cases_defined": 20,
+    "written_behavior_cases_rerun_after_fixes": false,
+    "installed_version": "0.2.7",
+    "installed_mix_options_default": 4,
+    "release_signature_and_package_validation": true,
+    "post_install_decks_paused": true,
+    "installed_binary_sha256": "19a64d816f42eaba9a31c52cbc783f04acdb064000151b7e6b612069232fa3ab",
+    "post_install_native_status": {
+      "connected": true,
+      "restoring": false,
+      "playback_permission": true,
+      "dj_streaming_available": true,
+      "last_error": null
+    },
+    "macos_security_agent_running": true,
+    "keychain_prompt_accessible_to_automation": false,
+    "human_handoff_requested": "Approve existing rebuilt PulseDeck Keychain prompt if shown; no password requested in chat and no new Spotify OAuth started.",
+    "post_install_spotify_load": {
+      "source": "spotify:track:6foVFvS7ha0rzndOm7DqXb",
+      "title": "Big Jet Plane (Extended Mix)",
+      "artist": "No Relation",
+      "stage": "ready",
+      "duration_seconds": 287.20736961451246,
+      "new_oauth_required": false,
+      "playing": false,
+      "evidence": "artifacts/skill-trials/cafe-fixes-20261022/post-install-spotify-load.json"
+    },
+    "verified_unix_ms": 1792672463382,
+    "pre_push_full_workspace_lib_and_bin_tests": "passed",
+    "pre_push_cli_integration_tests_passed": 12,
+    "pre_push_skill_package_tests_passed": 7,
+    "pre_push_phrase_arithmetic_tests_passed": 9,
+    "pre_push_isolated_session_continuity": {
+      "passed": true,
+      "hardware_output": false,
+      "cases": {
+        "controls_and_gap_preserve_absolute_endpoint": true,
+        "armed_successor_starts_before_carrier_eof": true,
+        "original_endpoint_pauses_both_decks": true,
+        "stale_successor_not_replayed_and_empty_windows_explained": [
+          "Reference deck is paused; timings begin from its current source position. Arm after starting it.",
+          "No supported transition window fits the current sources and requested settings",
+          "Rejected window checks: missing bar origin (1)"
+        ],
+        "explicit_stop_revokes_timer_and_successor": true
+      }
+    },
+    "latest_zip_sha256": "773c29545701f7783234fcbfa5f95ccc0c97e39e05caece51833e7f53e939c54",
+    "latest_zip_extraction_and_signature_valid": true
+  },
+  "limits": [
+    "No post-fix Luna performance or listening claim; user stopped performer",
+    "Provider throttling is a plausible upstream explanation, not conclusively identified; cooldown cannot override provider refusal",
+    "No proven engine master-switch bug; preserving effective rate is intentional and preparation/coordinates can explain confusing fields"
+  ],
+  "external_primary_reference": "https://github.com/librespot-org/librespot/issues/1649",
+  "observer_records": "artifacts/performances/cafe-fun-20261022/observer/",
+  "release_version": "0.2.7",
+  "installed_app": "/Applications/PulseDeck.app"
+}

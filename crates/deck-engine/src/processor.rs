@@ -163,8 +163,6 @@ pub(crate) fn sample_reference(
 unsafe extern "C" {
     fn pd_stretch_new() -> *mut c_void;
     fn pd_stretch_delete(handle: *mut c_void);
-    fn pd_stretch_input_latency(handle: *mut c_void) -> i32;
-    fn pd_stretch_output_latency(handle: *mut c_void) -> i32;
     fn pd_stretch_seek_length(handle: *mut c_void, rate: f32) -> i32;
     fn pd_stretch_pitch(handle: *mut c_void, factor: f32);
     fn pd_stretch_seek(handle: *mut c_void, left: *const f32, right: *const f32, frames: i32);
@@ -189,6 +187,7 @@ pub(crate) struct Processor {
     pitch: f64,
     pitch_factor: f64,
     fractional_input: f64,
+    input_position: f64,
     pub resets: u64,
     pub blocks: u64,
 }
@@ -210,6 +209,7 @@ impl Processor {
             pitch: 0.,
             pitch_factor: 1.,
             fractional_input: 0.,
+            input_position: 0.,
             resets: 0,
             blocks: 0,
         }
@@ -276,6 +276,7 @@ impl Processor {
             }
             self.offset = BLOCK;
             self.fractional_input = 0.;
+            self.input_position = position + frames as f64 * unit_step;
             self.valid = true;
             self.revision = revision;
             self.keylock = keylock;
@@ -288,15 +289,9 @@ impl Processor {
             let desired = speed * BLOCK as f64 + self.fractional_input;
             let count = desired.floor() as usize;
             self.fractional_input = desired - count as f64;
-            let ahead = unsafe { pd_stretch_input_latency(h) } as f64
-                + speed * unsafe { pd_stretch_output_latency(h) } as f64;
-            self.fill(
-                samples,
-                position + ahead * unit_step,
-                unit_step,
-                count,
-                region,
-            );
+            // Continue exactly after the consumed input, including integer
+            // seek pre-roll. Re-anchoring to transport each block adds phase jumps.
+            self.fill(samples, self.input_position, unit_step, count, region);
             unsafe {
                 pd_stretch_process(
                     h,
@@ -308,6 +303,7 @@ impl Processor {
                     BLOCK as i32,
                 );
             }
+            self.input_position += count as f64 * unit_step;
             self.offset = 0;
             self.blocks += 1;
         }

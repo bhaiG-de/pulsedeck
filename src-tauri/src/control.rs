@@ -76,6 +76,12 @@ fn failure(e: impl ToString) -> ControlError {
         "not_found"
     } else if message.contains("Configure a Spotify Client ID") {
         "configuration_required"
+    } else if message.starts_with("Spotify track loading failed after native sign-in:")
+        || message.contains("after Premium session sign-in and before audio decoding")
+    {
+        "source_unavailable"
+    } else if message.starts_with("Spotify native playback is cooling down") {
+        "provider_cooldown"
     } else if lower.contains("sign in") || lower.contains("sign-in") {
         "auth_required"
     } else {
@@ -219,7 +225,8 @@ pub fn start(
     Ok(())
 }
 #[tauri::command]
-pub async fn control_request(app: tauri::AppHandle, request: Request) -> Response {
+pub async fn control_request(app: tauri::AppHandle, mut request: Request) -> Response {
+    request.from_ui = true;
     let id = request.request_id.clone();
     tauri::async_runtime::spawn_blocking(move || execute(&app, request))
         .await
@@ -291,6 +298,7 @@ pub fn execute(app: &tauri::AppHandle, request: Request) -> Response {
         return Response::failure(request.request_id, e);
     }
     let mut identity = json!([
+        request.from_ui,
         request.command,
         request.args,
         request.expected_load_revision,
@@ -321,6 +329,7 @@ pub fn execute(app: &tauri::AppHandle, request: Request) -> Response {
             | "mix.arm"
             | "mix.session.start"
             | "mix.session.stop"
+            | "mix.session.successor"
             | "mix.queue.start"
             | "automation.stop"
     ) || matches!(
@@ -400,7 +409,7 @@ pub fn execute(app: &tauri::AppHandle, request: Request) -> Response {
         event(
             app,
             "command.completed",
-            json!({"request_id":request.request_id,"command":request.command,"ok":response.ok,"stage":response.stage}),
+            json!({"request_id":request.request_id,"command":request.command,"ok":response.ok,"stage":response.stage,"origin":if request.from_ui {"ui"}else{"control_client"}}),
         );
         if response.ok
             && (request.command.starts_with("playlist.")
@@ -623,7 +632,8 @@ fn apply_with_control_guard(
             app.clone(),
             app.state(),
             command,
-            true,
+            request.from_ui,
+            request.from_ui,
             request.expected_load_revision,
         )
         .map_err(failure)?;
@@ -815,6 +825,7 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
         "mix.session.start" => return start_mix_session(app, request),
         "mix.session.status" => return status_mix_session(app, request),
         "mix.session.stop" => return stop_mix_session(app, request),
+        "mix.session.successor" => return arm_session_successor(app, request),
         "mix.queue.start" => return start_successor_queue(app, request),
         "mix.queue.status" => return status_successor_queue(app, request),
         "mix.queue.edit" => return edit_successor_queue(app, request),
@@ -2748,6 +2759,16 @@ include!("control_command_queue.rs");
 #[cfg(test)]
 mod request_reservation_tests {
     use super::*;
+    #[test]
+    fn post_login_source_failure_does_not_request_another_login() {
+        let error = failure("Spotify track loading failed after native sign-in: the provider rejected or could not complete the playback key request. No partial audio was loaded.");
+        assert_eq!(error.code, "source_unavailable");
+        assert!(!error.retryable);
+        assert!(!error.details["hint"].as_str().unwrap().contains("spotify native login"));
+        assert_eq!(failure("Spotify full-track metadata retrieval failed (Unavailable) after Premium session sign-in and before audio decoding").code, "source_unavailable");
+        assert_eq!(failure("Spotify native playback is cooling down for 60 seconds after a playback-key failure").code, "provider_cooldown");
+        assert_eq!(failure("Sign in to the native player separately").code, "auth_required");
+    }
     #[test]
     fn compact_sources_distinguish_ready_empty_pending_and_replaced_epochs() {
         let engine = deck_engine::EngineHandle::new().unwrap();

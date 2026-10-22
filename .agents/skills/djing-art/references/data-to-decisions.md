@@ -1,34 +1,48 @@
-# From incoming data to musical decisions
+# Evidence for musical decisions
 
-Use a rolling source-specific map, not a whole-library dump. Inspect the current passage, the next useful outgoing opportunities, and a few incoming entry/arrival candidates. Read [analysis semantics](../../references/musical-evidence.md) for field limitations and [track inspection](../../pulsedeck-library/references/track-knowledge.md) for bounded reads.
+The books teach DJs to know and hear their records. For an agent, that knowledge must have an identifiable source. Use the [library skill](../../pulsedeck-library/SKILL.md) for reads and [analysis semantics](../../references/musical-evidence.md) for exact field limitations. This reference translates evidence into judgment; it does not add an audio classifier.
 
-| Incoming evidence | Musical inference and decision | Reconsider when |
+## Separate content, coordinates and interpretation
+
+| Evidence | Supports | Does not establish |
 |---|---|---|
-| Source identity, duration, load/grid/position revisions | Bind every cue and calculation to this edit and effective clock. | Reload, relink, seek or grid change invalidates the old relation. |
-| Beat events, beat positions, meter and downbeat origin | Count entry-to-arrival intervals; check bar relation and resolve exact launches. These locate musical events once chosen. | Missing/truncated events, uncertain origin, irregular pulse or live phase disagreement. |
-| Whole-track BPM plus local BPM, actual rate and Sync/master state | Shortlist pulse-compatible songs, then establish whether their selected passages can sustain the intended groove. | Local interval changes or role changes alter arrival travel time. |
-| Human cue spans, origin/confirmation and neighboring changes | Identify candidate beginnings/endings, protected statements, sparse approaches and arrivals. Check internal changes, not only section endpoints. | The marker belongs to another edit, or context/listening contradicts the proposed musical role. |
-| Low/mid/high RMS and peaks over neighboring windows | Locate changes in weight, body and top rhythm; decide when one track can replace a layer supplied by the other. | A loses weight earlier than the planned bass transfer, or B remains sparse. Bands alone cannot identify a vocal. |
-| Key labels, confidence, actual tempo/pitch and key lock | Assess sustained tonal overlap; reduce tonal exposure or choose another passage when compatibility is uncertain. | Pitch state changes, conflicting listening feedback or uncertain key estimates. |
-| Current position, audible contributions, readiness and action receipts | Determine which musical opportunities remain; prepare early, confirm actual execution, and shorten/revise after failure. | A launch fails, an arrival passes or the clock stops. A running job can contain failed actions. |
-| User response or listening | Assess groove, tonal fit, foreground conflict and whether the transition served the requested moment. | Feedback contradicts a numerical prediction. Preserve the observation rather than defending the score. |
+| Actual listening through an available audio-understanding path, or specific user/instructor annotation for this version | The described musical content and its context | Unheard passages or universal audience response |
+| Human/imported cue with provenance and bounds | A candidate landmark for that recording | The best join for every follower; correctness of an ambiguous label |
+| Effective beat events, meter and credible origin | Timing, local rates, metrical positions and interval counts | Musical phrases, lyric completion or emotional resolution |
+| Neighboring waveform and low/mid/high values | Measured amplitude/texture changes; possible changes in low-end weight | Vocals, instruments, verse/chorus/drop labels, or meaning |
+| Key estimate and provenance | A tonal shortlist hypothesis | Local chord agreement, tuning or actual overlap quality |
+| Whole-track energy/suggestion rank | Relative ranking under its measured heuristic | The selected intro's drive or a crowd's feelings |
+| Receipt/status and mixer state | What prepared, launched, advanced and cleared | That it sounded good |
 
-## Work backward from an arrival
+A clear user description of a passage is usable evidence. Keep its provenance. A stale cue for another edit is not. An agent sending audio to headphones has arranged playback; that alone does not mean the agent heard it. Say what was measured or annotated when no audible observation is available.
 
-Suppose A's effective beat 704 is an outro start at 346.267303s; beat 736 is a bass withdrawal at 362.001648s. B's desired arrival is beat 96 at 46.223789s. Candidate entry beat 30 is 14.758048s, while beat 32 is 15.739364s. Both origins are credible 4/4 downbeats at beat zero.
+## Inspect the decision-sized window
 
-Starting B30 on A704 aligns pulse but offsets the bars by two beats. B96 is 66 beats away. Calling this a 64-beat approach is false. A candidate B32 gives 64 beats to B96 and preserves the downbeat relation with A704. This corrects the count; it still does not prove that either musical entry works.
+Bind title/artist/version, source identity, duration and relevant load/grid/position revisions. Overview the arrangement once, then inspect bounded neighborhoods around the current statement, candidate A changes, and B entry through arrival plus its next phrase. Retain internal events, not just endpoints.
 
-Next inspect the full proposed overlap. If A's low band falls sharply at beat736 while B has bass throughout its lead, a plan that cuts B's lows until A ends will leave the foundation unsupported. Options include transferring bass at A736, choosing a shorter/later entry, or deliberately using the reduction as a release. Check what B contributes then and what happens at B96. Do not treat the file endpoint as A's best foreground handover merely because it is available.
+Use exact effective timestamps and beat positions for execution. A complete event range may need split reads when truncated; do not infer its count from returned row count or average BPM. Keep large raw responses outside the conversational working note and retain a compact map:
 
-Mean-BPM arithmetic can estimate available wall time, but cannot replace these event differences. With nonuniform grids, equal mean BPM does not imply equal local intervals. Inspect local timing and verify native progression through the overlap. A bar-aligned count also needs arrangement evidence: an arbitrary beat32 is not automatically a phrase start.
+```text
+Source/version and grid identity:
+Point or span: source seconds / effective beats / local meter
+Observed content or measured change:
+Provenance: heard / user-annotated / saved cue / numeric inference
+Use in this pair: protected statement / entry / transfer / clearance
+Confidence and the specific unresolved question:
+```
 
-## Read the stream as a changing plan
+Session notes are enough for transient interpretations. Permanent cues, tags and grid changes belong to the library workflow and the user's authorized scope.
 
-After preparation, retain exact anchors and queue the known stages ahead. On launch feedback, establish whether the planned source actually advanced. Compare simultaneous beat/bar phase and remaining beat distance to the named arrivals. A ramp ending at source45.248 when the intended arrival is46.224 is evidence to inspect, not proof that the arrival landed.
+## Decide under incomplete evidence
 
-After clearance, inspect the next useful passage and prepare the freed deck while healthy playback continues. For a bounded set, select a closing passage with a deliberate endpoint; for an ongoing set, repeat preparation and handover. Do not confuse “the next transition was queued” with a ready successor or completed launch.
+Resolve the uncertainty that can change this mix. If a blend depends on a vocal finishing, obtain actual content evidence or use a better-supported passage; more waveform points cannot reveal the words. If a low-band decrease is the only observation, plan around the measured loss of weight and leave its musical identity unknown.
 
-If launch fails, its planned arrival relationship no longer holds. Re-read the actual advancing sources and remaining musical opportunities. Carry the revised purpose and boundaries to [session recovery](../../pulsedeck-control/references/session.md#recover-before-the-healthy-track-ends), which owns cancellation, inherited controls and restoring continuity. Report a gap if one occurred.
+Prefer an approach with fewer unsupported requirements: less simultaneous tonal/foreground exposure, a stable known rhythmic window, another source, or a complete supported exchange. A lack of labels is not proof that a track cannot be used. A strong smooth-blend brief still deserves a search for compatible passages before retreating to a cut.
 
-These coordinates illustrate an observed failure and its arithmetic; they are not track presets or a claim that the corrected blend has been auditioned.
+During a live deadline, keep a viable next move while seeking stronger evidence. Repeating the same coarse inspection until A ends does not improve certainty. If a precise requested first drop cannot be located, say that and offer/use a supported alternative consistent with the brief; do not invent the landmark.
+
+## Learn from the actual outcome
+
+Record the specific problem and supporting evidence: phrase offset, drift, missing body, competing foregrounds, tonal clash, level jump, or lost payoff. Listening and user feedback can contradict a ranking; revise the musical choice rather than defending the score.
+
+A reload, relink to another version, seek, grid edit or added loop can invalidate the plan. Rebind the relevant anchors and recount. Reuse stable evidence when identity and passage remain unchanged. Technical execution, musical reasoning and audible success are three separate claims.

@@ -166,7 +166,7 @@ pub fn analyze_spotify_page(
 }
 fn run_page(app: &tauri::AppHandle, queue: Vec<String>, cancel: Arc<AtomicBool>) {
     let state = app.state::<AppState>();
-    for uri in queue {
+    'tracks: for uri in queue {
         if cancel.load(Ordering::Acquire) {
             break;
         }
@@ -222,7 +222,9 @@ fn run_page(app: &tauri::AppHandle, queue: Vec<String>, cancel: Arc<AtomicBool>)
                         expected_duration_ms: None,
                     },
                     current.clone(),
-                )?;
+                );
+                app.state::<NativeSpotifyService>().0.playback_preparation_finished(source.as_ref().err().map(String::as_str));
+                let source = source?;
                 if current.load(Ordering::Acquire) {
                     return Err("Analysis interrupted".into());
                 }
@@ -276,12 +278,19 @@ fn run_page(app: &tauri::AppHandle, queue: Vec<String>, cancel: Arc<AtomicBool>)
             if current.load(Ordering::Acquire) {
                 continue;
             }
+            let provider_blocked = result.as_ref().err().is_some_and(|error| {
+                spotify_playback::is_playback_key_failure(error)
+                    || error.starts_with("Spotify native playback is cooling down")
+            });
             if let Ok(mut b) = state.spotify_analysis.0.lock() {
                 b.status.completed += 1;
                 if let Err(error) = result {
                     b.status.failed += 1;
                     b.status.last_error = Some(error);
                 }
+            }
+            if provider_blocked {
+                break 'tracks;
             }
             break;
         }

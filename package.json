@@ -1,7 +1,7 @@
 {
   "name": "pulsedeck",
   "private": true,
-  "version": "0.2.4",
+  "version": "0.2.7",
   "scripts": {
     "dev": "npm --prefix frontend run dev",
     "build": "npm --prefix frontend run build",

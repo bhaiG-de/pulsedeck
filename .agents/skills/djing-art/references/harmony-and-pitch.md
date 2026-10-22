@@ -1,23 +1,47 @@
-# Harmony and pitch
+# Harmony at the playing pitch
 
-Owns tonal compatibility of the passages as played. It shortlists overlaps; it does not choose the set’s energy direction or establish phrase timing.
+Book basis: Broughton/Brewster chapters 15 and 31; Morse's programming and EQ chapters. The books' useful principle is to check the sounds that coexist. Their categorical harmony and mood claims are qualified here; see [sources](sources.md).
 
-For a tonal blend, start with a correct key notation and consider alternative/weak estimates. In Camelot, useful initial candidates are the same cell, adjacent number in the same ring, or the same number across A/B. Wrap number adjacency at 12/1. From 8A, that gives 8A, 7A, 9A and 8B. A/B represents minor/major; matching numbers across rings are relative keys, not same-tonic parallel major/minor. Open Key numbers require conversion before comparison.
+## Theory that changes a mix
 
-These relationships are starting hypotheses. Check the overlapping bass notes, chords, melody, vocals, tuning and any local modulation. Two busy leads can compete in a compatible key. Shortening an overlap reduces exposure to a clash but does not magically make the harmony compatible.
+A **key** describes a tonal center and the relationships around it. A scale is an ordered set of pitches; a chord combines pitches; a chord progression moves between chords over time. Sharing a key does not mean two progressions have reached complementary chords at the same instant.
 
-Evaluate pitch as played. Without key lock, rate changes shift pitch by approximately `12 * log2(rate)` semitones, plus any separately applied transposition. With key lock, verify the actual pitch settings and assess processing quality. One semitone is not one Camelot step.
+An **interval** is the distance between pitches. In twelve-tone equal temperament, a semitone is one of twelve equal divisions of the octave. A perfect fifth spans seven semitones; a perfect fourth spans five. An octave doubles frequency. These pitch distances differ from key-wheel steps.
 
-If keys are distant or unknown, consider a low-tonal region, clearer separation of foregrounds, a different pair or a deliberate contrast at a boundary. Percussion may still contain pitched resonance. If the user explicitly requests harmonic mixing, give harmonic evidence greater selection priority and state unresolved exceptions. Never invent a key to complete a table.
+Relative major/minor keys share a key signature: C major and A minor, for example. Parallel keys share the tonic: C major and C minor. These are different relationships. Major/minor labels alone cannot determine a track's emotion or energy. Neither perfect pitch nor naming every chord is required to hear a musical clash.
 
-Treat named harmonic “energy boost” recipes as optional auditioned effects. A move around a wheel cannot guarantee a rise in intensity, and major/minor labels alone do not establish emotional meaning.
+For a long tonal overlap, inspect the actual bass notes, chords, melody and voices. Sustained low notes expose clashes strongly. Two compatible melodies can still compete for attention, and two tracks with the same estimated key can have conflicting chords, local modulations, detuned samples or tuning differences.
 
-## Evaluate the actual overlap, then the reveal
+## Use key labels to shortlist
 
-Ask which pitched material remains audible together and for how long. Compare a percussion-led approach separately from a sustained bass/chord/vocal overlap. Keep one clear melodic foreground when several compatible-key parts would still be crowded. An unfamiliar key is an uncertainty to manage, not proof of incompatibility or permission to invent certainty.
+Confirm the notation and estimate quality. In Camelot, an initial neighborhood for 8A is 8A, 7A, 9A and 8B: the same cell, adjacent number on the same ring, or the same number across rings. Numbers wrap at 12/1. A is minor and B is major. Cross-ring same-number pairs are relative keys, not parallel keys. Open Key uses different numbering; convert rather than comparing its raw number with Camelot.
 
-A practical order is: shortlist plausible key relationships; check estimates and notation; account for playing rate/key lock/transposition; inspect the selected passages and any local modulation; then accept or revise their tonal exposure. Do not lock the entire set to a key wheel if that defeats the requested direction. When the user specifically requests harmonic mixing, prefer better-supported harmonic candidates rather than quietly treating a distant key as equivalent.
+These are useful candidates, not a guarantee or a ban on other music. When harmonic mixing is explicitly requested, give well-supported compatible passages greater weight. When the best next record is tonally distant, choose an appropriate exchange rather than rejecting it automatically.
 
-A tempo change without key lock shifts tuning continuously; a small rate change can leave the track between named semitones. Do not relabel it automatically as a neighboring Camelot cell. With key lock, listen for processing artifacts where possible; pitch preservation alone cannot guarantee natural transients or voices.
+## Account for rate and transposition
 
-[Mixed In Key’s official workflow](https://mixedinkey.com/workflows/how-to-use-the-camelot-wheel/) supports compatible-key shortlisting followed by checking the real passages. [Native Instruments’ harmonic mixing discussion](https://blog.native-instruments.com/harmonic-mixing-rules-and-how-to-break-them/) supplies creative context. Neither wheel movement nor major/minor naming provides a reliable equation for crowd energy.
+Without key lock, playing r times as fast shifts pitch by:
+
+```text
+pitch shift in semitones = 12 × log2(r)
+```
+
+For 120 → 126 BPM, r is 1.05 and the shift is approximately +0.845 semitones. It is not exactly a semitone, and it is not one step around the Camelot wheel. A whole-track key label no longer describes the sounding pitches precisely.
+
+With key lock, inspect actual pitch/transposition settings. Key preservation does not guarantee natural transients, clean bass or convincing vocals at the chosen stretch. Test where listening is available. Separately applied pitch shift also changes the tonal relationship; verify the resulting sound and notation before claiming a match.
+
+## Resolve the specific conflict
+
+| Situation | Useful choice | Limitation |
+|---|---|---|
+| Complementary sustained material | A longer tonal blend, with a clear foreground | Key agreement does not settle chord timing or density |
+| Strong next track, distant/unknown key | Use genuinely sparse/percussive passages or a clean phrase exchange | Tuned drums, bass and effect tails can retain pitch |
+| Two competing vocals/leads | Separate their entrances, choose an instrumental window or deliberate call-and-response | A bass swap cannot separate the words |
+| A low-end clash | Transfer the bass role or change the passage | Low EQ also alters the kick and may leave bass harmonics |
+| Local key change | Judge the section actually used | A single global estimate may describe another part |
+
+EQ cannot reliably remove one melody from a mastered record. If a sustained overlap needs a known harmony that the evidence cannot establish, shorten the tonal coexistence, find stronger evidence, choose different passages or use another track. Keep the musical brief in view: shorter is not automatically better for a requested patient blend.
+
+## Contrast can be expressive
+
+A new tonal center after a resolved phrase can refresh attention without simultaneous incompatible harmony. Leave enough separation for any sustained chord or echo. A rising pitch relationship can sometimes feel like a lift; orchestration, rhythm, loudness, recognition and context determine whether it actually does. Do not use a key-wheel path as an energy program.

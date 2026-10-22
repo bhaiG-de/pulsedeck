@@ -280,6 +280,7 @@ pub async fn load_spotify_track(
                 },
                 cancel.clone(),
             );
+            service.0.playback_preparation_finished(prepared.as_ref().err().map(String::as_str));
             diagnostics.provider_ms = provider_started.elapsed().as_secs_f64() * 1000.;
             let source = prepared?;
             state

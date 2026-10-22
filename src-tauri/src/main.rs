@@ -889,6 +889,7 @@ fn engine_command_inner(
     state: State<'_, AppState>,
     command: EngineCommand,
     smart_modes: bool,
+    human_control: bool,
     expected_revision: Option<u64>,
 ) -> Result<(), String> {
     if command
@@ -963,7 +964,7 @@ fn engine_command_inner(
     state
         .engine
         .command_for_revision(command.clone(), expected_revision)?;
-    control::manual_mix_session_takeover(&app, &command);
+    control::mix_session_control(&app, &command, human_control);
     state
         .controller
         .lock()

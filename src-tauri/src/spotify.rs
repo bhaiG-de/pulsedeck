@@ -331,6 +331,7 @@ impl SpotifyService {
             .into(),
             playback_mode: "spotify_connect_and_native_experiment".into(),
             dj_streaming_available: self.native_playback
+                && !inner.rate_limited_until.is_some_and(|until| until > Instant::now())
                 && inner
                     .token
                     .as_ref()
@@ -736,6 +737,15 @@ impl SpotifyService {
         if self.status()?.restoring {
             return Err("Wait for native playback sign-in restoration".into());
         }
+        if let Some(remaining) = self
+            .inner
+            .lock()
+            .map_err(|_| lock_error())?
+            .rate_limited_until
+            .and_then(|until| until.checked_duration_since(Instant::now()))
+        {
+            return Err(format!("Spotify native playback is cooling down for {} seconds after a playback-key failure. Existing sign-in is retained; preserve an already-loaded carrier and retry later, rather than requesting new consent.", remaining.as_secs().saturating_add(1)));
+        }
         let _operation = self.operation.lock().map_err(|_| lock_error())?;
         let token = self.access_token(false)?;
         if !self.status()?.playback_permission {
@@ -750,6 +760,23 @@ impl SpotifyService {
             .clone()
             .ok_or("Configure your own Spotify Client ID first")?;
         Ok((id, token))
+    }
+    pub(crate) fn playback_preparation_finished(&self, error: Option<&str>) {
+        if !self.native_playback {
+            return;
+        }
+        if let Ok(mut inner) = self.inner.lock() {
+            if error.is_some_and(spotify_playback::is_playback_key_failure) {
+                // Provider refusals can be transient; don't hammer other tracks or discard a valid grant.
+                inner.rate_limited_until = Some(Instant::now() + Duration::from_secs(60));
+                inner.last_error = Some("Spotify refused or timed out supplying a playback key after native sign-in. Loads are paused for 60 seconds; your sign-in is retained. Retry later. Repeated authorization is not a demonstrated remedy.".into());
+            } else if error.is_none() {
+                inner.rate_limited_until = None;
+                if inner.last_error.as_deref().is_some_and(|e| e.starts_with("Spotify refused or timed out supplying a playback key")) {
+                    inner.last_error = None;
+                }
+            }
+        }
     }
     fn forget_invalid_session(&self, id: &str, error: &str) -> Result<(), String> {
         let mut inner = self.inner.lock().map_err(|_| lock_error())?;
@@ -1405,6 +1432,27 @@ pub async fn spotify_pause(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn key_refusal_cools_down_without_discarding_native_sign_in() {
+        let mut service = SpotifyService::new(std::env::temp_dir().join(format!("pd-key-cooldown-{}.json", random_secret()))).unwrap();
+        service.native_playback = true;
+        {
+            let mut inner = service.inner.lock().unwrap();
+            inner.config.client_id = Some(spotify_playback::native_client_id());
+            inner.token = Some(Token { access_token: "fixture-token".into(), refresh_token: "fixture-refresh".into(), scope: "streaming".into(), expires_at: now_seconds() + 3600 });
+        }
+        service.playback_preparation_finished(Some("Spotify track loading failed after native sign-in: the provider rejected or could not complete the playback key request. No partial audio was loaded."));
+        let status = service.status().unwrap();
+        assert!(status.connected && status.playback_permission);
+        assert!(!status.dj_streaming_available);
+        assert!(status.last_error.unwrap().contains("sign-in is retained"));
+        assert!(service.playback_credentials().unwrap_err().starts_with("Spotify native playback is cooling down"));
+        service.inner.lock().unwrap().rate_limited_until = Some(Instant::now() - Duration::from_secs(1));
+        assert_eq!(service.playback_credentials().unwrap().1, "fixture-token");
+        service.playback_preparation_finished(None);
+        assert!(service.status().unwrap().dj_streaming_available);
+        assert!(service.status().unwrap().last_error.is_none());
+    }
 
     #[test]
     fn invalid_optional_settings_preserve_the_file_and_leave_local_startup_available() {

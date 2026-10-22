@@ -15,6 +15,16 @@ struct MixSession {
     reason: Option<String>,
     endpoint_sequence: Option<u64>,
     endpoint_ticket: Option<u64>,
+    successor: Option<SessionSuccessor>,
+    notice: Option<String>,
+}
+#[derive(Clone, serde::Serialize)]
+struct SessionSuccessor {
+    deck: usize,
+    carrier: usize,
+    load_revisions: [u64; 2],
+    position_revision: u64,
+    carrier_end_seconds: f64,
 }
 impl MixSession {
     fn active(&self) -> bool {
@@ -23,6 +33,7 @@ impl MixSession {
     fn finish(&mut self, state: &'static str, reason: impl Into<String>) {
         self.state = state;
         self.reason = Some(reason.into());
+        self.successor = None;
     }
     fn summary(&self, now: Instant) -> Value {
         let elapsed = now.saturating_duration_since(self.started).as_secs_f64();
@@ -30,7 +41,8 @@ impl MixSession {
             "duration_seconds":self.duration.as_secs_f64(),"elapsed_seconds":elapsed.min(self.duration.as_secs_f64()),
             "remaining_seconds":if self.active(){(self.duration.as_secs_f64()-elapsed).max(0.)}else{0.},
             "started_unix_ms":self.started_unix_ms,"finish_unix_ms":self.started_unix_ms.saturating_add(self.duration.as_millis() as u64),
-            "clock":"application_monotonic","endpoint_sequence":self.endpoint_sequence,"endpoint_ticket":self.endpoint_ticket,"resumable_after_restart":false})
+            "clock":"application_monotonic","endpoint_sequence":self.endpoint_sequence,"endpoint_ticket":self.endpoint_ticket,
+            "successor":self.successor,"continuity_notice":self.notice,"resumable_after_restart":false})
     }
 }
 
@@ -44,9 +56,28 @@ fn mix_session_duration(seconds: f64) -> Result<Duration> {
     Ok(Duration::from_secs_f64(seconds))
 }
 
+fn session_timing(duration: Option<f64>, finish: Option<u64>, now: u64) -> Result<Duration> {
+    match (duration, finish) {
+        (Some(seconds), None) => mix_session_duration(seconds),
+        (None, Some(finish)) => {
+            let millis = finish.saturating_sub(now);
+            if !(1..=86_400_000).contains(&millis) {
+                return Err(mix_error(
+                    "invalid_arguments",
+                    "finish_unix_ms must be in the future and within 24 hours",
+                ));
+            }
+            Ok(Duration::from_millis(millis))
+        }
+        _ => Err(mix_error(
+            "invalid_arguments",
+            "Supply exactly one of duration_seconds or finish_unix_ms",
+        )),
+    }
+}
+
 fn start_mix_session(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, Value)> {
-    let duration = mix_session_duration(arg(&request.args, "duration_seconds")?)?;
-    let prepared_id: String = arg(&request.args, "prepared_id")?;
+    let prepared_id: Option<String> = optional(&request.args, "prepared_id")?;
     let control = app.state::<Control>();
     let takeover_revision = control.mix_takeover_revision.load(Ordering::Acquire);
     let engine_state = app.state::<AppState>();
@@ -58,25 +89,27 @@ fn start_mix_session(app: &tauri::AppHandle, request: &Request) -> Result<(&'sta
             Duration::from_millis(request.timeout_ms.min(2_000)),
         )
         .map_err(failure)?;
-    let prepared = control
-        .mix_prepared
-        .lock()
-        .map_err(failure)?
-        .get(&prepared_id)
-        .cloned()
-        .ok_or_else(|| {
-            mix_error(
-                "not_found",
-                "Prepare a current suggestion before starting a session",
-            )
-        })?;
-    if prepared.state != "ready" && prepared.state != "armed" {
-        return Err(mix_error(
-            "not_ready",
-            "Session requires a ready or armed prepared transition",
-        ));
+    let prepared = prepared_id
+        .as_ref()
+        .map(|id| {
+            control
+                .mix_prepared
+                .lock()
+                .map_err(failure)?
+                .get(id)
+                .cloned()
+                .ok_or_else(|| mix_error("not_found", "Prepared transition not found"))
+        })
+        .transpose()?;
+    if let Some(prepared) = &prepared {
+        if prepared.state != "ready" && prepared.state != "armed" {
+            return Err(mix_error(
+                "not_ready",
+                "Session requires a ready or armed prepared transition",
+            ));
+        }
+        check_mix_cancelled(&prepared.cancelled)?;
     }
-    check_mix_cancelled(&prepared.cancelled)?;
     let snapshot = app
         .state::<AppState>()
         .engine
@@ -94,7 +127,7 @@ fn start_mix_session(app: &tauri::AppHandle, request: &Request) -> Result<(&'sta
             "Session needs a running audio engine and a ready playing carrier",
         ));
     }
-    if prepared.state == "ready" {
+    if let Some(prepared) = prepared.as_ref().filter(|p| p.state == "ready") {
         let expected = prepared
             .snapshot
             .as_ref()
@@ -112,10 +145,11 @@ fn start_mix_session(app: &tauri::AppHandle, request: &Request) -> Result<(&'sta
         validate_mix_readiness(&prepared.option, &snapshot)?;
     }
     let native_batch_id = prepared
-        .job_id
         .as_ref()
-        .and_then(|id| control.jobs.lock().ok()?.get(id)?.native_id);
-    if prepared.state == "armed"
+        .and_then(|p| p.job_id.as_ref())
+        .and_then(|id| control.jobs.lock().ok()?.get(id)?.native_id)
+        .or_else(|| prepared.is_none().then_some(snapshot.scheduled_batch.id));
+    if prepared.as_ref().is_some_and(|p| p.state == "armed")
         && (!snapshot.scheduled_batch.state.active()
             || native_batch_id != Some(snapshot.scheduled_batch.id))
     {
@@ -132,6 +166,12 @@ fn start_mix_session(app: &tauri::AppHandle, request: &Request) -> Result<(&'sta
             "An unrelated native schedule is active",
         ));
     }
+    let started_unix_ms = unix_ms();
+    let duration = session_timing(
+        optional(&request.args, "duration_seconds")?,
+        optional(&request.args, "finish_unix_ms")?,
+        started_unix_ms,
+    )?;
     let now = Instant::now();
     let session = MixSession {
         id: format!(
@@ -139,10 +179,10 @@ fn start_mix_session(app: &tauri::AppHandle, request: &Request) -> Result<(&'sta
             std::process::id(),
             control.job_sequence.fetch_add(1, Ordering::Relaxed) + 1
         ),
-        prepared_id,
+        prepared_id: prepared_id.unwrap_or_else(|| "direct-performance".into()),
         started: now,
         duration,
-        started_unix_ms: unix_ms(),
+        started_unix_ms,
         engine_epoch: snapshot.engine_epoch,
         sample_rate: snapshot.sample_rate,
         underruns: snapshot.underruns,
@@ -153,6 +193,8 @@ fn start_mix_session(app: &tauri::AppHandle, request: &Request) -> Result<(&'sta
         reason: None,
         endpoint_sequence: None,
         endpoint_ticket: None,
+        successor: None,
+        notice: None,
     };
     let summary = session.summary(now);
     let mut stored = control.mix_session.lock().map_err(failure)?;
@@ -188,6 +230,205 @@ fn status_mix_session(app: &tauri::AppHandle, request: &Request) -> Result<(&'st
         return Err(mix_error("not_found", "Mix session not found"));
     }
     Ok(("applied", session.summary(Instant::now())))
+}
+
+fn arm_session_successor(
+    app: &tauri::AppHandle,
+    request: &Request,
+) -> Result<(&'static str, Value)> {
+    let target = deck(&request.args)?;
+    let control = app.state::<Control>();
+    let state = app.state::<AppState>();
+    let snapshot = state
+        .engine
+        .scheduled_snapshot()
+        .map_err(scheduled_failure)?;
+    let mut stored = control.mix_session.lock().map_err(failure)?;
+    let session = stored
+        .as_mut()
+        .filter(|s| s.state == "running")
+        .ok_or_else(|| {
+            mix_error(
+                "not_ready",
+                "Start a timed session before arming a continuity successor",
+            )
+        })?;
+    if optional::<String>(&request.args, "session_id")?.is_some_and(|id| id != session.id) {
+        return Err(mix_error("not_found", "Mix session not found"));
+    }
+    if optional::<bool>(&request.args, "cancel")?.unwrap_or(false) {
+        session.successor = None;
+    } else {
+        validate_mix_target_availability(&snapshot.decks[target])?;
+        ready_source(
+            &snapshot,
+            target,
+            request
+                .expected_load_revision
+                .unwrap_or(snapshot.load_revisions[target]),
+        )?;
+        if !snapshot.decks[1 - target].playing || snapshot.engine_epoch != session.engine_epoch {
+            return Err(mix_error(
+                "not_ready",
+                "The other deck must be the current playing carrier",
+            ));
+        }
+        session.successor = Some(SessionSuccessor {
+            deck: target,
+            carrier: 1 - target,
+            load_revisions: snapshot.load_revisions,
+            position_revision: snapshot.decks[target].position_revision,
+            carrier_end_seconds: continuity_end(&snapshot.decks[1 - target]),
+        });
+    }
+    let summary = session.summary(Instant::now());
+    drop(stored);
+    event(app, "mix.session.updated", summary.clone());
+    Ok(("armed", summary))
+}
+
+fn carrier_route(snapshot: &deck_engine::EngineSnapshot, deck: usize) -> bool {
+    let angle = (snapshot.crossfader + 1.) * std::f32::consts::FRAC_PI_4;
+    let weight = if deck == 0 { angle.cos() } else { angle.sin() };
+    let d = &snapshot.decks[deck];
+    snapshot.master_gain > 0.001
+        && d.playing
+        && !d.preparation_pending
+        && d.channel_fader * d.gain * weight > 0.001
+}
+
+fn continuity_end(deck: &deck_engine::DeckSnapshot) -> f64 {
+    let measured = crate::next_move::useful_end_seconds(deck);
+    if measured > 0. {
+        measured
+    } else {
+        deck.track.as_ref().map_or(0., |t| t.duration_seconds)
+    }
+}
+
+fn successor_due(successor: &SessionSuccessor, snapshot: &deck_engine::EngineSnapshot) -> bool {
+    let carrier = &snapshot.decks[successor.carrier];
+    !snapshot.scheduled_batch.state.active()
+        && snapshot.load_revisions == successor.load_revisions
+        && snapshot.decks[successor.deck].position_revision == successor.position_revision
+        && !snapshot.decks[successor.deck].playing
+        && !snapshot.decks[successor.deck].preparation_pending
+        && carrier.loop_start_seconds.is_none()
+        && successor.carrier_end_seconds - carrier.position_seconds
+            <= carrier.actual_playback_rate.max(0.1)
+}
+
+// Only an explicitly armed source can take this last-second, non-phrase fallback.
+fn start_session_successor(
+    app: &tauri::AppHandle,
+    session: &MixSession,
+    successor: &SessionSuccessor,
+) -> Result<()> {
+    let state = app.state::<AppState>();
+    let target = successor.deck;
+    let mut commands = vec![
+        EngineCommand::SetSync {
+            deck: target,
+            enabled: false,
+        },
+        EngineCommand::SetDeckGain {
+            deck: target,
+            gain: 1.,
+        },
+        EngineCommand::SetEq {
+            deck: target,
+            low: 1.,
+            mid: 1.,
+            high: 1.,
+        },
+        EngineCommand::SetFilter {
+            deck: target,
+            amount: 0.,
+        },
+        EngineCommand::SetFx {
+            deck: target,
+            echo: 0.,
+            reverb: 0.,
+        },
+        EngineCommand::SetMaster { deck: target },
+        EngineCommand::Play { deck: target },
+        EngineCommand::SetChannelFader {
+            deck: target,
+            value: 1.,
+        },
+    ];
+    // Leave the outgoing route alone until the chosen incoming is actually audible.
+    commands.push(EngineCommand::Pause {
+        deck: successor.carrier,
+    });
+    commands.push(EngineCommand::SetChannelFader {
+        deck: successor.carrier,
+        value: 0.,
+    });
+    let mut revision = state.engine.transport_snapshot().control_revision;
+    for command in commands {
+        let snapshot = state.engine.transport_snapshot();
+        let angle = (snapshot.crossfader + 1.) * std::f32::consts::FRAC_PI_4;
+        let weight = if target == 0 {
+            angle.cos()
+        } else {
+            angle.sin()
+        };
+        if snapshot.engine_epoch != session.engine_epoch
+            || snapshot.load_revisions != successor.load_revisions
+            || snapshot.control_revision != revision
+            || snapshot.scheduled_batch.state.active()
+            || snapshot.master_gain <= 0.001
+            || weight <= 0.001
+        {
+            return Err(mix_error(
+                "source_changed",
+                "Continuity successor ownership or output route changed",
+            ));
+        }
+        if matches!(command, EngineCommand::Pause { .. }) && !carrier_route(&snapshot, target) {
+            return Err(mix_error(
+                "not_ready",
+                "Continuity successor did not establish an audible route",
+            ));
+        }
+        let d = command.deck().unwrap();
+        let ticket = state
+            .engine
+            .command_for_control_revision(
+                command,
+                Some(snapshot.load_revisions[d]),
+                snapshot.control_revision,
+            )
+            .map_err(failure)?;
+        state
+            .engine
+            .wait_for_control_receipt(ticket, Duration::from_millis(100))
+            .map_err(failure)?;
+        revision = revision.wrapping_add(1);
+    }
+    Ok(())
+}
+
+fn continuity_notice(
+    snapshot: &deck_engine::EngineSnapshot,
+    durations: [Option<f64>; 2],
+) -> Option<String> {
+    if !(0..2).any(|d| carrier_route(snapshot, d)) {
+        return Some("no_audible_carrier_route".into());
+    }
+    if !snapshot.scheduled_batch.state.active()
+        && snapshot.decks.iter().enumerate().any(|(i, d)| {
+            carrier_route(snapshot, i)
+                && d.loop_start_seconds.is_none()
+                && durations[i].is_some_and(|duration| {
+                    (duration - d.position_seconds) / d.actual_playback_rate.max(0.1) <= 60.
+                })
+        })
+    {
+        return Some("successor_due".into());
+    }
+    None
 }
 
 fn cancel_mix_session_batch(app: &tauri::AppHandle, session: &MixSession) -> Result<()> {
@@ -268,32 +509,6 @@ fn session_failure(
     } else if now.saturating_duration_since(session.last_audio_progress) > Duration::from_secs(2) {
         return Some("audio_clock_stalled");
     }
-    let angle = (snapshot.crossfader + 1.) * std::f32::consts::FRAC_PI_4;
-    let gains = [angle.cos(), angle.sin()];
-    if snapshot.master_gain <= 0.001
-        || !snapshot.decks.iter().enumerate().any(|(i, deck)| {
-            deck.playing
-                && !deck.preparation_pending
-                && deck.channel_fader * deck.gain * gains[i] > 0.001
-        })
-    {
-        return Some("no_audible_carrier_route");
-    }
-    let batch = &snapshot.scheduled_batch;
-    if batch.state.active() && session.native_batch_id != Some(batch.id) {
-        return Some("unrelated_schedule_takeover");
-    }
-    if session.native_batch_id == Some(batch.id)
-        && matches!(
-            batch.state,
-            deck_engine::BatchLifecycle::Failed
-                | deck_engine::BatchLifecycle::Interrupted
-                | deck_engine::BatchLifecycle::Yielded
-                | deck_engine::BatchLifecycle::Cancelled
-        )
-    {
-        return Some("transition_interrupted");
-    }
     None
 }
 
@@ -344,6 +559,14 @@ fn poll_mix_session(app: &tauri::AppHandle) -> Result<()> {
                         session.finish("interrupted", "endpoint_pause_not_verified");
                     }
                 }
+                Err(_)
+                    if now.saturating_duration_since(session.started)
+                        <= session.duration + Duration::from_secs(2) =>
+                {
+                    session.state = "running";
+                    session.endpoint_ticket = None;
+                    session.endpoint_sequence = None;
+                }
                 Err(error) => {
                     session.finish("interrupted", format!("endpoint_guard_rejected: {error}"))
                 }
@@ -355,32 +578,7 @@ fn poll_mix_session(app: &tauri::AppHandle) -> Result<()> {
         } else {
             return Ok(());
         }
-    } else if let Some(reason) = session_failure(session, &snapshot, now).filter(|reason| {
-        if *reason != "transition_interrupted" {
-            return true;
-        }
-        let native_operation = control.jobs.lock().ok().and_then(|jobs| {
-            jobs.values()
-                .find(|job| job.native_id == Some(snapshot.scheduled_batch.id))
-                .and_then(|job| job.status["operation_id"].as_str().map(str::to_owned))
-        });
-        let native_reason =
-            serde_json::to_value(snapshot.scheduled_batch.reason).unwrap_or_default();
-        let retry_owned = native_operation.as_ref().is_some_and(|operation| {
-            control.mix_prepared.lock().ok().is_some_and(|prepared| {
-                prepared.values().any(|p| {
-                    mix_retry_preserves_session(
-                        p,
-                        operation,
-                        &snapshot,
-                        control.mix_takeover_revision.load(Ordering::Acquire),
-                        native_reason.as_str().unwrap_or(""),
-                    )
-                })
-            })
-        });
-        !retry_owned
-    }) {
+    } else if let Some(reason) = session_failure(session, &snapshot, now) {
         session.finish("interrupted", reason);
     } else if now.saturating_duration_since(session.started) >= session.duration {
         let result = (|| -> Result<(u64, u64)> {
@@ -398,10 +596,48 @@ fn poll_mix_session(app: &tauri::AppHandle) -> Result<()> {
                 session.endpoint_sequence = Some(sequence);
                 session.state = "finishing";
             }
+            Err(_)
+                if now.saturating_duration_since(session.started)
+                    <= session.duration + Duration::from_secs(2) =>
+            {
+                return Ok(())
+            }
             Err(error) => session.finish("interrupted", error.message),
         }
     } else {
-        return Ok(());
+        let mut notice = continuity_notice(
+            &snapshot,
+            [
+                state.engine.track_duration(0),
+                state.engine.track_duration(1),
+            ],
+        );
+        if let Some(successor) = session.successor.clone() {
+            if snapshot.load_revisions != successor.load_revisions
+                || snapshot.decks[successor.deck].position_revision != successor.position_revision
+                || snapshot.decks[successor.deck].playing
+            {
+                session.successor = None;
+                notice = Some(
+                    if snapshot.decks[successor.deck].playing {
+                        "continuity_successor_consumed"
+                    } else {
+                        "continuity_successor_invalidated"
+                    }
+                    .into(),
+                );
+            } else if successor_due(&successor, &snapshot) {
+                session.successor = None;
+                notice = Some(match start_session_successor(app, session, &successor) {
+                    Ok(()) => "continuity_successor_started".into(),
+                    Err(error) => format!("continuity_successor_failed: {}", error.message),
+                });
+            }
+        }
+        if session.notice == notice {
+            return Ok(());
+        }
+        session.notice = notice;
     }
     let summary = session.summary(now);
     drop(stored);
@@ -412,6 +648,9 @@ fn poll_mix_session(app: &tauri::AppHandle) -> Result<()> {
 fn mix_session_takeover_command(command: &EngineCommand) -> bool {
     use deck_engine::EngineCommand::*;
     !matches!(
+        command,
+        SetMasterGain { gain } if *gain > 0.001
+    ) && !matches!(
         command,
         SetCueGain { .. }
             | SetCueMix { .. }
@@ -432,9 +671,16 @@ fn mix_session_takeover_command(command: &EngineCommand) -> bool {
     )
 }
 
-/// All accepted GUI, MIDI and external engine controls pass through this hook.
-/// Native recipe execution and isolated high-level preparation bypass it.
+/// Human gestures revoke automation. Performance-client gestures keep the endpoint.
 pub(crate) fn manual_mix_session_takeover(app: &tauri::AppHandle, command: &EngineCommand) {
+    mix_session_control(app, command, true);
+}
+
+pub(crate) fn mix_session_control(
+    app: &tauri::AppHandle,
+    command: &EngineCommand,
+    human_control: bool,
+) {
     if !mix_session_takeover_command(command) {
         return;
     }
@@ -443,6 +689,10 @@ pub(crate) fn manual_mix_session_takeover(app: &tauri::AppHandle, command: &Engi
     };
     control.mix_takeover_revision.fetch_add(1, Ordering::AcqRel);
     manual_successor_queue_takeover(app);
+    let snapshot = app.state::<AppState>().engine.transport_snapshot();
+    if !session_control_revokes(command, human_control, &snapshot) {
+        return;
+    }
     let Ok(mut stored) = control.mix_session.lock() else {
         return;
     };
@@ -454,6 +704,23 @@ pub(crate) fn manual_mix_session_takeover(app: &tauri::AppHandle, command: &Engi
     drop(stored);
     event(app, "mix.session.updated", summary);
     control.event_ready.notify_all();
+}
+
+fn session_control_revokes(
+    command: &EngineCommand,
+    human_control: bool,
+    snapshot: &deck_engine::EngineSnapshot,
+) -> bool {
+    if !mix_session_takeover_command(command) {
+        return false;
+    }
+    human_control
+        || match command {
+            EngineCommand::Pause { deck } => {
+                !carrier_route(snapshot, 1 - deck)
+            }
+            _ => false,
+        }
 }
 
 #[cfg(test)]
@@ -489,6 +756,8 @@ mod mix_session_tests {
             reason: None,
             endpoint_sequence: None,
             endpoint_ticket: None,
+            successor: None,
+            notice: None,
         };
         (session, snapshot)
     }
@@ -557,23 +826,27 @@ mod mix_session_tests {
         );
     }
     #[test]
-    fn lost_carrier_route_is_reported_as_interrupted() {
+    fn lost_carrier_route_reports_attention_but_keeps_original_endpoint() {
         let (mut session, mut snapshot) = fixture();
         let now = session.started;
         snapshot
             .decks
             .iter_mut()
             .for_each(|deck| deck.playing = false);
+        assert_eq!(session_failure(&mut session, &snapshot, now), None);
         assert_eq!(
-            session_failure(&mut session, &snapshot, now),
+            continuity_notice(&snapshot, [Some(300.); 2]).as_deref(),
             Some("no_audible_carrier_route")
         );
+        assert!(session.active());
         snapshot.decks[0].playing = true;
         snapshot.master_gain = 0.;
+        assert_eq!(session_failure(&mut session, &snapshot, now), None);
         assert_eq!(
-            session_failure(&mut session, &snapshot, now),
+            continuity_notice(&snapshot, [Some(300.); 2]).as_deref(),
             Some("no_audible_carrier_route")
         );
+        assert!(session.active());
     }
 
     #[test]
@@ -585,5 +858,89 @@ mod mix_session_tests {
             mix_session_duration(3600.).unwrap(),
             Duration::from_secs(3600)
         );
+    }
+
+    #[test]
+    fn performance_tempo_and_ramps_keep_timer_but_human_takeovers_and_stops_revoke_it() {
+        let (_, mut snapshot) = fixture();
+        for command in [
+            EngineCommand::SetBpm {
+                deck: 0,
+                bpm: 122.9,
+            },
+            EngineCommand::Ramp {
+                target: deck_engine::ControlTarget::TempoPercent { deck: 0 },
+                value: 1.,
+                seconds: 8.,
+                clock: Some(0),
+                beats: None,
+                quantize: None,
+            },
+        ] {
+            assert!(!session_control_revokes(&command, false, &snapshot));
+            assert!(session_control_revokes(&command, true, &snapshot));
+        }
+        assert!(!session_control_revokes(
+            &EngineCommand::SetMasterGain { gain: 1.5 },
+            true,
+            &snapshot
+        ));
+        assert!(!session_control_revokes(
+            &EngineCommand::Pause { deck: 0 },
+            false,
+            &snapshot
+        ));
+        snapshot.decks[1].playing = false;
+        assert!(session_control_revokes(
+            &EngineCommand::Pause { deck: 0 },
+            false,
+            &snapshot
+        ));
+    }
+
+    #[test]
+    fn armed_successor_fires_before_eof_and_rejects_replaced_or_repositioned_sources() {
+        let (_, mut snapshot) = fixture();
+        assert_eq!(continuity_end(&snapshot.decks[0]), 300.);
+        snapshot.decks[1].playing = false;
+        snapshot.decks[1].channel_fader = 0.;
+        let successor = SessionSuccessor {
+            deck: 1,
+            carrier: 0,
+            load_revisions: snapshot.load_revisions,
+            position_revision: snapshot.decks[1].position_revision,
+            carrier_end_seconds: 300.,
+        };
+        snapshot.decks[0].position_seconds = 298.;
+        assert!(!successor_due(&successor, &snapshot));
+        snapshot.decks[0].position_seconds = 299.2;
+        assert!(successor_due(&successor, &snapshot));
+        snapshot.decks[0].playing = false;
+        snapshot.decks[0].position_seconds = 300.;
+        assert!(successor_due(&successor, &snapshot));
+        snapshot.load_revisions[1] += 1;
+        assert!(!successor_due(&successor, &snapshot));
+        snapshot.load_revisions[1] -= 1;
+        snapshot.decks[1].position_revision += 1;
+        assert!(!successor_due(&successor, &snapshot));
+    }
+
+    #[test]
+    fn absolute_endpoint_does_not_drift_on_recovery() {
+        let finish = 1_000_000;
+        for now in [100, 7_354, 100_000] {
+            let duration = session_timing(None, Some(finish), now).unwrap();
+            assert_eq!(now + duration.as_millis() as u64, finish);
+        }
+        for millis in 1..2000 {
+            assert_eq!(
+                session_timing(None, Some(finish), finish - millis)
+                    .unwrap()
+                    .as_millis(),
+                millis as u128
+            );
+        }
+        assert!(session_timing(None, Some(finish), finish + 1).is_err());
+        assert!(session_timing(Some(60.), Some(finish), 100).is_err());
     }
 }

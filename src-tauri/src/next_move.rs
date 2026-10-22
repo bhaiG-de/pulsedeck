@@ -11,7 +11,8 @@ use std::{
 };
 use tauri::Manager;
 
-pub const PLANNER_VERSION: u32 = 5;
+pub const PLANNER_VERSION: u32 = 7;
+pub const DEFAULT_MAX_STRETCH_PERCENT: f64 = 4.;
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct OptionsRequest {
@@ -114,6 +115,7 @@ pub struct OptionsList {
     pub capabilities: Vec<TechniqueCapability>,
     pub reasons: Vec<String>,
     pub rejected_window_checks: HashMap<String, usize>,
+    pub candidate_rejections: HashMap<String, usize>,
     pub elapsed_ms: f64,
 }
 #[derive(Default)]
@@ -454,7 +456,7 @@ pub async fn options(
     request: OptionsRequest,
 ) -> Result<OptionsList, String> {
     let start = Instant::now();
-    let stretch = request.max_stretch_percent.unwrap_or(100.);
+    let stretch = request.max_stretch_percent.unwrap_or(DEFAULT_MAX_STRETCH_PERCENT);
     if !stretch.is_finite() || !(0. ..=100.).contains(&stretch) {
         return Err("max_stretch_percent must be finite and 0..100".into());
     }
@@ -519,7 +521,7 @@ pub async fn options(
     tauri::async_runtime::spawn_blocking(move||{
         let state=app.state::<crate::AppState>();let snapshot=state.engine.scheduled_snapshot()?;
         let coverage=state.library.lock().map_err(|_|crate::poisoned())?.planner_coverage(request.playlist.as_deref(),request.sources.as_deref(),request.provider.as_deref())?;
-        let mut list=OptionsList{version:PLANNER_VERSION,reference_deck:shortlist.deck,target_deck:shortlist.target_deck,reference_title:shortlist.reference.as_ref().map(|r|r.title.clone()),reference_position_seconds:0.,options:vec![],considered_tracks:0,coverage,capabilities:capabilities(),reasons:vec![],rejected_window_checks:HashMap::new(),elapsed_ms:0.};
+        let mut list=OptionsList{version:PLANNER_VERSION,reference_deck:shortlist.deck,target_deck:shortlist.target_deck,reference_title:shortlist.reference.as_ref().map(|r|r.title.clone()),reference_position_seconds:0.,options:vec![],considered_tracks:0,coverage,capabilities:capabilities(),reasons:vec![],rejected_window_checks:HashMap::new(),candidate_rejections:HashMap::new(),elapsed_ms:0.};
         let Some(reference)=shortlist.deck else{list.reasons.push("Load a reference track to calculate next moves".into());return Ok(list)};
         if snapshot.decks[reference].track.as_ref().map(|t|t.path.as_str())!=shortlist.reference.as_ref().map(|r|r.source.as_str()) {return Err("Reference source changed while reading candidates; refresh suggestions".into());}
         list.reference_position_seconds=snapshot.decks[reference].position_seconds;
@@ -529,12 +531,18 @@ pub async fn options(
         let target=1-reference;
         let played=state.play_history.lock().map_err(|_|crate::poisoned())?.played().clone();
         let mut candidates=Vec::new();
+        for (reason, count) in [("already_played",shortlist.ranking.played),("requested_tempo_range",shortlist.ranking.out_of_range),("missing_tempo",shortlist.ranking.without_tempo),("analysis_not_cached",list.coverage.needs_analysis_members)] {
+            if count > 0 {list.candidate_rejections.insert(reason.into(),count);}
+        }
         if let Some(track)=snapshot.decks[target].track.as_ref(){
             let allowed={let lib=state.library.lock().map_err(|_|crate::poisoned())?;
                 let sources=request.sources.as_ref().map(|s|lib.normalize_suggestion_sources(s)).transpose()?;
                 let scope=request.playlist.as_ref().map(|p|lib.suggestion_scope(p)).transpose()?;
                 sources.as_ref().is_none_or(|s|s.contains(&track.path)) && scope.as_ref().is_none_or(|(s,_)|s.contains(&track.path)) && request.provider.as_deref().is_none_or(|p|(p=="spotify")==track.path.starts_with("spotify:"))};
-            if allowed && eligible_successor(snapshot.decks[reference].track.as_ref(),track,&played){candidates.push(track.clone());}
+            if allowed {
+                if eligible_successor(snapshot.decks[reference].track.as_ref(),track,&played){candidates.push(track.clone());}
+                else {*list.candidate_rejections.entry(if played.contains(&track.path){"already_played"}else{"same_recording"}.into()).or_default()+=1;}
+            }
         }
         for s in shortlist.ranking.suggestions.iter().take(24) {
             let analysis={let lib=state.library.lock().map_err(|_|crate::poisoned())?;if s.spotify{lib.spotify_analysis(&s.source)?}else{lib.track_by_path(&s.source)?.map(crate::record_analysis)}};
@@ -542,19 +550,50 @@ pub async fn options(
         }
         list.considered_tracks=candidates.len();
         for track in candidates {
-            let next=if snapshot.decks[target].track.as_ref().is_some_and(|t|t.path==track.path){snapshot.decks[target].clone()}else{match analysis_deck(&track){Ok(d)=>d,Err(_)=>continue}};
-            list.options.extend(generate_with_reasons(&snapshot,reference,&next,request.energy_direction,stretch,request.techniques.as_deref(),&mut list.rejected_window_checks));
+            let next=if snapshot.decks[target].track.as_ref().is_some_and(|t|t.path==track.path){snapshot.decks[target].clone()}else{match analysis_deck(&track){Ok(d)=>d,Err(_)=>{*list.candidate_rejections.entry("missing_grid".into()).or_default()+=1;continue}}};
+            let before=list.rejected_window_checks.values().sum::<usize>();
+            let generated=generate_with_reasons(&snapshot,reference,&next,request.energy_direction,stretch,request.techniques.as_deref(),&mut list.rejected_window_checks);
+            if generated.is_empty() && before==list.rejected_window_checks.values().sum::<usize>() {*list.rejected_window_checks.entry("no_passage_windows".into()).or_default()+=1;}
+            list.options.extend(generated);
         }
         list.options.sort_by(|a,b|b.score.total_cmp(&a.score).then_with(||a.id.cmp(&b.id)));
         list.options=diversify(&list.options,limit);
         if list.options.is_empty(){
-            list.reasons.push("No feasible passage pair: check analysis, stable grids, close native tempos and preparation runway. No timing is invented for unanalysed tracks.".into());
-            let mut checks:Vec<_>=list.rejected_window_checks.iter().collect();checks.sort_by(|a,b|b.1.cmp(a.1));
-            if !checks.is_empty(){list.reasons.push(format!("Rejected window checks: {}",checks.iter().take(4).map(|(reason,count)|format!("{} ({count})",reason.replace('_'," "))).collect::<Vec<_>>().join(", ")));}
+            list.reasons.extend(empty_options_reasons(list.considered_tracks,&list.candidate_rejections,&list.rejected_window_checks));
         }
         if let Ok(mut c)=cache().lock(){if c.options.len()>512 {c.options.clear();}for o in &list.options{c.options.insert(o.id.clone(),o.clone());}}
         list.elapsed_ms=start.elapsed().as_secs_f64()*1000.;Ok(list)
     }).await.map_err(|_|"Planner worker failed".to_string())?
+}
+
+fn empty_options_reasons(
+    considered: usize,
+    candidates: &HashMap<String, usize>,
+    windows: &HashMap<String, usize>,
+) -> Vec<String> {
+    let mut reasons = vec![if considered == 0 {
+        "No eligible successor candidates reached passage planning".into()
+    } else {
+        "No supported transition window fits the current sources and requested settings".into()
+    }];
+    for (label, counts) in [
+        ("Candidate exclusions", candidates),
+        ("Rejected window checks", windows),
+    ] {
+        let mut checks: Vec<_> = counts.iter().collect();
+        checks.sort_by(|(a, na), (b, nb)| nb.cmp(na).then_with(|| a.cmp(b)));
+        if !checks.is_empty() {
+            reasons.push(format!(
+                "{label}: {}",
+                checks
+                    .iter()
+                    .map(|(reason, count)| format!("{} ({count})", reason.replace('_', " ")))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
+    }
+    reasons
 }
 
 fn diversify(options: &[MoveOption], limit: usize) -> Vec<MoveOption> {
@@ -673,9 +712,11 @@ fn generate_windows(
     };
     let outgoing = &snapshot.decks[reference];
     let Some(a) = outgoing.track.as_ref() else {
+        reject("missing_reference");
         return vec![];
     };
     let Some(b) = next.track.as_ref() else {
+        reject("missing_incoming");
         return vec![];
     };
     if !outgoing.beatgrid_valid || !next.beatgrid_valid {
@@ -717,14 +758,22 @@ fn generate_windows(
     }
     let rate = outgoing.actual_playback_rate;
     if !rate.is_finite() || rate <= 0. {
+        reject("invalid_playback_rate");
         return vec![];
     }
     let playing = outgoing.actual_playback_bpm.or(outgoing.playback_bpm);
     if playing.is_none() {
+        reject("missing_playback_tempo");
         return vec![];
     }
-    let Some(native_a) = a.bpm else { return vec![] };
-    let Some(native_b) = b.bpm else { return vec![] };
+    let Some(native_a) = a.bpm else {
+        reject("missing_reference_tempo");
+        return vec![];
+    };
+    let Some(native_b) = b.bpm else {
+        reject("missing_incoming_tempo");
+        return vec![];
+    };
     if (rate - 1.).abs() * 100. > stretch + 0.05 {
         reject("tempo_correction_limit");
         return vec![];
@@ -746,6 +795,12 @@ fn generate_windows(
     };
     let incoming_boundaries = boundaries(next);
     let outgoing_boundaries = boundaries(outgoing);
+    if incoming_boundaries.is_empty() {
+        reject("no_incoming_boundaries");
+    }
+    if outgoing_boundaries.is_empty() {
+        reject("no_outgoing_boundaries");
+    }
     let current = outgoing.position_seconds;
     let mut result = Vec::new();
     for technique in [
@@ -768,6 +823,9 @@ fn generate_windows(
                     && original.is_none_or(|old| fallback || x.event == old.clear_event)
             })
             .collect();
+        if exits.is_empty() {
+            reject("no_future_exit_with_preparation_runway");
+        }
         exits.sort_by(|x, y| {
             let fit = |v: &BoundaryProposal| {
                 v.contrast + if v.confirmed { 1. } else { 0. }
@@ -1195,6 +1253,19 @@ pub(crate) fn revalidate_prepared_window(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn empty_options_report_actual_exclusions_instead_of_guessing_missing_analysis() {
+        let candidates = HashMap::from([("already_played".into(), 1)]);
+        let reasons = empty_options_reasons(0, &candidates, &HashMap::new()).join("; ");
+        assert!(reasons.contains("No eligible successor candidates"));
+        assert!(reasons.contains("already played (1)"));
+        assert!(!reasons.contains("analysis"));
+        let windows = HashMap::from([("no_future_exit_with_preparation_runway".into(), 5)]);
+        let reasons = empty_options_reasons(1, &HashMap::new(), &windows).join("; ");
+        assert!(reasons.contains("No supported transition window"));
+        assert!(reasons.contains("no future exit with preparation runway (5)"));
+        assert!(!reasons.contains("unanalysed"));
+    }
     fn track() -> TrackAnalysis {
         TrackAnalysis {
             path: "/test/a.wav".into(),
@@ -1298,7 +1369,10 @@ mod tests {
     fn wide_tempo_and_expired_windows_abstain_instead_of_forcing_a_match() {
         let (s, b) = pair(130.);
         assert!(generate(&s, 0, &b, EnergyDirection::Keep, 2., None).is_empty());
+        assert!(generate(&s, 0, &b, EnergyDirection::Keep, DEFAULT_MAX_STRETCH_PERCENT, None).is_empty());
         assert!(!generate(&s, 0, &b, EnergyDirection::Keep, 100., None).is_empty());
+        let (s, b) = pair(122.);
+        assert!(!generate(&s, 0, &b, EnergyDirection::Keep, DEFAULT_MAX_STRETCH_PERCENT, None).is_empty());
         let (mut s, b) = pair(121.);
         s.decks[0].position_seconds = 290.;
         assert!(generate(&s, 0, &b, EnergyDirection::Keep, 2., None).is_empty());

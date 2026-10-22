@@ -1,41 +1,56 @@
-# Selection and energy across a set
+# Programming a set and choosing the next record
 
-Owns which musical direction and successor serve the brief, and how much of each song should be heard. Phrase placement and the sound of the overlap have separate references.
+Book basis: Morse, “How To Pack The Perfect DJ Set,” “How To Programme A DJ Set,” and “How To Play Bar, Club And Mobile Gigs”; Broughton/Brewster chapters 19 and 21–25, with chapter 50 on individuality. Use the user's actual setting and feedback rather than the books' demographic stereotypes.
 
-## Choose the successor for its musical job
+## Decide the job before searching
 
-Use the requested collection and order. When selection is open, shortlist by the intended role, then examine feasible tempo, harmonic overlap, groove, density and entry material. A suggestion engine's highest score is a candidate, not the DJ's decision.
+Establish the brief, source scope, time available, role in the night and intended listening experience. Use reasonable assumptions for missing optional details; don't delay a live set to interrogate the user. An empty room at opening time, a café, an established dancefloor and a recorded feature set can reasonably want different music.
 
-Compare the actual passages at their intended playing tempo. A dark, driving instrumental and a bright vocal anthem can share BPM and key while serving different moments. Useful continuity can come from a groove, texture, rhythmic pattern, emotional color or a familiar motif. A deliberate contrast needs a credible bridge or a clean reveal rather than a forced long blend.
+Give the next choice a job: establish trust, continue a groove, deepen it, lift intensity, create breathing room, introduce contrast, or resolve the set. Name a musical connection such as a complementary rhythmic feel, shared timbre, a familiar motif, or an understood lyrical relationship. A deliberate contrast can be the point.
 
-Keep alternatives with distinct jobs: continue the groove, lift intensity, or offer a release. This is more useful than several almost-identical candidates ranked by tiny score differences. Plan a short horizon, but revise from actual feedback rather than precommitting the entire set without regard to the moment.
+Use tempo/key/style to find feasible candidates after deciding the direction. Do not let “easiest to mix” become the entire selection criterion. If the best musical choice needs another transition technique, consider it within the brief. A requested order remains the user's choice.
 
-## Keep bass-swap successors close in tempo
+## Distinguish the dimensions of energy
 
-Close natural tempos can make a bass blend easier, but there is no universal native-BPM gap or percentage cap for this user. Choose the playing tempo, amount of correction and transition approach for the music. A wider change, a beatless bridge, a short exchange or a deliberately altered pitch can all be artistic choices. Numeric limits explicitly requested for a particular set still apply.
+| Dimension | What changes it | Frequent confusion |
+|---|---|---|
+| Tempo | Speed of the perceived pulse | Faster automatically means more intense |
+| Drive | Persistence and propulsion of rhythm/bass | A high whole-track RMS proves this intro drives |
+| Intensity | Density, impact, attack, register and arrangement | Increasing master gain creates a better peak |
+| Tension | Anticipation, withholding, repetition, instability | A quiet breakdown has no energy |
+| Emotional color | Melody, timbre, harmony, lyrics and associations | Minor is always sad, major always happy |
+| Familiarity | Actual listener recognition and memory | A popular title guarantees this audience's response |
 
-Compare three things before accepting the pair: native BPM difference, each track's required correction to the common playing tempo, and actual rendered rate over the selected passages. Close source BPMs alone can conceal a large inherited offset. Check the source/local BPM and nominal/actual rate separately; an abrupt implausible local pulse change may suggest a detector error or a different approach. Choose a stable passage or another close-tempo track early instead of forcing the blend or chasing the grid with tempo moves. See [beatmatching and groove](beatmatching-and-groove.md) and use the control workflow to verify playback behavior.
+Describe the dimensions that matter for this choice. Library energy values are measurement/ranking heuristics. They cannot establish the emotion or dramatic function of a selected passage.
 
-## Shape energy over time
+## Prepare options without freezing the set
 
-Track tempo, drive, intensity, tension and mood separately in short descriptive notes. Use numeric scores only for what they measure. A quiet passage with a rising motif can carry considerable tension. A fast sparse track can be gentle. A crowd-recognized vocal can dominate without a higher meter reading, when that recognition is actually known.
+Work from the requested crate or a manageable shortlist. Keep useful alternatives for different directions rather than many nearly identical scores. Have a viable next entry ready before spending the remaining runway exploring. Broader preparation can include loose mini-sequences, dependable bridges and closing options; it need not become a fixed running order.
 
-Before each handover, decide what should happen to the pulse and expectation. To maintain drive, place a developed incoming groove before the outgoing rhythm disappears. To release tension, allow a musically coherent reduction in drums or density. To raise intensity, compare the incoming sustained passage, not just its initial impact. To change direction, establish a connection or make the contrast deliberate.
+Morse's advice to pack roughly twice the needed music is a practical way to retain options without overwhelming a human. For an agent, preserve the principle of bounded, purposeful choice. It is not a mandatory track-count multiplier or a reason to exclude the rest of an authorized collection.
 
-Avoid automatic double breakdowns that prolong a release when continuity is wanted. Also avoid filling every breakdown with drums: some should breathe. Vary the scale and spacing of peaks according to the brief. Warmup, home listening, radio, peak-time and background contexts need different choices.
+Think a few moves ahead: where could B lead, and what alternative would work if the direction changes? Do not repeatedly play a familiar pair just because it once worked. Honor an explicitly choreographed or fixed-order request; adaptability is a default for open selection, not a reason to override the user.
 
-The user's feedback is evidence. If a transition feels thin, inspect what stopped supplying body. If it feels busy, identify the competing foregrounds. Do not translate every criticism into “increase BPM” or “add an effect.”
+Keep a set-local history of actually audible titles, artists and exact release URIs, including recovery plays. Retain that compact history across context handoffs with the original start/finish, current carrier, pending operation and failures/gaps; a raw status snapshot must not overwrite the only played sequence. A prepared or failed source is not played. Check that history before committing a successor; honor earlier-set exclusions when a fresh mix was requested, and watch alternate releases of the same song. Start with unplayed candidates from the authorized collection, not just a handful of familiar analyzed tracks. Analysis availability is a preparation advantage, not a musical reason to keep repeating them.
 
-## Give the current song enough room
+If provider loading fails, preserve the carrier and secure a ready fallback before investigating. An emergency repeat can be preferable to silence within an authorized continuing set; label it honestly and do not confuse it with a planned motif. Account consent is a separate decision and should not consume the entire handover window. Do not keep alternating two tracks while claiming continued repertoire variety. Report the limited playable pool, and resume unplayed choices when loading works. A post-sign-in playback-key rejection is not proof that another login is required; follow the library/control error evidence and any cooldown.
 
-State the contribution to protect: a complete lyric and response, a hook, a payoff that develops beyond its first kick, or a groove worth inhabiting. Earlier exits can serve brisk pacing; later exits can let an idea develop. Neither a fixed playback percentage nor “the drop has started” establishes that the contribution was delivered.
+## Shape longer sets at several scales
 
-Choose the outgoing boundary jointly with the incoming passage. A’s groove-to-breakdown change can maintain drive if B arrives with developed rhythm, or create an unintended double breakdown if B is still sparse. Inspect what B does after arrival: a large impact followed by immediate withdrawal may not provide the sustained lift the set needs.
+Within a track, protect its contribution and choose its exit. Across a few tracks, establish, develop and vary a musical idea. Across the whole set, give the requested arc room to unfold. A two-hour set usually needs more variation and recovery than a short showcase, but no universal curve or fixed reset interval applies.
 
-Use a short horizon: the current contribution, the next direction and a viable alternative. Preserve variety in texture, rhythm and tension rather than simply raising BPM on every track. Plan a coherent close with time for its final idea to resolve. In a bounded set, actual wall time includes overlaps, tempo changes, preparation failures and gaps; a source-duration sum is not elapsed performance.
+For warmup, make involvement inviting without spending every major payoff immediately. For peak time, sustain conviction with purposeful contrast and breathing room. For background listening, maintain a welcoming character and unobtrusive level; absence of cheering is not failure. A closing can soothe, celebrate or finish decisively according to the brief.
 
-## Respond to evidence without inventing a room
+Do not raise tempo on every handover by habit. Avoid consecutive long breakdowns when drive is wanted, but don't erase every breakdown either. A reduction has value when it prepares a satisfying return. Repeated instant chorus-to-chorus switches can exhaust attention; repeated full-length outro-to-intro joins can drain it. Vary the placement and texture because the songs and set need it.
 
-Use the brief, observed user feedback and any actual audience input. Without a crowd feed, do not claim people are dancing, tired or recognizing a hook. Library energy scores are ranking features; neighboring passage data helps choose an actual arrival. Numerical brightness or RMS does not establish emotional response.
+A big drop followed immediately by another withdrawal may fail to sustain a requested lift. Inspect B after the dramatic instant. The next record should work now and leave a useful future.
 
-[Direct artist accounts of all-night DJing](https://blog.pioneerdj.com/djtips/how-to-dj-all-night-long/) emphasize preparation, contrast and pacing. That supports leaving space for different moments; it does not prescribe one energy curve for a fifteen-minute home set. The protected-contribution and short-horizon approach here is synthesized agent policy.
+## React to observed feedback
+
+Use actual audience information or the user's listening reports. Prefer changes supported by patterns over overreacting to one ambiguous moment. People entering/leaving can have reasons besides the music; no crowd feed means no claims about dancing, fatigue or recognition.
+
+Translate criticism into a question: “thin” suggests loss of foundation/body; “busy” suggests competing parts; “boring” may concern selection, repetition or pacing; “abrupt” may concern incomplete form, level or timbral contrast. Do not answer every criticism with more BPM or effects.
+
+If a choice disappoints, move to a complete useful exit calmly rather than chopping it at an arbitrary second. Preserve a viable successor. At the end, use an intentional final statement and respect the requested finish time; source-duration sums ignore overlaps, rate changes and interruptions.
+
+Learn from listening after the performance where a recording already exists or recording was authorized. Separate reproducible technical faults from context-dependent taste. A successful pair is a useful option, not a universal rule.

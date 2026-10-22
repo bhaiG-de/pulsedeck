@@ -1,86 +1,57 @@
-# Choosing entries and exits from arrangement
+# Phrase placement and musical form
 
-## Map functions rather than just names
+Read this when choosing where to mix, counting an entry, or diagnosing a join that is on beat but feels misplaced. Book basis: Morse, “Beatmixing Part 1: Timing” and “The Three Elements”; Broughton/Brewster, chapters 10 and 13. See [sources](sources.md) for locators and qualifications.
 
-A phrase is a musically coherent unit. A section has a larger arrangement role and may contain several phrases. A 32-bar annotated region may contain useful changes at 8 and 16 bars, or an irregular extension. Find local evidence before applying arithmetic.
+## Count the right thing
 
-Useful clues include repeated patterns, fills, cymbal accents, bass changes, a lyric completing, a new answer or melody, deliberate subtraction, rising tension, and a sustained arrival. Distinguish a brief fill from a new section. When using waveform/feature evidence, describe only what it supports: amplitude, band contribution, texture or repetition. It cannot establish that a singer has finished.
+- **Pulse / beat:** the reference tick you count, including beats where no instrument sounds.
+- **Bar / measure:** a metrical group of beats. In 4/4, count four quarter-note beats. Establish the actual meter; a first audible kick can fall after beat one.
+- **Phrase:** a musical unit with a beginning, continuation and some sense of completion. DJs often use the word for repeated groups of bars. Four, eight, sixteen and thirty-two bars are useful search lengths in much dance music, not proof of a boundary.
+- **Section:** a larger arrangement function, such as a verse, refrain, breakdown or outro. It can contain multiple phrases and smaller changes.
 
-| Role | What to establish | Possible mixing use |
-|---|---|---|
-| Intro | What enters and when; when the track can carry the foreground | Supporting entrance, or a later complete start |
-| Groove or verse | Which idea leads and where its units resolve | Develop the current song; introduce complementary support |
-| Hook or chorus | Defining recognizable material and its ending | Protect it, then exchange into B's next idea |
-| Breakdown | What withdraws and whether a motif remains | Give space or make a deliberate atmospheric bridge |
-| Buildup | What arrival is being promised and its exact timing | Preserve the payoff or prepare an intentional replacement |
-| Drop or payoff | Context before it and sustained material after it | Let the payoff land; choose an appropriate later exit |
-| Outro | What remains and for how long | Blend while replacement elements arrive |
+Count bars as “1-2-3-4, 2-2-3-4, 3-2-3-4…” while preserving which larger unit you are in. A 16-bar interval in 4/4 is 64 beat intervals. Do not call 16 beats sixteen bars. A fill often announces the next boundary; starting on the fill can be one bar too early.
 
-These are functional interpretations, not claims that all tracks contain every role in that order. A section labeled `outro` may be too sparse for the desired handover. A passage inside the core may provide a better exit.
+Distinguish total phrase length from remaining length. At the **start** of bar k inside an N-bar phrase, `remaining_bars = N − (k − 1)`. For example, at the start of bar 5 in a 16-bar phrase, four bars have elapsed and twelve remain. The next phrase begins at the original phrase origin plus N bars, not at “now plus N.” Resolve whether a number is an absolute source bar, a position within the phrase, or an interval before adding/subtracting it. Cross-check that elapsed plus remaining equals the original length.
 
-## Choose the outgoing moment before its file end chooses for you
+Use a **local phrase origin** supported by the music. File zero, an arbitrary multiple of 32 beats, a detector's downbeat, and the first acoustic onset can all differ from it. Beatless intros, pickups, rests, edits and extra bars are ordinary reasons to investigate rather than force the count.
 
-Ask what the track contributes to this set. Protect that contribution long enough to be meaningful for the brief. A full verse, a short vocal refrain and a developing instrumental need different amounts of time. For a song based on a buildup and drop, distinguish delivering the buildup from delivering its resolution.
+## Build a small passage map
 
-Look for a musically complete unit after that contribution, with space for the intended change. Do not automatically wait for the final outro. Compare a later option: does it introduce worthwhile development, repeat material already heard, or take the set into an unwanted loss of drive? Waiting is useful when the passage is still developing.
+Map the current statement, the next useful exits, and B's entry through its arrival and first following phrase. For each relevant point retain source time / effective beat position, what enters or leaves, and how you know. Useful content includes bass entry/withdrawal, lead/vocal onset and completion, fills, tension, and the return of a full groove.
 
-Select the handover jointly with B. The same A exit can work with B's developed groove and fail with C's drum-free intro. Avoid storing a single universally correct mix-out point for a track independent of its follower and purpose.
+Evidence for a boundary combines context: a repeated pattern completes, a fill resolves, a lyric ends, harmony settles, or a new element enters and remains. A crash alone could be an accent inside a phrase. Inspect before and after. When only bands are available, call it a measured texture change; do not name a vocal, verse or drop from that alone.
 
-## Work backward from the incoming arrival
+## Choose the outgoing statement
 
-Choose what should lead the listener at handover: a main groove is as valid as a drop. Then choose an entry that leads coherently into it. Inspect the material between them, not just the endpoints.
+Decide why A was played and what would be lost by leaving now. A familiar hook may need its full answer; an instrumental may need room to develop. A buildup promises an arrival: normally let that arrival and a worthwhile portion of its groove happen. A deliberate replacement can instead supply a new payoff, but a sparse unrelated intro usually frustrates the expectation.
 
-With credible beat positions on the same pulse interpretation:
+Compare useful earlier and later exits. Mixing before a long breakdown can maintain drive; allowing it to unfold can create a needed release. Waiting for the final percussion outro can create a tedious gap between the songs' main ideas. There is no universal playback percentage or mandatory whole-song duration.
 
-```text
-incoming_lead_beats = B_arrival_beat - B_entry_beat
-A_launch_beat = A_handover_beat - incoming_lead_beats
-```
+## Align the desired changes, not just the starts
 
-The beat numbers are positions, not event counts including both endpoints. A 64-beat difference spans 64 intervals, although a response including both boundaries might contain 65 events.
-
-At a steady playing tempo:
+Pick B's target first: a bass entry, a developed groove, a vocal opening, or a drop. Then choose a complete B entry that leads to it. Place that target at the useful change in A. With the same metrical pulse and a common advancing beat rate:
 
 ```text
-lead_wall_seconds = incoming_lead_beats * 60 / playing_BPM
+B lead = B arrival beat position − B entry beat position
+A launch = A handover beat position − B lead
 ```
 
-At constant playback rate, a source interval takes `(arrival_source_seconds - entry_source_seconds) / playback_rate` wall seconds. When rate or local tempo varies, this conversion is not constant: follow actual events and the intended clock behavior with the control workflow.
+Check that A's resulting launch and B's entry occupy the intended bar positions AND compatible local phrase positions. Beat positions count intervals: endpoints at 0 and 64 span 64 beats even if the event list includes 65 events. Read the entire interval when the grid is nonuniform.
 
-If the subtraction lands off a credible phrase boundary, investigate the mismatch. It may be a pickup, an extra bar, an unsuitable entry, or wrong meter/grid. Do not round to the nearest convenient 8/16/32 bars. Select a later complete B entry, a different A handover, a prepared loop with a deliberate release, or a different technique.
+Example, using one-based source bars whose numbers denote their first beats: A's last refrain begins at bar 65 and finishes at the start of bar 81. B's 16-bar intro leads from bar 1 to its main groove at bar 17. Start B1 at A65 so B17 arrives at A81. Starting B1 at A81 puts two thin intros/outros together and delays the new main idea by sixteen bars. Both launches could be perfectly beatmatched; they create different pacing.
 
-## Preserve pickups and genuine irregularities
+Now suppose B's selected entry leads to its arrival in **24 bars** and A offers **32 bars**. Starting both region beginnings puts B's main idea eight bars early. Options include launching B eight bars later on an evidenced subphrase, choosing a later complete B entry with a shorter lead, moving the handover, or intentionally extending a clean eight-bar B passage. Recheck all internal changes; do not stretch “24” into “32” by relabeling it.
 
-An incoming lyric can start before its first downbeat. If the full lyric matters, include that lead and launch at the corresponding point in A's bar, while allowing A's preceding phrase room to finish. If it clashes, choose another complete entry. Do not chop the pickup to make a bar formula work.
+## Include what happens between the anchors
 
-Extra beats and bars change the countdown. Repeatedly matching fractional beat phase is insufficient when bar or phrase phase is wrong. Half/double-time interpretations also change bar counts; confirm the musical pulse instead of treating 87 and 174 BPM as interchangeable phrases.
+Matching endpoints can still hide a collision. B's singer might begin eight bars before its target; A's hook might return halfway through its apparent outro. Keep these events on the shared timeline. [Mixing and blending](mixing-and-blending.md) determines which parts should be audible then.
 
-For variable tempo, use actual beat/downbeat events and source endpoints, with enough samples to cover the interval. A truncated inspection is not a complete event sequence. A clean grid can coexist with incompatible swing or busy patterns. Shorten or change the blend when the grooves do not sit together.
+At constant playing BPM, an N-beat lead takes `N × 60 / BPM` wall seconds. At constant playback rate r, a source interval takes `source_seconds / r`. Those are different coordinate systems. Variable tempo, live Sync adaptation, loops and seeks require actual event progression and the control contract; a whole-track mean BPM is only an estimate.
 
-## Hand the phrase plan to the blend design
+## Pickups, odd lengths and repeats
 
-Retain the important internal changes as well as entry and arrival. B may add a vocal eight bars before its apparent drop; A may return with a lead halfway through an assumed outro. These events constrain which boundaries can work together. Use [mixing and blending](mixing-and-blending.md) to assign foreground, bass and supporting roles across that timeline. It owns layer transfer and balance; this reference owns the complete musical units and their relationship.
+A pickup belongs to the phrase it introduces even when it precedes beat one. For a one-beat pickup, begin B one beat before its downbeat must meet A's target; decide when the audience should hear the pickup. Make room in A's closing line. Do not discard the word to obtain a downbeat-only launch.
 
-## Use PulseDeck observations without inventing hearing
+A two-bar extension after sixteen bars makes an eighteen-bar lead. Count it. Select an offset entry/launch only if its content is complete, or use another passage/technique. An inaudible missed beat still advances the meter. Half/double BPM labels do not establish equal musical bars.
 
-When available, use named canonical cue spans with start/end times and per-point provenance. Check grid freshness, meter, actual bar times, local beat events and neighboring bands. PulseDeck does not generate structural labels; use human annotations when present. A manually confirmed cue is useful source knowledge, but confirmation alone does not specify how it should be paired with another song.
-
-Compare neighboring stored waveform bands to locate candidate changes; they do not identify a chorus or first drop. A whole-track suggestion energy score does not describe this intro’s drive. Without cues, keep an ephemeral passage map supported by these observations and actual beat events; do not write inferred boundaries into the manual cue store automatically.
-
-If exact first-drop or vocal placement matters and evidence cannot locate it, keep the uncertainty visible and seek a usable cue or audition through available capabilities while preparing alternatives. Under a live deadline, preserve current playback and choose a handover supported by what is known. Do not spend the remaining song repeatedly requesting the same coarse waveform.
-
-## Rank evidence for a phrase candidate
-
-Combine independent clues rather than promoting a convenient multiple of bars into a fact. A known cue for this edit, a repeated pattern resolving, a fill leading into sustained new content, and a change in bass/body together can support a boundary. A single isolated peak or a cue name without context is weaker. Inspect preceding context, the boundary itself and enough following material to identify what actually arrives.
-
-Use the meter and local bar origin from this source. Search common 4/8/16/32-bar relationships as candidate scales, then count the selected effective events. Intro, verse, buildup and outro are arrangement functions; a usable phrase can sit inside one of them. An annotation can also split a continuous idea or suit a different mixing purpose. If data only establishes a texture change, name it as such and retain the uncertainty about lyrics and resolution.
-
-The candidate’s job matters. A good first-audibility point can be too early for foreground handover. A good foreground arrival can be a poor playback entry if it omits its pickup or explanation. A good exit for one successor can fail for a sparse successor. Do not store one independent scalar “correct mix time” and apply it to all pairs.
-
-[Crossfader’s listening lesson](https://wearecrossfader.co.uk/blog/learning-to-listen-like-a-dj/) teaches recognition of structure and what enters or withdraws. For an agent, this translates into an evidence-backed map rather than a claim of hearing from numeric features. The evidence ranking and boundary roles above are synthesized reasoning guidance.
-
-## Choosing between two feasible windows
-
-Consider a current groove that ends with a fill, followed by an eight-bar buildup and a strong payoff. A successor offers a drum-led approach and a later developed groove. If the brief wants the current payoff, the earlier mathematically compatible handover is unsuitable: let the payoff develop, then inspect a later complete exit. If the brief calls for a purposeful replacement, B must supply the intended resolution rather than restart anticipation with an unrelated sparse intro.
-
-Compare the cost of waiting: useful musical development, an unwanted long breakdown, a repeated section, or insufficient later preparation runway. Choose among feasible complete windows. Do not optimize the target duration by cutting a lyric halfway through or moving an endpoint to the nearest arbitrary beat.
+Loop repetitions change the source-to-arrival relationship. Know the loop's content, number of extra repetitions, and release. Do not keep using the original linear countdown after a loop or cue jump. The [timing helper](checked-phrase-plans.md) has a narrower scope than these musical possibilities.

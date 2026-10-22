@@ -1,72 +1,73 @@
-# Instructor transition studies
+# Counted musical decisions
 
-These studies paraphrase published instructor explanations. They are not independent listening analyses of the videos, and no unverified timestamps or bar maps have been added. Follow the linked demonstrations for the actual sound. The lesson to transfer is the musical relationship; the hardware settings and phrase lengths belong to the demonstrated material.
+These are **invented teaching arrangements**, not transcriptions of recordings or claims of listening. They apply the books' principles to situations an agent must reason through. Source bars are one-based and denote their first beats; effective beat positions in case 6 are zero-based. Only the stated content is known.
 
-## One pair, three different results
+## 1. Same tracks, different placement, different pacing
 
-**Source:** Crossfader, [3 Ways to Mix House Music](https://blog.wearecrossfader.co.uk/blog/3-ways-to-mix-house-music/).
+A's final sixteen-bar refrain runs from bar 65 to the beginning of 81. At 81 it becomes a percussion outro. B's bars 1–16 are a developing drum intro, with its main groove at 17. The brief wants continuous drive while preserving A's refrain.
 
-**Pair:** Sonny Fodera & Biscits — *Perfect* → Truth X Lies & Cloverdale — *Nothing Gonna Stop This*. The instructor describes both as 127 BPM in B major.
+Launch B1 at A65. B17 arrives at A81. B can add complementary percussion under A's refrain, then replace A's foreground as the refrain ends. Choose bass ownership from the actual low-end content, which this example has not specified.
 
-The relaxed version joins a late outgoing phrase to the incoming intro and gradually transfers frequency roles. A more assertive version uses the same entrance with decisive phrase-linked EQ changes. A third version starts earlier: B's vocal breakdown meets an instrumental section in A; their later vocal activity leaves room for a handover rather than two continuous competing hooks.
+Launching B1 at A81 also aligns bars and could work for a deliberate percussion bridge, but postpones B's main groove by sixteen bars. It is a different energy decision. There is no reason to prefer it solely because A81 is labeled “outro.”
 
-**What to borrow:** the same two tracks can maintain a settled groove, increase impact or create a temporary composite arrangement. Choose passages and control gestures together. Matching BPM/key did not select the result.
+## 2. Equal section starts, unequal leads
 
-**Try in a new pair:** compare the available instrumental/vocal spaces before deciding whether to use an intro. The slow version is a useful café study, not a compulsory top-to-bottom EQ order.
+A has a complete 32-bar outgoing region ending at A97; it begins at A65 and offers a verified subphrase at A73. B's selected complete entry at B1 has a 24-bar lead to its desired arrival at B25. The purpose is to align B25 with A97.
 
-## A vocal fragment over a new rhythmic foundation
+A launch is A73: 97 − 24 = 73. In 4/4 both leads span 96 beat intervals. Launching B at A65 makes B25 arrive at A89, eight bars early. If A73 were musically incomplete, correct arithmetic would not justify that launch: change entry, handover, or the approach instead.
 
-**Source:** Crossfader, [The Mixing Technique All House DJs Should Know](https://wearecrossfader.co.uk/blog/house-mixing-tutorial/).
+## 3. Bass ownership changes before foreground ownership
 
-**Pair:** Daniel Stefanik — *Deep Inside* → Sally G — *OG Chunker*.
+A's refrain ends at A81. Its low end disappears at A73, while its voice continues through A80. B enters at B1 when A reaches 65. B has suitable bass from B9 and introduces a new voice at B17.
 
-The instructor chooses a stripped vocal passage from A's second break and repeats it as an eight-beat loop. B is chosen for its immediate kick. Filtering initially limits B's upper content while A supplies the recognizable fragment. B is progressively revealed; a prepared cue later moves it to its drop, and A leaves at the following phrase change.
+At A73/B9, transfer bass to B. Keep A's voice leading until its ending. At A81/B17, reveal B's voice and clear any conflicting A tail. Holding B's lows closed until B17 leaves eight bars without the intended foundation. A single “handover time” cannot express both transfers.
 
-**Why the sections matter:** a relatively exposed vocal can remain intelligible over a new foundation. The same controls applied to A's full arrangement would carry much more competing material.
+This assumes the stated bass and vocal evidence is valid. A low-band rise by itself would not establish the identity or suitability of B's bassline.
 
-**What to adapt:** a short outgoing idea can become a bridge into B, rather than every move being outro-to-intro. Choose a meaningful repeat and a release destination. The source's particular dub echo, hot cue and trim gestures are not requirements, nor does broad EQ isolate a true vocal stem.
+## 4. Buildup and pickup both need their context
 
-## Bassline replacement for a deliberate impact
+A has an eight-bar buildup followed by a sixteen-bar payoff phrase. The brief wants the current payoff heard. The earliest mathematically convenient launch would replace it with B's quiet opening.
 
-**Source:** Crossfader, [How Pro DJs Mix House & Tech](https://wearecrossfader.co.uk/blog/how-pro-djs-mix-house-tech-how-its-done/).
+Choose an exit after A's worthwhile payoff rather than deleting the reason for its buildup. Alternatively, for an explicitly surprising routine, design a replacement that actually delivers the intended impact. The quiet B opening does not automatically do so.
 
-**Pair used in the lesson:** Don't Blink — *Vibration* and Dom Dolla & Sonny Fodera — *Moving Blind*.
+Now B's new vocal starts with a one-beat pickup before its target downbeat. To align the downbeat with A's selected target, launch the pickup one beat earlier, and leave space in A's final vocal line. That phrase relationship is valid even though the playback entry is not a downbeat. Use another complete entry if the pickup cannot be accommodated; don't silently remove its word.
 
-The demonstration prepares a shortened approach to B's drop. B enters with its low end held back while A's bass is withdrawn with a filter. B's bass arrives at its drop; A is then removed. A cue repeat in this particular routine adjusts the phrase relationship before the audible transfer.
+## 5. Aligned clocks, crowded music
 
-**What to borrow:** deliberate subtraction can make the arriving bass feel more significant. The drop is a musical target, not just the endpoint of a fader ramp. Pick a different approach if the requested sound is a soft handover or A has an unresolved payoff worth keeping. Do not copy the cue repeat as a generic repair for arbitrary phrases.
+Two 124 BPM sources have credible matching bar origins and stable Sync. Their selected lead intervals match. Both passages contain busy vocals; B is tagged with the same key as A.
 
-## Make room for a voice instead of automatically swapping bass
+Timing passes; the proposed full vocal overlap is still unsupported. Find an instrumental approach or wait for A's complete line, then give B the foreground. If the actual phrases have complementary gaps, deliberate call-and-response is another option. Neither the shared key nor a bass swap establishes that the words fit.
 
-**Source:** DJ TechTools, [EQ Mixing: Critical Techniques and Theory](https://djtechtools.com/2012/03/11/eq-critical-dj-techniques-theory/).
+If listening reports flamming that grows over time instead, diagnose rate/clock behavior. If a fixed offset persists, diagnose phase. The same “bad mix” report can require different corrections.
 
-The article contrasts an instrumental with a prominent midrange riff against an incoming vocal. Its useful move is a measured reduction in the instrumental's mids, so the singer becomes clearer; removing too much can hollow out the accompaniment. It also explains why an instrument's harmonics prevent broad EQ from extracting one clean voice or instrument.
+## 6. Beat, bar and phrase are separate facts
 
-**Adaptation:** if A and B both have active vocals, first consider a gap, completed line or instrumental passage that lets one voice lead. You could keep A's ending prominent while B contributes a filtered texture, then reveal B's voice as A resolves. Alternatively, a known vocal answer can briefly overlap on purpose. A high cut can reduce brightness and a mid cut can reduce presence, but neither guarantees that the words stop competing. Select the actual phrases and a foreground, then choose EQ, filter, fader, loop or effect gestures for that relationship. A bass swap alone answers only the low-end question.
+Credible 4/4 origins place A's launch at effective beat 704 and its handover at 768. B's candidate entry is beat 30 and target is 96.
 
-## A routine that builds toward an incoming drop
+A has 64 intervals; B has 66. Also 704 − 30 is not divisible by four: their bar positions differ by two beats. B32 gives 64 intervals and aligns bar positions, but it is usable only if B32 is a complete musical entry. The numeric repair is a candidate, not a verified phrase.
 
-**Source:** Jamie Hartley/Crossfader, [Pro DJ Methods Explained](https://wearecrossfader.co.uk/blog/pro-dj-methods-explained/).
+Even A704→768 and B32→96 can be wrong for the brief if A704 cuts off an unresolved refrain or B introduces a competing voice halfway through. The [checker](checked-phrase-plans.md) cannot decide those questions.
 
-The explanation starts with prepared phrase cues and a build shared by two tracks, clearing the outgoing sound when the new drop arrives. Later variations add effect-backed stabs and loop tightening; an additional deck introduces an acapella.
+## 7. Known key, changed playing pitch
 
-**What to borrow:** the elaborate gestures elaborate an already chosen arrangement. More activity on the mixer does not decide where the new musical statement belongs. Treat the third-deck part as a capability-dependent study; it is not a two-deck instruction for PulseDeck.
+B is analyzed at 120 BPM in the same key as A, but will play at 126 BPM without key lock. It sounds approximately 0.845 semitones higher than its analyzed pitch. The original matching labels no longer establish the sounding relationship.
 
-## Whole routines to study next
+Choose appropriate pitch processing if supported and musically acceptable, reduce pitched coexistence, reconsider the common tempo or select another passage. Do not call 5% “one Camelot step.” Listen where possible; do not claim an artifact-free result from settings alone.
 
-Crossfader's [BPM Supreme Mix Breakdowns](https://wearecrossfader.co.uk/blog/bpm-supreme-mix-breakdowns/) pairs Lawrence James's instructor breakdowns with completed routines and tracklists. The July 2021 entry includes tempo-transition tools, vocal material and several styles; May's entry explicitly distinguishes a constructed routine from a long club set.
+## 8. A better two-hour arc is not a BPM staircase
 
-These are a useful study queue for open-format connections, not an excuse to infer precise mix points from tracklist order. The embedded performance videos have not been decoded here. Add a timestamped case only after checking the relevant segment and the exact source versions.
+After several dense peak tracks, the brief still wants an engaging dance set. Three candidates offer similar local tempo: another dense anthem, a spacious but driving groove, and an extended beatless breakdown.
 
-## Decode another transition
+The spacious groove can retain propulsion while refreshing texture and leaving room for a later peak. The breakdown may be a good deliberate release if its return serves the moment; another anthem can be right when the actual brief/feedback calls for it. Explain the role and inspect the arrival rather than choosing by the highest energy score. Without an audience feed, no choice proves that the crowd is tired or delighted.
 
-A compact study note can record:
+## 9. A close playing BPM can conceal a large stretch
 
-- Source performance/lesson, exact versions, and a verifiable time range when available.
-- What A is finishing; what B contributes on entry and at its eventual arrival.
-- What meets what: lyric ending with lyric pickup, drum outro with developing intro, withdrawal with new groove, build with replacement drop, or something else.
-- What the controls accomplish, including loop release or effect-tail timing.
-- The reason it fits that performance, and a contrasting brief where another choice might work better.
-- Which statements come from the instructor, which were actually heard, and which remain an interpretation.
+A is playing at 110 BPM. B's natural local pulse is 92 BPM; an assisted short exchange proposes 110 BPM with key lock. The listener wants the records to retain their character, and there is no audition evidence for this stretch.
 
-For practice, take one known pair and propose two different musical outcomes before selecting tools. Then test with a different pair rather than grading the agent on repeating the example's terminology. A real listening comparison should assess whether phrases feel resolved, foregrounds remain understandable and the requested flow continues. Control receipts answer the separate question of whether the actions executed.
+B needs `100 × (110 / 92 − 1) ≈ +19.6%`, even though the two *playing* BPMs would match perfectly. Key lock and a four-bar recipe do not establish that its voice and groove will sound right. Choose a suitable record naturally close to 110, or design a complete musical exchange into B near 92 with little conflicting rhythmic coexistence. Prepare that alternative before A runs out. Moving both to 101 still changes A's current pulse by −8.2% and B's natural tempo by +9.8%; splitting the difference is not a small correction.
+
+## 10. Small phase repair is not a tempo program
+
+At a stable natural 100 BPM, B is consistently a little behind A; it does not drift further over time. A proposed response is to keep B at 104 BPM and then snap it back after the handover.
+
+Use a supported brief phase correction while B is isolated/quieter, and retain its matched steady rate. A lasting 4% increase creates drift and the later snap is another unnecessary audible change. If a higher set tempo is actually desired, make that a separate programming decision and choose the passage and successor accordingly.

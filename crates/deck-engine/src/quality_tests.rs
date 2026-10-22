@@ -71,6 +71,76 @@ fn continuous_keylock_tracks_changes_without_cache_churn_or_varispeed() {
     );
     assert_eq!(p.blocks, 1500);
 }
+
+#[test]
+fn fractional_tempo_keylock_does_not_add_block_boundary_distortion() {
+    let mut worst = f64::NEG_INFINITY;
+    for (source_rate, rate) in [
+        (44100, 44100),
+        (48000, 48000),
+        (44100, 48000),
+        (48000, 44100),
+    ] {
+        for frequency in [997., 8000.] {
+            let t = tone(frequency, source_rate, 3.);
+            for varying in [false, true] {
+                let mut p = processor::Processor::new();
+                let mut cursor = 0.;
+                let mut output = Vec::new();
+                for i in 0..rate * 2 {
+                    let speed = 1.0274821591169605
+                        + if varying {
+                            0.003 * (TAU * 0.7 * i as f64 / rate as f64).sin()
+                        } else {
+                            0.
+                        };
+                    let s = p.render(
+                        &t.samples,
+                        cursor,
+                        source_rate,
+                        rate,
+                        speed,
+                        0.,
+                        true,
+                        1,
+                        None,
+                    );
+                    if i >= rate {
+                        output.push(s[0] as f64);
+                    }
+                    cursor += speed * source_rate as f64 / rate as f64;
+                }
+                // Fit phase/gain, then measure everything outside the original tone.
+                let n = output.len() as f64;
+                let phase = |i: usize| TAU * frequency * i as f64 / rate as f64;
+                let sin = 2. / n
+                    * output
+                        .iter()
+                        .enumerate()
+                        .map(|(i, x)| x * phase(i).sin())
+                        .sum::<f64>();
+                let cos = 2. / n
+                    * output
+                        .iter()
+                        .enumerate()
+                        .map(|(i, x)| x * phase(i).cos())
+                        .sum::<f64>();
+                let signal = output.iter().map(|x| x * x).sum::<f64>();
+                let error = output
+                    .iter()
+                    .enumerate()
+                    .map(|(i, x)| (x - sin * phase(i).sin() - cos * phase(i).cos()).powi(2))
+                    .sum::<f64>();
+                let error_db = 10. * (error / signal).log10();
+                println!(
+                "keylock {source_rate}->{rate} Hz, {frequency} Hz tone, varying={varying}: residual {error_db:.2} dB"
+            );
+                worst = worst.max(error_db);
+            }
+        }
+    }
+    assert!(worst < -45., "keylock distortion {worst:.2} dB");
+}
 #[test]
 fn independent_pitch_holds_source_duration_and_seek_resets_once() {
     let t = tone(440., 48000, 4.);
@@ -121,36 +191,43 @@ fn protection_is_linked_transparent_below_ceiling_and_bounded_on_impulses() {
 }
 #[test]
 fn device_output_receives_protected_audio_and_telemetry() {
-    let (_producer, consumer) = RingBuffer::new(128);
-    let (retired, _reclaim) = RingBuffer::new(256);
-    let atoms = SnapshotAtoms::new();
-    let mut state = RenderState {
-        mixer: Mixer::new(),
-        commands: consumer,
-        retired,
-        recording: None,
-        routing: AudioRouting::default(),
-        channels: 2,
-    };
-    let t = tone(997., 48000, 2.);
-    state.mixer.load(0, t.clone());
-    state.mixer.load(1, t);
-    state.mixer.decks[0].playing = true;
-    state.mixer.decks[1].playing = true;
-    state.mixer.master_gain.target = 2.;
-    state.mixer.decks[0].gain.target = 2.;
-    state.mixer.decks[1].gain.target = 2.;
-    let mut output = [0f32; 1024];
-    for _ in 0..80 {
-        state.render(&mut output, &atoms);
-        assert!(output.iter().all(|v| v.is_finite() && v.abs() <= 0.891251));
+    for output_rate in [44100, 48000] {
+        let (_producer, consumer) = RingBuffer::new(128);
+        let (retired, _reclaim) = RingBuffer::new(256);
+        let atoms = SnapshotAtoms::new();
+        let mut state = RenderState {
+            mixer: Mixer::new(),
+            commands: consumer,
+            retired,
+            recording: None,
+            routing: AudioRouting::default(),
+            channels: 2,
+        };
+        state.mixer.sample_rate = output_rate;
+        let t = tone(997., 48000, 2.);
+        state.mixer.load(0, t.clone());
+        state.mixer.load(1, t);
+        state.mixer.decks[0].playing = true;
+        state.mixer.decks[1].playing = true;
+        state.mixer.master_gain.target = 2.;
+        state.mixer.decks[0].gain.target = 2.;
+        state.mixer.decks[1].gain.target = 2.;
+        for (i, deck) in state.mixer.decks.iter_mut().enumerate() {
+            deck.keylock = true;
+            deck.tempo = if i == 0 { -1.73 } else { 2.7482159 };
+        }
+        let mut output = [0f32; 1024];
+        for _ in 0..80 {
+            state.render(&mut output, &atoms);
+            assert!(output.iter().all(|v| v.is_finite() && v.abs() <= 0.891251));
+        }
+        let s = atoms.read([None, None]);
+        assert!(s.audio_quality.master_input_peak[0] > 1.);
+        assert!(s.master_peak[0] <= 0.891251);
+        assert!(s.audio_quality.master_gain_reduction_db > 0.);
+        assert_eq!(s.audio_quality.output_latency_frames, 128);
+        assert_eq!(s.audio_quality.callback_count, 80);
     }
-    let s = atoms.read([None, None]);
-    assert!(s.audio_quality.master_input_peak[0] > 1.);
-    assert!(s.master_peak[0] <= 0.891251);
-    assert!(s.audio_quality.master_gain_reduction_db > 0.);
-    assert_eq!(s.audio_quality.output_latency_frames, 128);
-    assert_eq!(s.audio_quality.callback_count, 80);
 }
 /// Prints reproducible bounded native block timing. Explicit opt-in avoids
 /// machine-load-dependent unit assertions; the report records actual values.

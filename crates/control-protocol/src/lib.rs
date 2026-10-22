@@ -208,6 +208,9 @@ static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
+    /// Set only by the desktop bridge, never trusted from the wire.
+    #[serde(skip)]
+    pub from_ui: bool,
     #[serde(default = "version")]
     pub protocol_version: u32,
     #[serde(default = "request_id")]
@@ -245,6 +248,7 @@ fn request_id() -> String {
 impl Request {
     pub fn new(command: impl Into<String>, args: Value) -> Self {
         Self {
+            from_ui: false,
             protocol_version: VERSION,
             request_id: request_id(),
             command: command.into(),
@@ -297,6 +301,8 @@ impl ControlError {
             "cue_empty" => "Set this slot first: pulsedeckctl deck A hotcue A set --at 32s",
             "source_changed" | "revision_conflict" => "Read status/cues.get, verify the current source and retry with its latest revision.",
             "auth_required" => "Sign in to the appropriate account with spotify login or spotify native login.",
+            "source_unavailable" => "Preserve the current carrier and inspect the source error/source_jobs. A provider failure after successful native sign-in does not establish that another login is needed.",
+            "provider_cooldown" => "Wait for the stated provider cooldown before another load; keep an already-loaded source available. Do not repeat login or retry across many tracks.",
             "configuration_required" => "Configure your registered client: pulsedeckctl spotify configure --client-id YOUR_32_CHARACTER_CLIENT_ID --json; then run pulsedeckctl spotify login.",
             "audio_not_running" => "Start the audio renderer with pulsedeckctl audio start --json, then retry.",
             "ui_unavailable" => "Open the relevant UI panel, then inspect pulsedeckctl ui state --json for mounted targets.",
@@ -619,6 +625,18 @@ pub mod ipc {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn desktop_origin_is_not_a_wire_claim() {
+        let mut request = Request::new("status", serde_json::json!({}));
+        request.from_ui = true;
+        let encoded = serde_json::to_value(&request).unwrap();
+        assert!(encoded.get("from_ui").is_none());
+        assert!(!serde_json::from_value::<Request>(encoded).unwrap().from_ui);
+        assert!(serde_json::from_value::<Request>(
+            serde_json::json!({"command":"status","from_ui":true})
+        )
+        .is_err());
+    }
     #[test]
     fn incremental_queue_methods_are_discoverable_and_require_transaction_identity() {
         for command in ["batch.append", "batch.invalidate", "batch.seal"] {

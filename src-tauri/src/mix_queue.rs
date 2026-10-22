@@ -18,7 +18,7 @@ impl Default for QueuePolicy {
             playlist: None,
             provider: None,
             energy_direction: "keep".into(),
-            max_stretch_percent: 100.,
+            max_stretch_percent: crate::next_move::DEFAULT_MAX_STRETCH_PERCENT,
             techniques: None,
             review_confirmed: false,
             replace_prepared: false,
@@ -179,6 +179,12 @@ impl QueueRecord {
         self.revision += 1;
     }
     fn skip(&mut self, reason: String) {
+        if spotify_playback::is_playback_key_failure(&reason)
+            || reason.starts_with("Spotify native playback is cooling down")
+        {
+            self.finish("needs_attention", &reason);
+            return;
+        }
         if let Some(item) = self
             .items
             .iter_mut()
@@ -427,6 +433,8 @@ fn start_successor_queue(
         reason: None,
         endpoint_sequence: None,
         endpoint_ticket: None,
+        successor: None,
+        notice: None,
     });
     let endpoint_session_id = endpoint.as_ref().map(|s| s.id.clone());
     let mut items: Vec<_> = sources
@@ -953,7 +961,7 @@ fn run_successor_queue(app: &tauri::AppHandle, id: &str) {
                 &Request::new("mix.cancel", json!({"operation_id":operation})),
             );
         }
-        if state != "completed" {
+        if state == "stopped" {
             if let Some(endpoint) = endpoint {
                 let _ = stop_mix_session(
                     app,
@@ -1490,13 +1498,24 @@ mod successor_queue_tests {
     fn default_queue_keeps_searching_after_musical_rejections() {
         let mut queue = record();
         assert_eq!(queue.policy.max_skips, 0);
-        assert_eq!(queue.policy.max_stretch_percent, 100.);
+        assert_eq!(queue.policy.max_stretch_percent, 4.);
         for _ in 0..12 {
             queue.skip("No suitable passage for this source".into());
         }
         assert!(queue.active());
         assert_eq!(queue.consecutive_skips, 12);
         assert_eq!(queue.completed_moves, 0);
+    }
+    #[test]
+    fn provider_key_refusal_stops_search_without_blacklisting_other_songs() {
+        let mut queue = record();
+        queue.current_item = Some(1);
+        queue.skip("Spotify track loading failed after native sign-in: the provider rejected or could not complete the playback key request. No partial audio was loaded.".into());
+        assert_eq!(queue.state, "needs_attention");
+        assert_eq!(queue.consecutive_skips, 0);
+        assert_eq!(queue.completed_moves, 0);
+        assert_eq!(queue.items[1].state, "pending");
+        assert!(!queue.active());
     }
     #[test]
     fn failed_sources_have_a_finite_skip_budget_and_never_claim_completed_handovers() {

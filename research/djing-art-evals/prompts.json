@@ -1,0 +1,86 @@
+{
+  "purpose": "Read-only musical reasoning prompts; expected decisions are in rubric.md, not in the skill. Independent Luna trial results are recorded separately.",
+  "common_instruction": "Use the supplied djing-art skill. Solve from the stated evidence. Do not control an app, access private libraries, write cues, or invent listening/crowd observations. Give a concise musical plan and reasoning.",
+  "cases": [
+    {
+      "id": "unequal_leads",
+      "prompt": "Plan only. In 4/4, A has a confirmed complete outgoing region from source bar 73 to the start of 101, with a complete subphrase at 81. B has a complete entry at bar 1 and its desired full groove at bar 21. Place that groove at A101 while preserving the current vocal through A100. Explain launch, count, and what additional content evidence you need for the audible blend. Source bars are one-based and name their first beats."
+    },
+    {
+      "id": "bar_vs_phrase",
+      "prompt": "Both sources are at 126 BPM with credible 4/4 grids. A is starting bar 9 of a 32-bar musical statement. B has a 16-bar approach before its intended foreground arrival. The arrival should meet the end of A's statement. There is a confirmed complete A subphrase boundary eight bars from now. Choose the launch rather than simply starting B on the present downbeat. Explain the count."
+    },
+    {
+      "id": "pickup_and_rest",
+      "prompt": "Plan only. B's vocal has a two-beat pickup before its target bar downbeat. The first kick in that bar is on beat 2; beat 1 is a rest. A has an instrumental closing gap for the pickup and a confirmed target downbeat. Explain when B must launch, when its pickup is audible, and which event should align with the target. Can a downbeat-only checker certify this by dropping the pickup?"
+    },
+    {
+      "id": "irregular_extension",
+      "prompt": "Plan only. B's selected entry has a 16-bar approach plus a genuine 2-bar extension before the target. A has 24 bars until its intended handover, with a verified complete subphrase six bars from now. Both use the same steady 4/4 pulse. Choose a launch and count its lead in bars and beats. The annotation explicitly confirms the unusual boundary; do not assume a different phrase length."
+    },
+    {
+      "id": "drift_and_groove",
+      "prompt": "Diagnose three rehearsal reports independently: (a) B stays 30 ms behind A throughout a minute; (b) B begins aligned and moves progressively ahead; (c) kicks remain aligned but the shuffled hi-hats fight a straight pattern. Explain the next musical/control decision for each without issuing playback commands."
+    },
+    {
+      "id": "phase_snapshot",
+      "prompt": "Plan only. A and B use credible 4/4 origins, with simultaneous native beat positions A=508.20 and B=446.22. Both are on stable local tempos. What can you infer about fractional phase, bar relationship and phrase matching? Explain what else is needed before revealing B."
+    },
+    {
+      "id": "sounding_pitch",
+      "prompt": "B is analyzed at 100 BPM in the same key as A. B will play at 108 BPM without key lock, with no separate transposition. Plan a long tonal overlap. Calculate the pitch change and decide whether the matching key labels are sufficient. Offer musical options without inventing a universal rate cap."
+    },
+    {
+      "id": "separate_transfers",
+      "prompt": "A and B are already correctly phrase-aligned for a 16-bar blend. A has bass for the first four bars, then its voice continues to the end. B has useful compatible bass from overlap bar 5 and introduces its own voice at bar 17. The brief wants continuous weight and intelligible vocals. Explain bass and foreground timing and whether one final fader swap covers the job."
+    },
+    {
+      "id": "unknown_content",
+      "prompt": "Plan a smooth transition using only numerical inspection. The low band drops at A120s and total level rises at B48s. There are no human cues, lyrics, audio-understanding observations or crowd reports. How would you use these measurements, what remains unknown, and what should you do if the proposed blend depends on A's singer finishing at 120s? Do not start playback."
+    },
+    {
+      "id": "long_set_direction",
+      "prompt": "We are 80 minutes into an open-selection two-hour home dance set. The last six tracks have been dense, the last five transitions used the same long fade, and the listener says it is repetitive. Available choices include a spacious driving instrumental at 124 BPM, a dense anthem at 128, and a 126 BPM track with an extended beatless opening. Propose a direction and the passage evidence needed. There is no live audience feed."
+    },
+    {
+      "id": "smoothness_claim",
+      "prompt": "Review a proposed smooth house transition. It uses matched clocks and a correct 64-beat pre-roll, but B is muted for all 64 beats. At the end, A closes and B opens in 50 ms. The timing checker passes. Is the requested outcome demonstrated? Improve the plan while preserving a smooth-blend brief. No real tracks or audio are supplied."
+    },
+    {
+      "id": "intentional_contrast",
+      "prompt": "Plan only. The user asks for a surprising, decisive open-format change from a 128 BPM instrumental into a familiar 96 BPM song. A has a complete ending and B has a verified immediate complete opening with no pickup. Key labels are distant. Compare a long beatmix with a phrase cut or resolved end-to-end exchange. Do not impose a smooth-blend objective the user did not request."
+    },
+    {
+      "id": "loop_countdown",
+      "prompt": "Plan only. A and B each originally have 32 bars from launch to a joint arrival at a shared steady pulse. During the approach B repeats an eight-bar region three times total instead of once; A continues normally. What changes in the arrival relationship, what musical repairs could work, and what timing must be revalidated? The linear checker rejects an active loop."
+    },
+    {
+      "id": "fixed_order_and_review",
+      "prompt": "The user explicitly requests A→B→C and a mellow recorded-set plan, with no playback or recording yet. B is not the easiest harmonic match. Describe how to honor the order, choose a suitable transition, and later assess the result. Distinguish planning, future listening and what a timing receipt can establish. Do not record or change the library."
+    },
+    {
+      "id": "tempo_character",
+      "prompt": "Plan only. The current track is playing at 112 BPM. The preferred next vocal track has a credible natural local tempo of 96 BPM. The planner offers a four-bar synced exchange at 112 with key lock, and gives a high compatibility score. There is no audition channel. The listener wants the songs to retain their character. Decide whether to arm this proposal, calculate the change, and preserve the intended stylistic range with a feasible alternative."
+    },
+    {
+      "id": "tempo_inheritance",
+      "prompt": "Plan only. A successor has a natural local pulse of 88 BPM. The previous deck is carrying an inherited 106 BPM target, and a handoff will fold its effective rate into the new master. A listener already reported that an earlier song sounded unnaturally fast. Explain which rate comparisons matter before launch and after master transfer, and whether snapping the new master back to 88 after clearance is a good routine plan."
+    },
+    {
+      "id": "tempo_reset_overlap",
+      "prompt": "Plan only. A at natural 102 BPM and B at natural 86 BPM both have prominent active drums at the proposed entries. The brief wants a playful cafe change without stretching either record. A proposed solution disables Sync and overlays both grooves for sixteen seconds. Evaluate it, distinguish it from a beatmatched blend, and propose an alternative requiring explicit passage evidence while keeping the carrier alive."
+    },
+    {
+      "id": "blend_after_tempo_feedback",
+      "prompt": "The user wants a flowing cafe mix with range and says the last song sounded wrong from excessive stretching. A is now 120 BPM. Options are an unplayed spacious disco record at 122 with credible complementary rhythmic/phrase evidence, and a novel 94 BPM song with only a quiet file ending available for transition. The last four joins were two-second EOF fades. Decide selection, placement, rate, audible overlap and set direction. Do not control playback."
+    },
+    {
+      "id": "natural_rate_local_fit",
+      "prompt": "Plan only. A source has whole-track metadata90 BPM but its selected entry has a local100 BPM fit. The DJ wants the record at natural speed and sets absolute playback BPM90, then promotes it to master. Compute the rate, explain whether master promotion should reset it, and describe an isolated preparation that actually achieves natural speed."
+    },
+    {
+      "id": "repeat_and_provider_failure",
+      "prompt": "Plan only. There are80 seconds left in the carrier. Two new Spotify loads failed after successful native sign-in with playback-key refusals; streaming permission remains true. A different previously played track is ready on the quiet deck. There is no local library. The brief asks a continuing fresh cafe mix. Decide immediate continuity and source/auth handling; be honest about repetition and preserve the agreed endpoint. Do not open OAuth or issue app commands."
+    }
+  ]
+}

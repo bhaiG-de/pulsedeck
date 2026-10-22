@@ -1,0 +1,617 @@
+{
+  "date": "2026-10-21",
+  "model": "gpt-6-luna",
+  "independence": "Fresh Luna subagent with no parent history, no rubric/expected answers, immutable skill snapshot, 14 prompts solved in one agent context. This is one independent suite run, not fourteen separate fresh contexts.",
+  "grader": "Primary agent, applying research/djing-art-evals/rubric.md; no independent grading model.",
+  "initial": {
+    "score": 26,
+    "maximum": 28,
+    "cases": [
+      {
+        "id": "unequal_leads",
+        "score": 2,
+        "maximum": 2,
+        "evidence": null,
+        "rationale": "Meets the case-specific rubric with correct decision/count and stated uncertainty."
+      },
+      {
+        "id": "bar_vs_phrase",
+        "score": 2,
+        "maximum": 2,
+        "evidence": null,
+        "rationale": "Meets the case-specific rubric with correct decision/count and stated uncertainty."
+      },
+      {
+        "id": "pickup_and_rest",
+        "score": 2,
+        "maximum": 2,
+        "evidence": null,
+        "rationale": "Meets the case-specific rubric with correct decision/count and stated uncertainty."
+      },
+      {
+        "id": "irregular_extension",
+        "score": 2,
+        "maximum": 2,
+        "evidence": null,
+        "rationale": "Meets the case-specific rubric with correct decision/count and stated uncertainty."
+      },
+      {
+        "id": "drift_and_groove",
+        "score": 2,
+        "maximum": 2,
+        "evidence": null,
+        "rationale": "Meets the case-specific rubric with correct decision/count and stated uncertainty."
+      },
+      {
+        "id": "phase_snapshot",
+        "score": 1,
+        "maximum": 2,
+        "evidence": "B about 0.02 beat later within the beat",
+        "rationale": "Wrapped delta is positive: B is ahead in cycle. Calling it later is ambiguous and can reverse the corrective action. All phase arithmetic and the bar-offset diagnosis were correct."
+      },
+      {
+        "id": "sounding_pitch",
+        "score": 2,
+        "maximum": 2,
+        "evidence": null,
+        "rationale": "Meets the case-specific rubric with correct decision/count and stated uncertainty."
+      },
+      {
+        "id": "separate_transfers",
+        "score": 2,
+        "maximum": 2,
+        "evidence": null,
+        "rationale": "Meets the case-specific rubric with correct decision/count and stated uncertainty."
+      },
+      {
+        "id": "unknown_content",
+        "score": 2,
+        "maximum": 2,
+        "evidence": null,
+        "rationale": "Meets the case-specific rubric with correct decision/count and stated uncertainty."
+      },
+      {
+        "id": "long_set_direction",
+        "score": 2,
+        "maximum": 2,
+        "evidence": null,
+        "rationale": "Meets the case-specific rubric with correct decision/count and stated uncertainty."
+      },
+      {
+        "id": "smoothness_claim",
+        "score": 2,
+        "maximum": 2,
+        "evidence": null,
+        "rationale": "Meets the case-specific rubric with correct decision/count and stated uncertainty."
+      },
+      {
+        "id": "intentional_contrast",
+        "score": 2,
+        "maximum": 2,
+        "evidence": null,
+        "rationale": "Meets the case-specific rubric with correct decision/count and stated uncertainty."
+      },
+      {
+        "id": "loop_countdown",
+        "score": 1,
+        "maximum": 2,
+        "evidence": "launch B 16 bars earlier if a complete entry and enough runway allow it",
+        "rationale": "Correctly counts 16 extra bars, but offers an earlier launch after the prompt says the loop is already occurring. Must distinguish a prospective plan from a reachable recovery from current playback."
+      },
+      {
+        "id": "fixed_order_and_review",
+        "score": 2,
+        "maximum": 2,
+        "evidence": null,
+        "rationale": "Meets the case-specific rubric with correct decision/count and stated uncertainty."
+      }
+    ]
+  },
+  "changes": [
+    "Define signed wrapped phase explicitly: positive B minus A means B ahead in cycle.",
+    "Distinguish pre-launch planning from recovery after launch; earlier launch is unavailable when already past.",
+    "Correct stale effect routing guidance against current control contract: native echo/reverb exits have independent post-fader returns. This was an integration review correction, not a failed scenario.",
+    "Add total-versus-remaining phrase length formula with local/source coordinate distinction and elapsed-plus-remaining cross-check, after a fresh retest misread the phrase origin.",
+    "Promote the phrase-remaining formula and future-only recovery invariant into SKILL.md after repeated fresh-run failures showed reference-only guidance was not reliable enough."
+  ],
+  "retest": {
+    "score": 26,
+    "maximum": 28,
+    "cases": [
+      {
+        "id": "unequal_leads",
+        "score": 2,
+        "maximum": 2,
+        "rationale": "Meets case rubric, including corrected phase direction and reachable loop recovery."
+      },
+      {
+        "id": "bar_vs_phrase",
+        "score": 0,
+        "maximum": 2,
+        "rationale": "Misread the 32-bar statement as beginning at current bar 9, obtaining target 41/launch25. It actually began at phrase bar1; at bar9, 24 bars remain, so wait8/launch17. New substantive failure; targeted phase and loop issues were corrected."
+      },
+      {
+        "id": "pickup_and_rest",
+        "score": 2,
+        "maximum": 2,
+        "rationale": "Meets case rubric, including corrected phase direction and reachable loop recovery."
+      },
+      {
+        "id": "irregular_extension",
+        "score": 2,
+        "maximum": 2,
+        "rationale": "Meets case rubric, including corrected phase direction and reachable loop recovery."
+      },
+      {
+        "id": "drift_and_groove",
+        "score": 2,
+        "maximum": 2,
+        "rationale": "Meets case rubric, including corrected phase direction and reachable loop recovery."
+      },
+      {
+        "id": "phase_snapshot",
+        "score": 2,
+        "maximum": 2,
+        "rationale": "Meets case rubric, including corrected phase direction and reachable loop recovery."
+      },
+      {
+        "id": "sounding_pitch",
+        "score": 2,
+        "maximum": 2,
+        "rationale": "Meets case rubric, including corrected phase direction and reachable loop recovery."
+      },
+      {
+        "id": "separate_transfers",
+        "score": 2,
+        "maximum": 2,
+        "rationale": "Meets case rubric, including corrected phase direction and reachable loop recovery."
+      },
+      {
+        "id": "unknown_content",
+        "score": 2,
+        "maximum": 2,
+        "rationale": "Meets case rubric, including corrected phase direction and reachable loop recovery."
+      },
+      {
+        "id": "long_set_direction",
+        "score": 2,
+        "maximum": 2,
+        "rationale": "Meets case rubric, including corrected phase direction and reachable loop recovery."
+      },
+      {
+        "id": "smoothness_claim",
+        "score": 2,
+        "maximum": 2,
+        "rationale": "Meets case rubric, including corrected phase direction and reachable loop recovery."
+      },
+      {
+        "id": "intentional_contrast",
+        "score": 2,
+        "maximum": 2,
+        "rationale": "Meets case rubric, including corrected phase direction and reachable loop recovery."
+      },
+      {
+        "id": "loop_countdown",
+        "score": 2,
+        "maximum": 2,
+        "rationale": "Meets case rubric, including corrected phase direction and reachable loop recovery."
+      },
+      {
+        "id": "fixed_order_and_review",
+        "score": 2,
+        "maximum": 2,
+        "rationale": "Meets case rubric, including corrected phase direction and reachable loop recovery."
+      }
+    ]
+  },
+  "live_trial": {
+    "state": "completed",
+    "brief": "20-minute cafe mix, Spotify Liked Songs, individual Luna choices, no recording",
+    "initial_interruption": "Audio route changed from speakers to AirPlay; agent preserved original endpoint while renderer resumed.",
+    "user_feedback": {
+      "text": "Smooth and balanced",
+      "provenance": "Direct user response in this chat during the live trial",
+      "scope": "Transitions heard before the final Diamonds handover was reported completed; no separate rating of the final handover or ending."
+    },
+    "played_sequence_so_far": [
+      "Chris Luno \u2014 Calmy - Extended Mix",
+      "Loverground \u2014 Take Our Time",
+      "The Fog - Chris Luno Remix",
+      "Lane 8, Rae Morris \u2014 No Fun",
+      "Lane 8, Solomon Grey \u2014 Diamonds"
+    ],
+    "completed_handovers_so_far": 4,
+    "skill_reload_utc": "2026-10-21 15:36:52 UTC",
+    "skill_reload_entrypoint_sha256": "c00f939866c385b264caa735e5632c2655bdc49afadd27853430600d246e3288",
+    "original_start_utc": "2026-10-21 15:25:02 UTC",
+    "original_finish_utc": "2026-10-21 15:45:02 UTC",
+    "session_id": "mix-session-67295-119",
+    "endpoint_reason": "duration_reached",
+    "both_decks_paused": true,
+    "completed_handovers": 4,
+    "recording": false,
+    "output_route": "AirPlay",
+    "source_count": 5,
+    "artifacts": "artifacts/skill-trials/djing-art-books-luna-20261021/live-trial/",
+    "limitations": "No agent audio audition or confirmed vocal/section analysis. Actual user rated the transitions heard before final blend Smooth and balanced. No old/new blind listening comparison or separate final blend/ending rating."
+  },
+  "validation_runs": [
+    {
+      "run": "retest2",
+      "score": 28,
+      "maximum": 28,
+      "cases": [
+        {
+          "id": "unequal_leads",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric."
+        },
+        {
+          "id": "bar_vs_phrase",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric."
+        },
+        {
+          "id": "pickup_and_rest",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric."
+        },
+        {
+          "id": "irregular_extension",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric."
+        },
+        {
+          "id": "drift_and_groove",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric."
+        },
+        {
+          "id": "phase_snapshot",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric."
+        },
+        {
+          "id": "sounding_pitch",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric."
+        },
+        {
+          "id": "separate_transfers",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric."
+        },
+        {
+          "id": "unknown_content",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric."
+        },
+        {
+          "id": "long_set_direction",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric."
+        },
+        {
+          "id": "smoothness_claim",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric."
+        },
+        {
+          "id": "intentional_contrast",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric."
+        },
+        {
+          "id": "loop_countdown",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric."
+        },
+        {
+          "id": "fixed_order_and_review",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric."
+        }
+      ]
+    },
+    {
+      "run": "retest3",
+      "score": 25,
+      "maximum": 28,
+      "cases": [
+        {
+          "id": "unequal_leads",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric."
+        },
+        {
+          "id": "bar_vs_phrase",
+          "score": 0,
+          "maximum": 2,
+          "rationale": "Again reset an already-playing 32-bar statement to the current ninth bar, incorrectly producing launch25. Formula in a reference alone did not reliably correct this."
+        },
+        {
+          "id": "pickup_and_rest",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric."
+        },
+        {
+          "id": "irregular_extension",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric."
+        },
+        {
+          "id": "drift_and_groove",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric."
+        },
+        {
+          "id": "phase_snapshot",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric."
+        },
+        {
+          "id": "sounding_pitch",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric."
+        },
+        {
+          "id": "separate_transfers",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric."
+        },
+        {
+          "id": "unknown_content",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric."
+        },
+        {
+          "id": "long_set_direction",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric."
+        },
+        {
+          "id": "smoothness_claim",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric."
+        },
+        {
+          "id": "intentional_contrast",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric."
+        },
+        {
+          "id": "loop_countdown",
+          "score": 1,
+          "maximum": 2,
+          "rationale": "Again includes an earlier launch as a recovery option after launch without restricting it to prospective planning."
+        },
+        {
+          "id": "fixed_order_and_review",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric."
+        }
+      ]
+    }
+  ],
+  "final_validation": [
+    {
+      "run": "final-a",
+      "score": 28,
+      "maximum": 28,
+      "cases": [
+        {
+          "id": "unequal_leads",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric; arithmetic, brief and evidence boundaries reviewed by primary agent."
+        },
+        {
+          "id": "bar_vs_phrase",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric; arithmetic, brief and evidence boundaries reviewed by primary agent."
+        },
+        {
+          "id": "pickup_and_rest",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric; arithmetic, brief and evidence boundaries reviewed by primary agent."
+        },
+        {
+          "id": "irregular_extension",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric; arithmetic, brief and evidence boundaries reviewed by primary agent."
+        },
+        {
+          "id": "drift_and_groove",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric; arithmetic, brief and evidence boundaries reviewed by primary agent."
+        },
+        {
+          "id": "phase_snapshot",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric; arithmetic, brief and evidence boundaries reviewed by primary agent."
+        },
+        {
+          "id": "sounding_pitch",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric; arithmetic, brief and evidence boundaries reviewed by primary agent."
+        },
+        {
+          "id": "separate_transfers",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric; arithmetic, brief and evidence boundaries reviewed by primary agent."
+        },
+        {
+          "id": "unknown_content",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric; arithmetic, brief and evidence boundaries reviewed by primary agent."
+        },
+        {
+          "id": "long_set_direction",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric; arithmetic, brief and evidence boundaries reviewed by primary agent."
+        },
+        {
+          "id": "smoothness_claim",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric; arithmetic, brief and evidence boundaries reviewed by primary agent."
+        },
+        {
+          "id": "intentional_contrast",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric; arithmetic, brief and evidence boundaries reviewed by primary agent."
+        },
+        {
+          "id": "loop_countdown",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric; arithmetic, brief and evidence boundaries reviewed by primary agent."
+        },
+        {
+          "id": "fixed_order_and_review",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric; arithmetic, brief and evidence boundaries reviewed by primary agent."
+        }
+      ]
+    },
+    {
+      "run": "final-b",
+      "score": 28,
+      "maximum": 28,
+      "cases": [
+        {
+          "id": "unequal_leads",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric; arithmetic, brief and evidence boundaries reviewed by primary agent."
+        },
+        {
+          "id": "bar_vs_phrase",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric; arithmetic, brief and evidence boundaries reviewed by primary agent."
+        },
+        {
+          "id": "pickup_and_rest",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric; arithmetic, brief and evidence boundaries reviewed by primary agent."
+        },
+        {
+          "id": "irregular_extension",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric; arithmetic, brief and evidence boundaries reviewed by primary agent."
+        },
+        {
+          "id": "drift_and_groove",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric; arithmetic, brief and evidence boundaries reviewed by primary agent."
+        },
+        {
+          "id": "phase_snapshot",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric; arithmetic, brief and evidence boundaries reviewed by primary agent."
+        },
+        {
+          "id": "sounding_pitch",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric; arithmetic, brief and evidence boundaries reviewed by primary agent."
+        },
+        {
+          "id": "separate_transfers",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric; arithmetic, brief and evidence boundaries reviewed by primary agent."
+        },
+        {
+          "id": "unknown_content",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric; arithmetic, brief and evidence boundaries reviewed by primary agent."
+        },
+        {
+          "id": "long_set_direction",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric; arithmetic, brief and evidence boundaries reviewed by primary agent."
+        },
+        {
+          "id": "smoothness_claim",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric; arithmetic, brief and evidence boundaries reviewed by primary agent."
+        },
+        {
+          "id": "intentional_contrast",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric; arithmetic, brief and evidence boundaries reviewed by primary agent."
+        },
+        {
+          "id": "loop_countdown",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric; arithmetic, brief and evidence boundaries reviewed by primary agent."
+        },
+        {
+          "id": "fixed_order_and_review",
+          "score": 2,
+          "maximum": 2,
+          "rationale": "Meets the case-specific rubric; arithmetic, brief and evidence boundaries reviewed by primary agent."
+        }
+      ]
+    }
+  ],
+  "total_suite_runs": 6,
+  "total_scenario_answers": 84,
+  "final_conclusion": "Both fresh final Luna suite runs score 28/28 after the core-instruction fixes. Evidence supports these written reasoning tasks; live performance and audible quality are evaluated separately. Small manual-graded sample; no claim of universal reliability.",
+  "case_content_sha256": "a962e5b71e777d8b710809a7fdf294fb6f114c583161d42ad2ad32452214cba7",
+  "application_cleanup": {
+    "kept": "/Applications/PulseDeck.app",
+    "version": "0.2.6",
+    "removed_older_bundles": 5,
+    "removed_identical_build_duplicate": 1,
+    "method": "Moved .app bundles to user Trash; no source/library/account data removed."
+  }
+}

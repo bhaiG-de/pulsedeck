@@ -33,7 +33,7 @@ export default function SuccessorQueuePanel({
     scope === "liked" ? "liked" : "local",
   );
   const [minutes, setMinutes] = useState("");
-  const [stretch, setStretch] = useState("100");
+  const [stretch, setStretch] = useState("4");
   const [replace, setReplace] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");

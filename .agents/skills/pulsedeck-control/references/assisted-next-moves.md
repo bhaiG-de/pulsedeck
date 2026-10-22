@@ -1,6 +1,6 @@
 # Assisted next moves
 
-The Suggest panel and `mix.*` commands share the planner and native recipes. For supported moves, select an option and execute it with **one action call**. PulseDeck owns preparation, launch, audible transfer, clearance and recovery; the model chooses the musical move.
+The Suggest panel and `mix.*` commands share the planner and native recipes. Beatmatched options and queue policy default to a 4% source-relative stretch allowance. Inspect the actual pair and local rate; explicit `max_stretch_percent` can override that starting range for an intended transformation. Do not widen it merely to force the first chosen song into a blend. For supported moves, select an option and execute it with **one action call**. PulseDeck owns preparation, launch, audible transfer, clearance and recovery; the model chooses the musical move.
 
 For a continuous set, repeat individually selected moves, use direct controls, or choose the optional [continuous queue](continuous-sets.md). The workflow below performs one proposed move; the agent keeps the musical judgment.
 
@@ -52,7 +52,7 @@ Every option reports a conservative planning estimate for the **following** move
 
 Supported recipes are EQ/layer blends, filter blends, short phrase exchanges, echo exits and reverb exits. The current `eq_blend` recipe transfers bass with channel faders; it does not make a vocal-aware mid/high arrangement. Direct mid/high EQ, filters and other exposed controls are available when the musical plan calls for them. All recipes use passage-derived overlap lengths and bounded native follower Sync; at completion the incoming channel reaches full fader/unity EQ, neutral filter and zero effect sends before master transfer and outgoing pause. Echo/reverb exits use native recipes with independent post-fader main returns and separate headphone effects; outgoing sends close before clearance and the bounded return may persist up to eight seconds across paused/replaced dry sources. Read capability reasons for other techniques. Custom FX beyond the exposed exit recipes, loops, tempo curves, stems and gestures require their own supported execution workflow; do not relabel an EQ blend as another technique.
 
-`mix.session.start(prepared_id, duration_seconds)` creates an application-owned duration endpoint for a ready/armed move; it does not choose subsequent tracks. Configure it once when a bounded set needs it, and continue selecting moves from completion events. `mix.session.status`/`.stop` inspect/revoke that endpoint. Avoid primitive source-bound timers for a whole set.
+`mix.session.start` creates an application-owned endpoint using `duration_seconds` or absolute `finish_unix_ms`; `prepared_id` is optional. It preserves the finish time through CLI performance controls and recoverable gaps. It does not choose subsequent tracks. See [timed performances and continuity](session.md) for endpoint ownership and the optional explicitly armed successor fallback.
 
 ## App-owned successor queue
 

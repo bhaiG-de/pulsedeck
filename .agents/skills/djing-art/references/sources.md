@@ -1,61 +1,60 @@
-# Sources and scope
+# Sources and the limits of the synthesis
 
-Consulted on 15 October 2026. The skill synthesizes these principles into an agent decision procedure; no source certifies the resulting skill or PulseDeck's analysis. Educational examples and product workflows establish practice, not universal laws or independent detector accuracy. The research report outside this package records the repository review.
+The musical guidance was rewritten from the relevant musicianship chapters in the two user-supplied EPUBs. This is an original, selective synthesis for a performing agent, not a replacement for the books. Gear purchasing, promotion, business, and physical vinyl practice were outside this rewrite. Chapter names and EPUB resource paths are stable locators for these copies; reflowable page numbers are not used.
 
-## Phrasing, entry and exit decisions
+## Phil Morse — Rock the Dancefloor
 
-- [Crossfader on listening like a DJ](https://wearecrossfader.co.uk/blog/learning-to-listen-like-a-dj/) — recognize change, groove and available space.
-- [Digital DJ Tips on where to transition](https://www.digitaldjtips.com/how-pro-djs-know-where-to-transition-plus-a-big-cheat/) — track development, pacing and structural exits.
-- [Native Instruments on cue preparation](https://blog.native-instruments.com/cue-points-djing/) — mark musical events and vocal boundaries.
+Full supplied title: *Rock The Dancefloor: The proven five-step formula for total DJing success*.
 
-## Tempo, harmony and balance
+| Chapter | EPUB resource | Guidance carried into the skill |
+|---|---|---|
+| The Basic DJing Technique | `text/part0019.html` | Preparation, private checking where possible, audible reveal, transfer and clearance are distinct |
+| Understanding Your Mixer | `text/part0020.html` | Level preparation and the different jobs of mixer controls |
+| Beatmixing Part 1: Timing | `text/part0022.html` | Counting bars/phrases and mapping the actual arrangement |
+| Beatmixing Part 2: The Three Elements Of A Good Beatmix | `text/part0023.html` | Tempo matching, beat alignment and phrase matching are separate; close-tempo selection with roughly ±4% as an ordinary beatmix guideline |
+| Five Basic DJ Transitions | `text/part0024.html` | Fade/cut for deliberate changes of scene; audible phrase beatmix and bassline swap for compatible grooves |
+| Using Sync, Hot Cues And Loops | `text/part0025.html` | Understand Sync assumptions; use loops/cues purposefully without tedious repetition |
+| Adding EQ, Filters And Effects | `text/part0026.html` | Shape track/transition sound and add effects for a musical purpose |
+| How To Record And Critique Your Sets | `text/part0027.html` | Review from the listener's perspective and identify specific faults |
+| How To Pack The Perfect DJ Set | `text/part0030.html` | Bounded preparation, loose sequences and meaningful alternatives |
+| How To Programme A DJ Set | `text/part0035.html` | Choose for the moment, prepare a viable next track early, adapt from experience |
+| How To Play Bar, Club And Mobile Gigs | `text/part0036.html` | Context changes pacing, intensity and what counts as audience engagement |
 
-- [Native Instruments on beatmatching](https://blog.native-instruments.com/beatmatching/) — audition and correct tempo/phase before opening the incoming channel.
-- [Mixxx DJing manual](https://manual.mixxx.org/2.5/en/chapters/djing_with_mixxx.html) — gain staging, alignment and transition markers.
-- [DJ TechTools on grids and Sync](https://djtechtools.com/amp/2014/04/23/how-to-set-beatgrids-and-use-sync-properly-in-serato-dj/) — timing exceptions and grid assumptions.
-- [Mixed In Key Camelot workflow](https://mixedinkey.com/workflows/how-to-use-the-camelot-wheel/) — compatible-key shortlists and their limits.
-- [Native Instruments harmonic mixing lesson](https://blog.native-instruments.com/harmonic-mixing-rules-and-how-to-break-them/) — notation, tonal overlap and creative exceptions.
-- [Digital DJ Tips five basic transitions](https://www.digitaldjtips.com/rock-the-dancefloor/five-basic-dj-transitions/) — phrase blends and bass continuity.
-- [Crossfader house demonstration](https://wearecrossfader.co.uk/blog/house-mixing-tutorial/) — complementary frequency roles.
+## Frank Broughton and Bill Brewster — How to DJ Right
 
-## Energy, set flow and technique
+Full supplied title: *How to DJ Right: the art and science of playing records*. The supplied copy's copyright page lists 2002 and 2003.
 
-- [Laidback Luke lesson through Digital DJ Tips](https://www.digitaldjtips.com/energy-vs-tempo-luke-lesson/) — speed and intensity can differ.
-- [Mixed In Key energy workflow](https://mixedinkey.com/workflows/use-energy-level-detection/) — scores aid preparation; audition actual sections.
-- [Pioneer DJ all-night artist interviews](https://blog.pioneerdj.com/djtips/how-to-dj-all-night-long/) — pacing and longer arcs.
-- [Pioneer DJ genre survey](https://blog.pioneerdj.com/djtips/we-uncover-the-mixing-techniques-behind-every-major-genre/) — contrasting practices, not fixed presets.
-- [Crossfader EDM lesson](https://wearecrossfader.co.uk/blog/how-to-mix-edm/) — arranged payoff swaps and restraint.
-- [Crossfader drum and bass guide](https://wearecrossfader.co.uk/blog/howtomixdnb/) — bass, percussion and phrasing interactions.
-- [Ean Golden on adding value](https://djtechtools.com/amp/2013/04/30/value-added-mixing-when-to-dj-more-and-when-to-do-less/) — purposeful intervention and restraint.
+| Chapters | EPUB resources | Guidance carried into the skill |
+|---|---|---|
+| 8–10: How to beatmatch / blend / match phrases | `ops/xhtml/ch08.html` through `ch10.html` | Rate versus phase, real audible overlap, phrase completion |
+| 11–13: How to cut / do stops and spinbacks / place a mix | `ops/xhtml/ch11.html` through `ch13.html` | An exchange is a musical edit; earlier phrase-aware overlaps can preserve flow instead of repeatedly joining file endings; preserve run-up notes |
+| 14–15: How to match rhythms / avoid key clashes | `ops/xhtml/ch14.html` and `ch15.html` | Pulse versus pattern, rests, complementary rhythms and actual tonal coexistence |
+| 19, 21–25: Pack your box; warm up; read a crowd; choose the next record; pace the night; come on after someone | `ops/xhtml/ch19.html`, `ch21.html` through `ch25.html` | Preparation, contextual role, observed feedback, short-horizon direction and set-scale contrast |
+| 27–29: Improve your sound / EQ / add FX | `ops/xhtml/ch27.html` through `ch29.html` | Gain structure, subtractive balance, broad EQ limitations and purposeful effects |
+| 31: How to mix harmonically | `ops/xhtml/ch31.html` | Tonal relationships, sounding pitch, and separating incompatible pitched material |
+| 50: How to be great | `ops/xhtml/ch50.html` | Taste, individuality, musical conversation and expressive risk |
 
-## Computational research
+## Qualify before applying
 
-- [Zehren, Alunno and Bientinesi, 2020](https://arxiv.org/html/2007.08411) — distinguishes audibility, switch and clearance; candidate switch locations do not establish pair compatibility.
-- [Kim and colleagues, 2020](https://arxiv.org/html/2008.10267) — observed phrase-related transition patterns in a real-world mix corpus.
-- [Argüello, Lanzendörfer and Wattenhofer, 2024](https://arxiv.org/html/2407.06823) — learned cue estimation and subjective annotations, studied in a constant-tempo 4/4 EDM dataset.
+These are instructor perspectives, including broad simplifications and period-specific advice. This skill deliberately qualifies or omits:
 
-The skill's candidate comparison, role timeline, fallback procedure and invented worked cases are design synthesis. Its timing examples assume the explicitly stated meter and clocks. None is a ready-made routine for arbitrary tracks.
+- Universal four/eight-bar form, first kick as beat one, and fixed blend lengths: use them as search expectations, then establish actual meter, local phrase origin, pickups and extensions.
+- Key labels as a guarantee of harmony, mandatory perfect pitch, categorical major/minor emotions, or automatic energy from wheel movement: evaluate the played passages, chord context and uncertainty.
+- Simplified rhythm definitions: syncopation concerns emphasis against metrical expectation; swing concerns subdivision timing. Neither means a globally incorrect tempo.
+- Tempo percentages: retain Morse's roughly ±4% as a practical starting guideline for ordinary beatmix selection, not an inaudibility guarantee or universal cap. Broughton/Brewster's roughly ±3% warning concerns pitch changes without key lock, not a time-stretch quality threshold. Wider changes need a musical reason and listening support; use a tempo reset when preserving the record's character matters more than maintaining one BPM. Rate changes can create fractional-semitone tuning shifts.
+- Analog meter targets: do not equate an analog nominal 0 dB level with 0 dBFS. Digital peaks need actual headroom.
+- Categorical demographic claims and guesses about a crowd's identity or state: use the brief and observed responses.
+- Blanket rejection of planned sets: preserve user-requested choreography, fixed order and recorded-set preparation. Adaptability is useful for open live selection.
+- Recording every practice automatically: recording follows the authorized performance scope.
 
-## Further research checked in October 2026
+## Agent-specific adaptations
 
-These sources extend the initial research. They teach concepts or report findings; their application to PulseDeck is synthesized policy.
+Working backward from the desired arrival operationalizes the books' counting and placement advice. Evidence provenance, exact effective events, source revision checks, compact passage maps, the optional timing helper and the separation of execution from listening quality are adaptations to PulseDeck. They are not claims that the books describe this software.
 
-- [Crossfader: three house techniques](https://blog.wearecrossfader.co.uk/blog/3-ways-to-mix-house-music/) — different mixer designs for the same pair; demonstration-specific band order is not a universal recipe.
-- [DJ TechTools: EQ theory and techniques](https://djtechtools.com/2012/03/11/eq-critical-dj-techniques-theory/) — full-frequency balancing, EQ blends, bass swaps and the limits of broad EQ.
-- [DJ TechTools: phrasing](https://djtechtools.com/2014/11/16/how-to-dj-101-why-you-must-understand-phrasing/) — structural clues; a configured counter does not detect real phrases.
-- [Ableton: song structure](https://learningmusic.ableton.com/song-structure/song-structure.html) — nested arrangement units; applying composition ideas to sets is an analogy.
-- [Ableton: dramatic arc](https://makingmusic.ableton.com/dramatic-arc) — tension at several scales, rather than compulsory rises in BPM.
-- [Serato: Sync](https://support.serato.com/hc/en-us/articles/203056994-SYNC-with-Serato-DJ) and [beatgrids](https://support.serato.com/hc/en-us/articles/202856014-Beatgrids-in-Serato-DJ-Pro) — mode and timing-model differences; not PulseDeck control specifications.
-- [Algoriddim: beatgrid editor](https://help.algoriddim.com/user-manual/djay-android/dj-tools/beatgrids-bpm-sync/beatgrid-editor) — bar origin and variable-tempo anchors.
-- [Traktor: advanced usage](https://docs.native-instruments.com/ni-tech-manuals/traktor-pro-manual/en/advanced-usage-tutorials) — cue, loop and monitoring concepts; not PulseDeck commands.
-- [Pioneer DJ: harmonic mixing interviews](https://blog.pioneerdj.com/djtips/how-do-djs-approach-harmonic-mixing/) — professional approaches vary and key filtering should serve selection.
-- [Pioneer DJ: back-to-back interviews](https://blog.pioneerdj.com/djtips/how-to-dj-back-to-back/) — inherited controls and giving current material room.
-- [Crossfader: trance mixing](https://wearecrossfader.co.uk/blog/how-to-dj-trance-music/) — melodic space and deliberate foreground succession.
-- [Chen and colleagues: DJtransGAN](https://arxiv.org/html/2110.06525) — separates cue choice from mixer control; listening evaluation with fixed cue boundaries does not establish one universal best mixer recipe.
+The worked cases are synthetic arrangements with explicit assumptions. Style guidance is a starting hypothesis; no artist signature or decoded performance is asserted. Runtime capabilities and field semantics come from the neighboring control/library skills, not these historical books.
 
-The updated policy treats a smooth blend as a distinct musical objective: useful audible introduction and development precede clearance. Cuts remain legitimate for an appropriate brief, but a numerically aligned cut cannot satisfy a requested developed blend. Examples of bass/foreground ownership are teaching models, not claims of stem detection or verified listening.
+## Skill design sources
 
+[OpenAI's skill guidance](https://developers.openai.com/plugins/build/skills) supports focused workflows with clear decision points, examples and supporting resources. [Rethinking skills and prompts](https://developers.openai.com/blog/rethinking-skills-and-prompts-for-gpt-6-astra) supports precise discovery and avoiding accumulated contradictory instruction. [Testing Agent Skills Systematically with Evals](https://developers.openai.com/blog/eval-skills) supports defining observable outcomes and separating deterministic checks from qualitative assessment.
 
-## Instructor studies checked 21 October 2026
-
-[The style manual](style-and-phrase-manual.md) and [transition studies](worked-cases.md) connect the sources to musical choices. The latter uses instructor-authored explanations, not a claimed independent decoding of the videos. The BPM Supreme whole routines remain a study queue pending verified segment analysis. Examples and genre tendencies are suggestions; the user has explicitly removed universal BPM/key/overlap policies and mandatory autonomous-queue handoff.
+The entrypoint contains the shared decision process; detailed theory is routed by the question being solved. The books are preparation-time research, not required files or internet lookups during performance. Packaging checks establish discoverability and link integrity; timing tests establish arithmetic behavior. Listening remains necessary to establish the musical result.

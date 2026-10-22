@@ -168,6 +168,12 @@ pub fn validate_track_uri(value: &str) -> Result<(), String> {
     parse_track_uri(value).map(|_| ())
 }
 
+/// Match only our sanitized key-failure diagnostics, never upstream log text.
+pub fn is_playback_key_failure(message: &str) -> bool {
+    message.starts_with("Spotify track loading failed after native sign-in: the provider rejected or could not complete the playback key request.")
+        || message.starts_with("Spotify track loading failed after native sign-in: the playback key response timed out after a retry.")
+}
+
 fn validate_request(request: &PrepareRequest) -> Result<SpotifyUri, String> {
     if request.client_id != native_client_id() {
         return Err("Native Spotify playback requires a separate native login for this platform's librespot identity; a Web API application grant cannot be substituted".into());
@@ -855,6 +861,13 @@ pub fn prepare_in_worker(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn only_known_sanitized_key_failures_trigger_provider_cooldown() {
+        assert!(is_playback_key_failure("Spotify track loading failed after native sign-in: the provider rejected or could not complete the playback key request. No partial audio was loaded."));
+        assert!(is_playback_key_failure("Spotify track loading failed after native sign-in: the playback key response timed out after a retry. No partial audio was loaded."));
+        assert!(!is_playback_key_failure("Spotify track loading failed after native sign-in: this catalog version is unavailable for the account or market. No partial audio was loaded."));
+        assert!(!is_playback_key_failure("Native Spotify session sign-in failed"));
+    }
     use std::io::Cursor;
     fn request(duration: u64) -> PrepareRequest {
         PrepareRequest {

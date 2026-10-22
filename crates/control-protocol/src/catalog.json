@@ -1568,6 +1568,9 @@
           "items": {
             "type": "string"
           }
+        },
+        "session_id": {
+          "type": "string"
         }
       },
       "additionalProperties": false,
@@ -2513,7 +2516,9 @@
         "max_stretch_percent": {
           "type": "number",
           "minimum": 0,
-          "maximum": 100
+          "maximum": 100,
+          "default": 4,
+          "description": "Maximum source-relative tempo change for beatmatched recipes. Defaults to 4%; wider transformations require an explicit value. Does not certify audible quality."
         },
         "limit": {
           "type": "integer",
@@ -2746,7 +2751,9 @@
         "max_stretch_percent": {
           "type": "number",
           "minimum": 0,
-          "maximum": 100
+          "maximum": 100,
+          "default": 4,
+          "description": "Maximum source-relative tempo change for beatmatched recipes. Defaults to 4%; wider transformations require an explicit value. Does not certify audible quality."
         },
         "techniques": {
           "type": "array",
@@ -2864,15 +2871,16 @@
           "type": "number",
           "minimum": 1,
           "maximum": 86400
+        },
+        "finish_unix_ms": {
+          "type": "integer",
+          "minimum": 1
         }
       },
-      "required": [
-        "prepared_id",
-        "duration_seconds"
-      ],
+      "required": [],
       "additionalProperties": false
     },
-    "description": "Own an assisted-set endpoint independent of per-track source clocks; requires a prepared pair",
+    "description": "Own a monotonic set endpoint for assisted or direct performance. Supply duration_seconds or an absolute finish_unix_ms, with optional prepared_id. Performance controls and continuity gaps preserve it; human takeovers and explicit stops revoke it.",
     "example_cli": "pulsedeckctl call mix.session.start --args '{\"prepared_id\":\"PREPARED_ID\",\"duration_seconds\":3600}' --json"
   },
   {
@@ -2906,6 +2914,45 @@
     },
     "description": "Cancel the owned session endpoint and pending owned transition; keep playback running",
     "example_cli": "pulsedeckctl call mix.session.stop --args '{}' --json"
+  },
+  {
+    "command": "mix.session.successor",
+    "description": "Arm a chosen ready isolated deck as a one-shot continuity fallback one second before the carrier ends; preserves the session endpoint. Source/position changes invalidate it; normal mixes take priority. Neutralizes incoming EQ/filter/FX and opens its fader only after Play succeeds.",
+    "example_args": {
+      "deck": "B"
+    },
+    "example_cli": "pulsedeckctl call mix.session.successor --args '{\"deck\":\"B\"}' --json",
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "deck": {
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "A",
+                "B"
+              ]
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1
+            }
+          ]
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "cancel": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "deck"
+      ],
+      "additionalProperties": false
+    }
   },
   {
     "command": "mix.preview",

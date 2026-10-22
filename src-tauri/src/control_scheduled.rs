@@ -1020,6 +1020,7 @@ fn read_events(app: &tauri::AppHandle, request: &Request) -> Result<Value> {
     let job = optional::<String>(&request.args, "job_id")?;
     let operation = optional::<String>(&request.args, "operation_id")?;
     let queue = optional::<String>(&request.args, "queue_id")?;
+    let session = optional::<String>(&request.args, "session_id")?;
     let types = optional::<Vec<String>>(&request.args, "types")?;
     let wait = optional::<u64>(&request.args, "wait_ms")?
         .unwrap_or(0)
@@ -1043,6 +1044,7 @@ fn read_events(app: &tauri::AppHandle, request: &Request) -> Result<Value> {
             && job
                 .as_ref()
                 .is_none_or(|id| event["data"]["id"] == *id || event["data"]["job_id"] == *id)
+            && session.as_ref().is_none_or(|id| event["data"]["session_id"] == *id)
     };
     let mut events = control.events.lock().map_err(failure)?;
     loop {

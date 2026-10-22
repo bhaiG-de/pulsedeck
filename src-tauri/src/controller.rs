@@ -822,11 +822,12 @@ pub fn handle(app: &tauri::AppHandle, action: ControllerAction) -> Result<(), St
             app.state::<AppState>(),
             EngineCommand::SetBpm { deck, bpm },
             false,
+            true,
             None,
         )?;
     }
     for command in commands {
-        crate::engine_command_inner(app.clone(), app.state(), command, false, None)?;
+        crate::engine_command_inner(app.clone(), app.state(), command, false, true, None)?;
     }
     Ok(())
 }

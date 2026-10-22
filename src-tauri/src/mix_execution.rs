@@ -1117,29 +1117,6 @@ fn can_retry_mix(
         })
 }
 
-fn mix_retry_preserves_session(
-    p: &PreparedMix,
-    native_operation: &str,
-    s: &deck_engine::EngineSnapshot,
-    takeover: u64,
-    reason: &str,
-) -> bool {
-    // Only the first native attempt can have an owned retry in flight. A failed
-    // retry has its own native ID and must still terminate the session.
-    native_operation == p.id
-        && (can_retry_mix(p, s, takeover, reason)
-            || (p.automatic
-                && p.recovery_attempts == 1
-                && matches!(
-                    p.state.as_str(),
-                    "recovering" | "preparing" | "ready" | "arming"
-                )
-                && !p.cancelled.load(Ordering::Acquire)
-                && takeover == p.takeover_revision
-                && s.running
-                && s.engine_epoch == p.option.engine_epoch))
-}
-
 fn retry_mix_operation(app: &tauri::AppHandle, id: &str) -> Result<()> {
     let c = app.state::<Control>();
     let state = app.state::<AppState>();
@@ -1475,45 +1452,8 @@ mod mix_execution_tests {
         assert!(!can_retry_mix(&p, &same_grid, 0, "stale_preparation"));
         assert!(!can_retry_mix(&p, &current, 1, "grid_changed"));
         assert!(!can_retry_mix(&p, &current, 0, "manual_takeover"));
-        assert!(mix_retry_preserves_session(
-            &p,
-            "retry-test",
-            &current,
-            0,
-            "grid_changed"
-        ));
         p.recovery_attempts = 1;
         assert!(!can_retry_mix(&p, &current, 0, "grid_changed"));
-        p.state = "recovering".into();
-        assert!(mix_retry_preserves_session(
-            &p,
-            "retry-test",
-            &current,
-            0,
-            "grid_changed"
-        ));
-        assert!(!mix_retry_preserves_session(
-            &p,
-            "retry-test:retry-1",
-            &current,
-            0,
-            "grid_changed"
-        ));
-        assert!(!mix_retry_preserves_session(
-            &p,
-            "retry-test",
-            &current,
-            1,
-            "grid_changed"
-        ));
-        p.state = "failed".into();
-        assert!(!mix_retry_preserves_session(
-            &p,
-            "retry-test",
-            &current,
-            0,
-            "grid_changed"
-        ));
         p.recovery_attempts = 0;
         current.decks[0].position_seconds = 295.;
         assert!(!can_retry_mix(&p, &current, 0, "grid_changed"));
