@@ -254,7 +254,10 @@ else:
         assert data("engine.transport")["decks"][0]["position_seconds"] > before
         data("automation.ramp", {"target": {"type": "crossfader"}, "value": -1.0, "seconds": 0.1})
         data("engine.wait", {"ramps": True})
-        assert data("engine.transport")["crossfader"] == -1.0
+        transport = data("engine.transport")
+        assert transport["crossfader"] == -1.0, {
+            key: transport[key] for key in ("crossfader", "active_ramps", "control_revision")
+        }
         recording = work / "silent-mix.wav"
         data("recording.start", {"path": str(recording)})
         call("audio.start", {"buffer_frames": 512}, expected="operation_failed")

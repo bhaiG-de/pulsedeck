@@ -5,6 +5,7 @@
 - Combine the YouTube Music integration with typed DJ performance scores, native transition forecasts, receipts and guarded deck controls.
 - Bundle the MCP control client and updated DJ skills. YouTube collection reads and matching are available through MCP; sign-in stays in Settings.
 - Open Google Cloud, YouTube Music and Spotify developer links in the default browser.
+- Completed automation ramps retain the exact requested control endpoint.
 
 YouTube playlists are not Suggest or automatic queue scopes. Live Google OAuth and Spotify catalog matching require account-based validation.
 

@@ -1632,7 +1632,11 @@ impl Mixer {
             let progress = ((self.rendered_frames - ramp.start) as f64
                 / (ramp.end - ramp.start) as f64)
                 .min(1.0) as f32;
-            let value = ramp.from + (ramp.to - ramp.from) * progress;
+            let value = if progress >= 1.0 {
+                ramp.to
+            } else {
+                ramp.from + (ramp.to - ramp.from) * progress
+            };
             if let ControlTarget::TempoPercent { deck } = ramp.target {
                 self.decks[deck].tempo = value as f64;
                 self.decks[deck].playback_target_bpm = ramp
@@ -3350,6 +3354,25 @@ mod playback_tempo_regressions {
         assert!(!m.decks[1].sync_enabled);
         assert_eq!(m.decks[1].actual_rate(), m.decks[1].rate());
     }
+    #[test]
+    fn finished_ramp_keeps_the_exact_requested_target() {
+        let mut mixer = Mixer::new();
+        mixer.command(EngineCommand::SetCrossfader { position: 0.3 });
+        mixer.command(EngineCommand::Ramp {
+            target: ControlTarget::Crossfader,
+            value: -1.0,
+            seconds: 0.001,
+            clock: None,
+            beats: None,
+            quantize: None,
+        });
+        for _ in 0..100 {
+            mixer.frame();
+        }
+        assert!(!mixer.active_ramps()[ControlTarget::Crossfader.index()]);
+        assert_eq!(mixer.crossfader.target, -1.0);
+    }
+
     #[test]
     fn started_beat_ramp_finishes_at_natural_eof_but_explicit_pause_or_seek_cancels() {
         for event in ["eof", "pause", "seek"] {
