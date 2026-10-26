@@ -29,7 +29,7 @@ Work from the requested crate or a manageable shortlist. Keep useful alternative
 
 Morse's advice to pack roughly twice the needed music is a practical way to retain options without overwhelming a human. For an agent, preserve the principle of bounded, purposeful choice. It is not a mandatory track-count multiplier or a reason to exclude the rest of an authorized collection.
 
-Think a few moves ahead: where could B lead, and what alternative would work if the direction changes? Do not repeatedly play a familiar pair just because it once worked. Honor an explicitly choreographed or fixed-order request; adaptability is a default for open selection, not a reason to override the user.
+Keep a short branching direction tied to musical dimensions: for example, two warm rolling grooves → lighter body with pulse intact → fuller return, with a relaxed alternative if the brief calls for it. Decide where B could lead from its actual later structure. This is a palette and expectation, not a fixed track order or a demand for continual peaks. Do not repeatedly play a familiar pair just because it once worked. Honor an explicitly choreographed or fixed-order request; adaptability is a default for open selection, not a reason to override the user.
 
 Keep a set-local history of actually audible titles, artists and exact release URIs, including recovery plays. Retain that compact history across context handoffs with the original start/finish, current carrier, pending operation and failures/gaps; a raw status snapshot must not overwrite the only played sequence. A prepared or failed source is not played. Check that history before committing a successor; honor earlier-set exclusions when a fresh mix was requested, and watch alternate releases of the same song. Start with unplayed candidates from the authorized collection, not just a handful of familiar analyzed tracks. Analysis availability is a preparation advantage, not a musical reason to keep repeating them.
 
@@ -54,3 +54,12 @@ Translate criticism into a question: “thin” suggests loss of foundation/body
 If a choice disappoints, move to a complete useful exit calmly rather than chopping it at an arbitrary second. Preserve a viable successor. At the end, use an intentional final statement and respect the requested finish time; source-duration sums ignore overlaps, rate changes and interruptions.
 
 Learn from listening after the performance where a recording already exists or recording was authorized. Separate reproducible technical faults from context-dependent taste. A successful pair is a useful option, not a universal rule.
+
+
+## Compose the finish against real remaining music
+
+A fixed endpoint is the latest allowed playback time, not a closing arrangement. Once choosing the final passage, compare its available played duration with the remaining set duration, including any planned tempo movement, loop repetitions and fade. At a stable rate, `remaining_music_wall_seconds = (audible_end_source_seconds − current_source_position) / actual_playback_rate`. Use the measured audible bound when available; file EOF can include silence. Reserve the final complete statement and its exit as part of the musical plan.
+
+In one observed set, the closing source had about 144 seconds of material left while the session had about 161 seconds remaining. The track exhausted early, leaving roughly16seconds with no carrier. A successful endpoint timer did not repair that difference. Choose a sufficiently long compatible closing passage, arrange a seam-checked extension and release, or introduce a worthwhile final musical paragraph while preparation time remains. A short fragment thrown in at EOF is a recovery, not an authored close.
+
+A planned quiet ending can be right when it is the intended ending. Describe it honestly. A `successor_due` warning near the endpoint is resolved by comparing both clocks, not by assuming “the set ends soon.” After completion, check actual pre-endpoint route history before classifying an interruption as the normal final stop.

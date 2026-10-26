@@ -8,5 +8,6 @@ name = "pulsedeckctl"
 path = "src/main.rs"
 
 [dependencies]
+schemars = "0.8.22"
 control-protocol = { path = "../control-protocol" }
 serde_json = "1"

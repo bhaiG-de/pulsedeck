@@ -8,6 +8,7 @@ mod effects;
 mod embedded_metadata;
 mod grid;
 mod model;
+pub mod performance;
 mod processor;
 mod protection;
 #[cfg(test)]
@@ -72,6 +73,7 @@ pub struct SourceLoadTicket {
     generation: u64,
     owner: usize,
 }
+
 enum Retired {
     Grid(Arc<audio_analysis::NeuralRhythm>),
     Track(Arc<TrackData>),
@@ -115,6 +117,7 @@ enum RenderCommand {
         deck: usize,
         revision: u64,
         control_revision: Option<u64>,
+        expected_state: Option<DirectStateGuard>,
         receipt_ticket: Option<u64>,
     },
     SessionEndpoint {
@@ -216,18 +219,63 @@ impl RenderState {
                     deck,
                     revision,
                     control_revision,
+                    expected_state,
                     receipt_ticket,
                 } => {
-                    let mut accepted = self.mixer.load_revisions[deck] == revision
-                        && control_revision.is_none_or(|r| r == self.mixer.control_revision);
-                    if accepted {
+                    let before_state = self.mixer.direct_deck_state(deck);
+                    let mut failure = if self.mixer.load_revisions[deck] != revision {
+                        Some(CommandFailureCause::SourceChanged)
+                    } else if control_revision.is_some_and(|r| r != self.mixer.control_revision) {
+                        Some(CommandFailureCause::ControlChanged)
+                    } else {
+                        expected_state.and_then(|g| g.failure(&before_state))
+                    };
+                    if failure.is_none() && receipt_ticket.is_some() {
+                        failure = self
+                            .mixer
+                            .command_prerequisite_failure(&command, 0)
+                            .map(|f| f.cause);
+                        if let EngineCommand::PlayQuantized {
+                            clock,
+                            at_seconds: Some(at),
+                            ..
+                        } = &command
+                        {
+                            if *at < self.mixer.decks[*clock].seconds() {
+                                failure = Some(CommandFailureCause::DeadlineMissed);
+                            }
+                        }
+                    }
+                    let cancel = matches!(command, EngineCommand::CancelLaunch { .. });
+                    if failure.is_none() {
                         let before = self.mixer.control_revision;
                         self.mixer.command(command);
-                        accepted = self.mixer.control_revision == before.wrapping_add(1);
+                        // Native macros can issue several literal controls.
+                        if self.mixer.control_revision == before {
+                            failure = Some(CommandFailureCause::LaunchAborted);
+                        }
                     }
                     if let Some(ticket) = receipt_ticket {
                         self.mixer.guarded_control_receipts[ticket as usize % 64] =
-                            (ticket << 2) | if accepted { 1 } else { 2 };
+                            (ticket << 2) | if failure.is_none() { 1 } else { 2 };
+                        self.mixer.direct_control_receipts[ticket as usize % 64] =
+                            Some(DirectControlReceipt {
+                                ticket,
+                                frame: self.mixer.rendered_frames,
+                                deck,
+                                outcome: if failure.is_some() {
+                                    DirectControlOutcome::Rejected
+                                } else if !cancel {
+                                    DirectControlOutcome::Applied
+                                } else if before_state.launch_pending {
+                                    DirectControlOutcome::CancelledPending
+                                } else {
+                                    DirectControlOutcome::NoPendingLaunch
+                                },
+                                failure,
+                                before: before_state,
+                                after: self.mixer.direct_deck_state(deck),
+                            });
                     }
                 }
                 RenderCommand::SessionEndpoint {
@@ -732,6 +780,19 @@ impl EngineHandle {
         let batch = scheduled::compile(id, schedule, commands, &self.scheduled_snapshot()?)?;
         self.enqueue(RenderCommand::ArmBatch(batch))
     }
+    pub fn arm_performance(
+        &self,
+        id: u64,
+        plan: &control_protocol::performance::Plan,
+    ) -> Result<control_protocol::performance::Validation, control_protocol::ControlError> {
+        let snapshot = self
+            .scheduled_snapshot()
+            .map_err(|e| control_protocol::ControlError::new("snapshot_unavailable", e))?;
+        let compiled = performance::compile(id, plan, &snapshot)?;
+        self.enqueue(RenderCommand::ArmBatch(compiled.batch))
+            .map_err(|e| control_protocol::ControlError::new("queue_full", e))?;
+        Ok(compiled.validation)
+    }
     pub fn arm_command_queue(&self, id: u64) -> Result<(), String> {
         self.enqueue(RenderCommand::ArmBatch(scheduled::compile_command_queue(
             id,
@@ -833,7 +894,7 @@ impl EngineHandle {
         command: EngineCommand,
         expected: Option<u64>,
     ) -> Result<(), String> {
-        self.command_with_revisions(command, expected, None)
+        self.command_with_revisions(command, expected, None, None)
     }
     /// Apply a preparation control only while the observed controls still belong
     /// to the caller. The render thread repeats the check so queued manual input
@@ -854,9 +915,94 @@ impl EngineHandle {
         self.command_with_revisions(
             command,
             expected_load_revision,
-            Some((expected_control_revision, ticket)),
+            Some((Some(expected_control_revision), ticket)),
+            None,
         )?;
         Ok(ticket)
+    }
+    /// Direct caller expectations are rechecked by the callback, before any
+    /// transport/control side effect. No guard is inferred for live gestures.
+    pub fn command_for_state(
+        &self,
+        command: EngineCommand,
+        expected_load_revision: Option<u64>,
+        expected_state: Option<DirectStateGuard>,
+    ) -> Result<u64, String> {
+        command.validate()?;
+        let deck = command
+            .deck()
+            .ok_or("Direct state receipts require a deck command")?;
+        if let Some(guard) = expected_state {
+            guard.validate().map_err(str::to_owned)?;
+            if let Some(cause) = guard.failure(&self.direct_deck_state(deck)) {
+                return Err(format!(
+                    "{}: direct state expectation failed before enqueue",
+                    serde_json::to_value(cause).unwrap().as_str().unwrap()
+                ));
+            }
+        }
+        let ticket = self
+            .shared
+            .next_control_receipt
+            .fetch_add(1, Ordering::Relaxed);
+        self.command_with_revisions(
+            command,
+            expected_load_revision,
+            Some((None, ticket)),
+            expected_state,
+        )?;
+        Ok(ticket)
+    }
+    pub fn direct_deck_state(&self, deck: usize) -> DirectDeckState {
+        let s = self.transport_snapshot();
+        let d = &s.decks[deck];
+        DirectDeckState {
+            load_revision: s.load_revisions[deck],
+            position_revision: d.position_revision,
+            playing: d.playing,
+            position_seconds: d.position_seconds,
+            channel_fader: d.channel_fader,
+            channel_fader_actual: d.channel_fader_actual,
+            launch_pending: d.launch_pending,
+            launch_clock: d.launch_clock,
+            launch_at_seconds: d.launch_at_seconds,
+            channel_fader_ramp_active: s.active_ramps[ControlTarget::ChannelFader { deck }.index()],
+        }
+    }
+    pub fn wait_for_direct_receipt(
+        &self,
+        ticket: u64,
+        timeout: Duration,
+    ) -> Result<DirectControlReceipt, String> {
+        if ticket == 0 || ticket >= 1 << 62 {
+            return Err("Invalid control receipt ticket".into());
+        }
+        let started = std::time::Instant::now();
+        loop {
+            if let Some(receipt) = self.direct_control_receipt(ticket)? {
+                return Ok(receipt);
+            }
+            if started.elapsed() >= timeout {
+                return Err(
+                    "Timed out waiting for direct control application; retry the same request ID"
+                        .into(),
+                );
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
+    }
+    pub fn direct_control_receipt(
+        &self,
+        ticket: u64,
+    ) -> Result<Option<DirectControlReceipt>, String> {
+        if ticket == 0 || ticket >= 1 << 62 {
+            return Err("Invalid control receipt ticket".into());
+        }
+        match self.shared.atoms.direct_control_receipt(ticket) {
+            Some(receipt) if receipt.ticket == ticket => Ok(Some(receipt)),
+            Some(receipt) if receipt.ticket > ticket => Err("Control receipt expired".into()),
+            _ => Ok(None),
+        }
     }
     /// Atomically finish an application-owned session. Source loads may change,
     /// but manual controls and audio restarts revoke this queued endpoint.
@@ -917,7 +1063,8 @@ impl EngineHandle {
         &self,
         mut command: EngineCommand,
         expected: Option<u64>,
-        guard: Option<(u64, u64)>,
+        guard: Option<(Option<u64>, u64)>,
+        expected_state: Option<DirectStateGuard>,
     ) -> Result<(), String> {
         command.validate()?;
         self.ensure_prepared(&command)?;
@@ -931,7 +1078,7 @@ impl EngineHandle {
         } else {
             self.transport_snapshot()
         };
-        if guard.is_some_and(|(r, _)| r != transport.control_revision) {
+        if guard.is_some_and(|(r, _)| r.is_some_and(|r| r != transport.control_revision)) {
             return Err("Control revision conflict: manual controls changed".into());
         }
         if let EngineCommand::Play { deck } | EngineCommand::TogglePlay { deck } = command {
@@ -1013,27 +1160,36 @@ impl EngineHandle {
             let a = &transport.decks[clock];
             let b = &transport.decks[deck];
             if self.load_revision(clock) != clock_revision {
-                return Err("Loaded source revision conflict on launch clock".into());
+                return Err(
+                    "clock_source_changed: Loaded source revision conflict on launch clock".into(),
+                );
             }
-            if !transport.running || !a.playing || b.playing {
-                return Err("Quantized launch requires running audio, a playing clock and a paused incoming deck".into());
+            if !transport.running {
+                return Err("audio_not_running: Quantized launch requires running audio".into());
+            }
+            if !a.playing {
+                return Err("clock_not_playing: Quantized launch clock is paused".into());
+            }
+            if b.playing {
+                return Err(
+                    "incoming_already_playing: Quantized launch target is already playing".into(),
+                );
             }
             if !a.beatgrid_valid || !b.beatgrid_valid {
                 return Err(
-                    "Quantized launch requires detected or manually aligned grids on both decks"
+                    "grid_missing: Quantized launch requires detected or manually aligned grids on both decks"
                         .into(),
                 );
             }
-            if a.jog_touch
-                || b.jog_touch
-                || a.loop_start_seconds.is_some()
-                || b.loop_start_seconds.is_some()
-            {
-                return Err("Release jog holds and loops before scheduling a launch".into());
+            if a.jog_touch || b.jog_touch {
+                return Err("jog_held: Release jog holds before scheduling a launch".into());
+            }
+            if a.loop_start_seconds.is_some() || b.loop_start_seconds.is_some() {
+                return Err("loop_active: Release loops before scheduling a launch".into());
             }
             if b.preparation_pending {
                 return Err(
-                    "Wait for incoming tempo/pitch preparation before scheduling a launch".into(),
+                    "preparation_pending: Wait for incoming tempo/pitch preparation before scheduling a launch".into(),
                 );
             }
             let beat = a
@@ -1085,7 +1241,8 @@ impl EngineHandle {
                 command,
                 deck,
                 revision,
-                control_revision: guard.map(|(r, _)| r),
+                control_revision: guard.and_then(|(r, _)| r),
+                expected_state,
                 receipt_ticket: guard.map(|(_, ticket)| ticket),
             }
         } else {
@@ -2280,6 +2437,7 @@ mod tests {
                 deck: 1,
                 revision: 0,
                 control_revision: Some(0),
+                expected_state: None,
                 receipt_ticket: Some(1),
             })
             .unwrap();
@@ -2293,12 +2451,329 @@ mod tests {
                 deck: 1,
                 revision: 0,
                 control_revision: Some(1),
+                expected_state: None,
                 receipt_ticket: Some(2),
             })
             .unwrap();
         render.drain();
         assert_eq!(render.mixer.decks[1].channel_fader.target, 0.);
         assert_eq!(render.mixer.guarded_control_receipts[2], (2 << 2) | 1);
+    }
+    fn direct_test_render() -> (Producer<RenderCommand>, RenderState) {
+        let (producer, consumer) = RingBuffer::new(16);
+        let (retired, _) = RingBuffer::new(16);
+        let mut mixer = Mixer::new();
+        mixer.sample_rate = 1000;
+        let mut analysis = decode::demo_track(0).analysis.clone();
+        analysis.duration_seconds = 10.;
+        analysis.bpm = Some(120.);
+        let track = Arc::new(decode::TrackData {
+            samples: vec![[0.1; 2]; 10000],
+            sample_rate: 1000,
+            analysis,
+            analysis_pending: false,
+        });
+        for deck in 0..2 {
+            mixer.load(deck, track.clone());
+            mixer.decks[deck].grid_uniform = true;
+            mixer.decks[deck].grid_valid = true;
+            mixer.decks[deck].grid_offset = 0.;
+        }
+        mixer.decks[0].playing = true;
+        mixer.decks[1].channel_fader.target = 0.;
+        mixer.decks[1].channel_fader.value = 0.;
+        (
+            producer,
+            RenderState {
+                mixer,
+                commands: consumer,
+                retired,
+                recording: None,
+                routing: Default::default(),
+                channels: 2,
+            },
+        )
+    }
+    fn direct_test_command(
+        command: EngineCommand,
+        guard: Option<DirectStateGuard>,
+        ticket: u64,
+    ) -> RenderCommand {
+        RenderCommand::GuardedControl {
+            command,
+            deck: 1,
+            revision: 0,
+            control_revision: None,
+            expected_state: guard,
+            receipt_ticket: Some(ticket),
+        }
+    }
+    #[test]
+    fn direct_cancel_launch_receipt_distinguishes_boundary_race_without_stopping_music() {
+        for launch_wins in [false, true] {
+            let (mut producer, mut render) = direct_test_render();
+            producer
+                .push(RenderCommand::Control(EngineCommand::PlayQuantized {
+                    deck: 1,
+                    clock: 0,
+                    clock_revision: 0,
+                    at_seconds: Some(0.5),
+                    quantize: 1.,
+                }))
+                .unwrap();
+            producer
+                .push(RenderCommand::Control(EngineCommand::Ramp {
+                    target: ControlTarget::ChannelFader { deck: 1 },
+                    value: 1.,
+                    seconds: 2.,
+                    clock: None,
+                    beats: None,
+                    quantize: None,
+                }))
+                .unwrap();
+            render.drain();
+            if launch_wins {
+                for _ in 0..700 {
+                    render.mixer.frame();
+                }
+            }
+            producer
+                .push(direct_test_command(
+                    EngineCommand::CancelLaunch { deck: 1 },
+                    None,
+                    1,
+                ))
+                .unwrap();
+            render.drain();
+            let receipt = render.mixer.direct_control_receipts[1].unwrap();
+            assert_eq!(
+                receipt.outcome,
+                if launch_wins {
+                    DirectControlOutcome::NoPendingLaunch
+                } else {
+                    DirectControlOutcome::CancelledPending
+                }
+            );
+            assert_eq!(receipt.before.launch_pending, !launch_wins);
+            assert_eq!(receipt.after.playing, launch_wins);
+            assert!(!receipt.after.launch_pending);
+            assert!(
+                receipt.after.channel_fader_ramp_active,
+                "cancel_launch does not cancel an independent ramp"
+            );
+            let atoms = SnapshotAtoms::new();
+            atoms.publish(&render.mixer, 2, 64, [0.; 2], [0.; 2]);
+            assert_eq!(atoms.direct_control_receipt(1), Some(receipt));
+            render.mixer.frame();
+            atoms.publish(&render.mixer, 2, 64, [0.; 2], [0.; 2]);
+            assert_eq!(
+                atoms.direct_control_receipt(1),
+                Some(receipt),
+                "receipt remains the callback decision, not a later snapshot"
+            );
+        }
+    }
+    #[test]
+    fn direct_guarded_seek_rejects_callback_race_without_transport_or_ramp_side_effects() {
+        let (mut producer, mut render) = direct_test_render();
+        producer
+            .push(RenderCommand::Control(EngineCommand::Play { deck: 1 }))
+            .unwrap();
+        producer
+            .push(RenderCommand::Control(EngineCommand::Ramp {
+                target: ControlTarget::ChannelFader { deck: 1 },
+                value: 1.,
+                seconds: 2.,
+                clock: None,
+                beats: None,
+                quantize: None,
+            }))
+            .unwrap();
+        producer
+            .push(direct_test_command(
+                EngineCommand::Seek {
+                    deck: 1,
+                    seconds: 4.,
+                },
+                Some(DirectStateGuard {
+                    playing: Some(false),
+                    launch_pending: Some(false),
+                    channel_fader_max: Some(0.002),
+                }),
+                2,
+            ))
+            .unwrap();
+        render.drain();
+        let receipt = render.mixer.direct_control_receipts[2].unwrap();
+        assert_eq!(receipt.failure, Some(CommandFailureCause::PlayingMismatch));
+        assert_eq!(receipt.before, receipt.after);
+        assert!(receipt.after.playing);
+        assert!(receipt.after.channel_fader_ramp_active);
+        assert_eq!(receipt.after.position_seconds, 0.);
+    }
+    #[test]
+    fn direct_explicit_live_seek_and_nested_toggle_keep_full_transport_authority() {
+        let (mut producer, mut render) = direct_test_render();
+        render.mixer.decks[1].playing = true;
+        producer
+            .push(direct_test_command(
+                EngineCommand::Seek {
+                    deck: 1,
+                    seconds: 4.,
+                },
+                None,
+                3,
+            ))
+            .unwrap();
+        render.drain();
+        let receipt = render.mixer.direct_control_receipts[3].unwrap();
+        assert_eq!(receipt.outcome, DirectControlOutcome::Applied);
+        assert!(receipt.after.playing);
+        assert_eq!(receipt.after.position_seconds, 4.);
+        assert!(receipt.after.position_revision > receipt.before.position_revision);
+        producer
+            .push(direct_test_command(
+                EngineCommand::TogglePlay { deck: 1 },
+                None,
+                4,
+            ))
+            .unwrap();
+        render.drain();
+        let receipt = render.mixer.direct_control_receipts[4].unwrap();
+        assert_eq!(receipt.outcome, DirectControlOutcome::Applied);
+        assert!(!receipt.after.playing);
+    }
+    #[test]
+    fn direct_launch_failure_identifies_playing_target_and_preserves_it() {
+        let (mut producer, mut render) = direct_test_render();
+        render.mixer.decks[1].playing = true;
+        producer
+            .push(direct_test_command(
+                EngineCommand::PlayQuantized {
+                    deck: 1,
+                    clock: 0,
+                    clock_revision: 0,
+                    at_seconds: None,
+                    quantize: 1.,
+                },
+                None,
+                5,
+            ))
+            .unwrap();
+        render.drain();
+        let receipt = render.mixer.direct_control_receipts[5].unwrap();
+        assert_eq!(
+            receipt.failure,
+            Some(CommandFailureCause::IncomingAlreadyPlaying)
+        );
+        assert_eq!(receipt.before, receipt.after);
+    }
+    #[test]
+    fn direct_callback_guards_each_pending_isolation_and_source_predicate() {
+        for scenario in ["pending", "fader_target", "fader_actual", "source"] {
+            let (mut producer, mut render) = direct_test_render();
+            let guard = match scenario {
+                "pending" => {
+                    render.mixer.command(EngineCommand::PlayQuantized {
+                        deck: 1,
+                        clock: 0,
+                        clock_revision: 0,
+                        at_seconds: Some(0.5),
+                        quantize: 1.,
+                    });
+                    DirectStateGuard {
+                        launch_pending: Some(false),
+                        ..Default::default()
+                    }
+                }
+                "fader_target" => {
+                    render.mixer.decks[1].channel_fader.target = 0.9;
+                    DirectStateGuard {
+                        channel_fader_max: Some(0.002),
+                        ..Default::default()
+                    }
+                }
+                "fader_actual" => {
+                    render.mixer.decks[1].channel_fader.value = 0.9;
+                    DirectStateGuard {
+                        channel_fader_max: Some(0.002),
+                        ..Default::default()
+                    }
+                }
+                _ => {
+                    render.mixer.load_revisions[1] = 1;
+                    DirectStateGuard::default()
+                }
+            };
+            producer
+                .push(direct_test_command(
+                    EngineCommand::Seek {
+                        deck: 1,
+                        seconds: 4.,
+                    },
+                    Some(guard),
+                    6,
+                ))
+                .unwrap();
+            render.drain();
+            let r = render.mixer.direct_control_receipts[6].unwrap();
+            assert_eq!(
+                r.failure,
+                Some(match scenario {
+                    "pending" => CommandFailureCause::LaunchPendingMismatch,
+                    "source" => CommandFailureCause::SourceChanged,
+                    _ => CommandFailureCause::FaderNotIsolated,
+                }),
+                "{scenario}"
+            );
+            assert_eq!(r.before, r.after, "{scenario}");
+        }
+    }
+    #[test]
+    fn direct_state_guard_checks_before_enqueue_and_receipt_ring_reports_expiry() {
+        let engine = EngineHandle::new().unwrap();
+        assert!(engine
+            .command_for_state(
+                EngineCommand::Seek {
+                    deck: 1,
+                    seconds: 4.
+                },
+                None,
+                Some(DirectStateGuard {
+                    playing: Some(true),
+                    ..Default::default()
+                })
+            )
+            .unwrap_err()
+            .starts_with("playing_mismatch:"));
+        assert_eq!(engine.direct_control_receipt(1).unwrap(), None);
+        let ticket = engine
+            .command_for_state(
+                EngineCommand::SetChannelFader { deck: 1, value: 0. },
+                None,
+                None,
+            )
+            .unwrap();
+        let receipt = engine
+            .wait_for_direct_receipt(ticket, Duration::from_secs(2))
+            .unwrap();
+        assert_eq!(receipt.outcome, DirectControlOutcome::Applied);
+        assert_eq!(
+            engine.direct_control_receipt(ticket).unwrap(),
+            Some(receipt)
+        );
+        for _ in 0..64 {
+            let t = engine
+                .command_for_state(EngineCommand::CancelLaunch { deck: 1 }, None, None)
+                .unwrap();
+            engine
+                .wait_for_direct_receipt(t, Duration::from_secs(2))
+                .unwrap();
+        }
+        assert!(engine
+            .direct_control_receipt(ticket)
+            .unwrap_err()
+            .contains("expired"));
     }
     #[test]
     fn session_endpoint_survives_source_changes_but_yields_to_manual_input_and_restart() {

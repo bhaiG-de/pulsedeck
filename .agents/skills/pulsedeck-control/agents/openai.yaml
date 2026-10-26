@@ -1,4 +1,9 @@
 interface:
   display_name: "Controlling PulseDeck and workflows"
   short_description: "Prepare decks, run mixes and verify PulseDeck controls"
-  default_prompt: "Use $pulsedeck-control: start supported continuous sets with one mix.queue.start and explicit repertoire/policy; use mix.execute for one chosen move. Follow lifecycle events."
+  default_prompt: "Use $pulsedeck-control with $djing-art to perform the requested mix: choose musical events and control gestures, validate and commit the MCP typed native score, and follow actual receipts. Retain musical ownership when asked to DJ; use app-owned selection when requested."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "pulsedeck"
+      description: "Connected PulseDeck tools for live sources, controls and session observations"

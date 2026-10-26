@@ -4,9 +4,9 @@ Use this reference to interpret observations. `$djing-art` owns selection, phras
 
 ## Waveforms and named regions
 
-`track.inspect` returns bounded bins from existing data. Peak aggregation is a maximum; low/mid/high values aggregate stored RMS on a shared full-band scale. Compare neighboring ranges within the source. A brief peak is not sustained intensity, and a quiet bin may be a gap rather than a section. Null bands are missing evidence. Normalization, mastering, window size and bins straddling range boundaries limit inference. More points cannot exceed stored resolution.
+`track_inspect` returns bounded bins from existing data. Peak aggregation is a maximum; low/mid/high values aggregate stored RMS on a shared full-band scale. Compare neighboring ranges within the source. A brief peak is not sustained intensity, and a quiet bin may be a gap rather than a section. Null bands are missing evidence. Normalization, mastering, window size and bins straddling range boundaries limit inference. More points cannot exceed stored resolution.
 
-Band changes support amplitude/texture/bass-presence hypotheses, not vocals, instrumentation, emotional mood, genre or a verified chorus/drop. JSON-only inspection is not listening. Use available human-authored cue spans with per-point provenance and inspect the surrounding passages. PulseDeck has no automatic cue/section generation. Look before and after a candidate change.
+Band changes support amplitude/texture/bass-presence hypotheses, not vocals, instrumentation, emotional mood, genre or a verified chorus/drop. JSON-only inspection is not listening. Use available human-authored cue spans with per-point provenance and inspect the surrounding passages. PulseDeck has no automatic cue/section generation. Look before and after a candidate change. Repeated stable patterns, sustained withdrawals, increasing activity and strong low/body returns support functional structure hypotheses. Combine these trajectories over counted intervals to design support, anticipation and release; a verified semantic section name is not required. Keep the inference and its provenance distinct from the measurements.
 
 The track-level suggestion score is a waveform loudness/brightness heuristic, not a passage-specific tension measure. Scores shortlist candidates; inspect the intended passages before the art decision. Missing key or vocal evidence stays unknown. See [named anchors and analysis](named-cues-and-suggestions.md).
 
@@ -36,7 +36,7 @@ For bounded inspection, `beat_events.local_tempo` includes source BPM/p05/p95, `
 
 ## Playing tempo and phase
 
-`local_bpm` is the current four-beat fit. `playback_bpm` multiplies it by nominal rate; `actual_playback_bpm` includes rendered local adaptation/phase/bend. `target_playback_bpm` remembers accepted intent. Absolute playback BPM setting uses the local fit at execution and is an entry setting, not a continuing BPM lock. Use valid master/follower Sync for ongoing local adaptation during a variable-tempo blend; it preserves transport position. See the [CLI field details](cli.md#playing-tempo-and-source-bpm).
+`local_bpm` is the current four-beat fit. `playback_bpm` multiplies it by nominal rate; `actual_playback_bpm` includes rendered local adaptation/phase/bend. `target_playback_bpm` remembers accepted intent. Absolute playback BPM setting uses the local fit at execution and is an entry setting, not a continuing BPM lock. Use valid master/follower Sync for ongoing local adaptation during a variable-tempo blend; it preserves transport position. See the [playing tempo and Sync](../pulsedeck-control/references/deck-preparation.md#playing-tempo-sync-and-bars).
 
 For beat phase, read both native `beat_position` values from the same snapshot and wrap B minus A into `[-0.5,0.5)`. With credible same-meter downbeat origins, also inspect modulo the bar length. A two-beat offset in 4/4 can pass fractional alignment and fail bar alignment. Compare actual arrival countdowns for phrase progression. Convert phase to approximate milliseconds with the local effective beat interval, without treating one numeric tolerance as an audible guarantee.
 

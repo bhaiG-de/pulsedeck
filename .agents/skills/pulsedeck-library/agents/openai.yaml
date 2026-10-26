@@ -1,4 +1,9 @@
 interface:
   display_name: "Manage Library"
   short_description: "Manage collections, track analysis and saved cues"
-  default_prompt: "Use $pulsedeck-library to manage the requested PulseDeck library and verify saved changes."
+  default_prompt: "Use $pulsedeck-library to find the requested repertoire, return counted waveform structure and source provenance for musical decisions, or identify available authorized saved changes and report missing MCP capabilities."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "pulsedeck"
+      description: "Connected PulseDeck tools for live sources, controls and session observations"

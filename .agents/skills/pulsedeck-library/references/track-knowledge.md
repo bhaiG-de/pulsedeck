@@ -4,42 +4,46 @@
 
 Bind the source using exactly one of `source` or `deck`. Prefer unloaded source inspection for preparation. Read duration, title/artist, BPM/key estimates and provenance, cue revision, and current source/load revision when loaded. Read [analysis semantics](../../references/musical-evidence.md) for effective grids, repaired pulses and observation limits.
 
-```sh
-pd call track.inspect --args '{"deck":"A","points":64}'
-pd call cues.get --args '{"deck":"A"}'
-```
+Use `track_inspect` arguments such as `{"deck":"A","points":64}` and `cues_get` with `{"deck":"A"}`. These are MCP tool calls, not source-control gestures.
 
-Inspect an overview, then valid bounded windows around the change. `track.inspect` accepts `points` 1–512, not `bins`. Require `0 <= start < end <= duration`. For a request around 2:10, inspect before/after source second 130 and narrow when the original bins support it. More output points do not improve stored temporal resolution.
+Inspect an overview, then valid bounded windows around the change. `track_inspect` accepts `points` 1–512, not `bins`. Require `0 <= start < end <= duration`. For a request around 2:10, inspect before/after source second 130 and narrow when the original bins support it. More output points do not improve stored temporal resolution.
 
-Join manual cue spans to waveform bins and effective beat events. Inspect exact source endpoints, meter, individual cue provenance and current grid revisions. There is no automatically generated section view or cue list. Missing manual cues are normal.
+## Build a counted source map
 
-For a mix, return a bounded evidence packet: source identity/duration/key/BPM and provenance; available human cue spans; exact effective event positions/timestamps around candidate entries, arrivals and outgoing changes; neighboring bands; grid warnings and revisions. `track.inspect` exposes `metadata.cue_points`, `beat_events` and `bins`; `cues.get` has a nested cue object and its own revision. Do not guess missing fields.
-Count beat-position differences over complete ranges. If `beat_events.truncated` is true or `total_in_range` exceeds returned events, narrow/split the interval with enough points (up to 512) before reporting a lead. Do not infer phrase lengths from rounded seconds and whole-track BPM. Keep full event precision in the packet and leave musical judgment to the art skill. Save large responses and extract relevant fields rather than truncating the timing evidence in tool output.
+Use the overview to locate repeating plateaus, withdrawals, increases in activity and sustained returns across low/mid/high bands and peaks. Read bounded windows around changes to distinguish a brief fill from a change that persists. Link adjacent windows and repeated material, rather than returning the largest single peak. Manual/imported cue spans can supply human context; missing cues are normal and do not prevent measured structural inference.
 
-During live preparation, retain complete raw intervals for validation but show the agent only candidate anchors, interval counts, relevant neighboring band summaries, warnings and revisions. Dumping hundreds of bins/events into the conversation consumes the outgoing track's runway. Reuse the current pair's evidence until source/grid identity changes; select exact returned timestamps rather than reconstructing or rounding them.
+Anchor the useful windows to effective beat events. Record source seconds, `beat_position`, meter and the origin/provenance of a phrase hypothesis. A returned downbeat establishes a bar boundary according to the effective grid; a group of eight bars is not automatically a musical phrase. Recurrence and coordinated changes support arrangement boundaries. Let `$djing-art` infer the functional roles and select entries from that map.
 
-For musical entry/exit recommendations use `$djing-art`. Retain raw observed time ranges, candidate beat/bar locations, evidence and uncertainty. Do not seek, trigger a cue, play or alter mixer controls just to inspect. A requested headphone audition belongs to `$pulsedeck-control` and requires isolation/routing.
+`track_inspect` exposes `metadata.cue_points`, `beat_events` and `bins`; `cues_get` has a nested cue object and its own revision. Read actual available fields rather than guessing them. Keep the following compact evidence together:
 
-## Edit one canonical marker
+| Evidence | Useful content |
+|---|---|
+| Identity and tuning | Canonical source/version, duration, BPM/key estimates and confidence/provenance; loaded source/revision when relevant |
+| Clock | Meter and effective downbeat identity; uniform/manual BPM provenance and available neural/local pulse estimates; exact event objects with both beat_index and beat_position, counts and coverage |
+| Source course | Ordered neighboring band/peak windows, change locations, repetition, withdrawal and subsequent return; retain the measured values supporting an inference |
+| Played balance | Available loudness/normalization measurements, source gain and relevant local amplitudes; distinguish raw source RMS from normalized played level |
+| Human knowledge | Existing cue spans/labels, origin/confirmation and cue revision; keep these distinct from new provisional roles |
 
-Read [named anchors](../../references/named-cues-and-suggestions.md) and current `commands describe cues.set`. Canonical points carry stable IDs, source start/end, name/role, manual/imported origin, confirmation and edits. Main, hot and memory slots bind to points. Use one of `point`, `delete_id` or `bind` per canonical request; do not create another marker representation to repair a projection mismatch.
+For a pair, extend the map before first audibility and beyond outgoing clearance to the next meaningful incoming change/developed phrase. Include any intervening sparse span and its beat count. This lets the DJ distinguish a supported approach with a near return from a long simultaneous withdrawal. A source packet supports multiple offsets; it is not an automatically correct mix point.
 
-Before writing, re-read `cues.get`; bind its `expected_revision`. For a loaded target, use the observed top-level `expected_load_revision` as well. A source guard does not guard saved cue edits, and a cue guard does not guard a deck replacement. Use explicit source seconds. Preserve unrelated points/labels, edits and bindings. On revision conflict, inspect and reconcile instead of retrying against a different source.
+Count effective beat-position differences over complete ranges. If `beat_events.truncated` is true or `total_in_range` exceeds returned events, narrow/split the interval with enough points (up to 512) before reporting a lead or duration. Preserve exact returned timestamps; whole-track BPM and rounded seconds do not recover missing beat events. Check local timing warnings and source/analysis identity when joining responses.
 
-For a requested slot edit, JSON hot indices are 0–7 and memory indices 0–9. Prefer a free slot; if occupied, use a replacement only when the request covers it. Memory slots sort chronologically, so re-read their final index. Explicit-time setters preserve transport; a hotcue trigger starts playback and is not a metadata edit. Label inferred roles as candidates.
+Retain full raw responses in working files and give the agent a compact ordered map with relevant anchors, per-window bands, counts, coverage and revisions. Compression must preserve the shape and its following event, not reduce the track to one energy score. Reuse this map while identity/grid/analysis remain compatible. Inspect finer ranges only where the next decision needs them; more requested points cannot restore detail absent from the stored waveform.
 
-Require successful persistence and re-read the canonical cue. Some native edits respond `applied` with `cue_revision`; verify through `cues.get` rather than mistaking a stage name for a failed write. Check the intended point/binding, unchanged unrelated fields and matching source identity. Record before/after transport: paused position stays fixed; playing position should advance continuously with unchanged position revision rather than be identical.
+Functional inference is useful even without semantic annotation: a measured low-band withdrawal and later sustained return can support a planned reduction and restoration of bass weight. It does not by itself prove a vocal, a producer-named drop or an emotional mood. Mark inferred roles and their basis so the art skill can reason concretely without presenting guesses as labels.
 
-## Correct a requested grid
+Inspection never requires seek, cue trigger, Play or mixer movement. A requested headphone audition belongs to `$pulsedeck-control` and requires isolation/routing. Working source maps and transition observations are session notes; saving canonical cues/tags/grid changes is a separate authorized action.
 
-Grid correction is a saved metadata change. Apply it when requested/authorized, not to make an inspection look more confident. Choose a known downbeat with evidence and verify local and later timing. For a loaded target, use the [guarded grid procedure](../../references/cli.md#correct-a-grid-and-queue-a-musical-launch), preferably while paused and isolated.
+## Authorized slot and grid corrections
 
-An offset-only `deck B grid set --offset SECONDS` preserves active neural intervals; it leaves an existing uniform override uniform. `deck B bpm set BPM`, including half/double correction, selects a whole-track constant-tempo grid. Manual origin numbering retains detected meter, with four as the fallback if unknown. These operations preserve transport/cues and persist across reload/reanalysis. Reinspect effective offset, uniform/manual flags, events and saved source identity.
+Read [named anchors](../../references/named-cues-and-suggestions.md) before a saved edit. Arbitrary named-point/binding edits require an unexposed metadata-write capability; report it rather than create a parallel cue store. An explicitly requested loaded-deck slot edit can use the actual `deck_control` setter schema under `expected_load_revision`, followed by `cues_get` verification. Preserve unrelated points, bindings and slots; do not trigger a cue to save it.
 
-Playback matching instead uses `tempo set --bpm` or Sync through the control workflow. Do not correct stored BPM solely because another deck plays at a different tempo. A source grid correction near an armed launch can invalidate native timing; coordinate with its owner instead of changing the clock under queued work.
+Grid correction is a persistent metadata change, not playback matching. When requested, choose a supported downbeat with evidence, preferably on an isolated paused deck. `deck_control` with `set_beatgrid` supplies `offset_seconds` and optional `anchor_index`; offset-only realignment preserves active neural intervals. `set_bpm` with `bpm` selects a whole-source uniform clock, including an intended half/double correction. Bind the observed source revision and reinspect effective grid/provenance, source identity and unchanged transport/cues. Do not change an owned clock underneath an armed score.
 
-## Refresh analysis deliberately
+Playback matching instead uses native `set_playback_bpm`, `set_tempo` or `set_sync` through control. Bulk analysis refresh is not exposed here. Compatible `track_inspect` reads reuse analysis, while an authorized isolated `deck_load` can finish that source's missing analysis before playback. Reanalysis does not create cues or section labels.
 
-Passive reads reuse existing analysis. An inspection request does not authorize expensive refresh or saved metadata changes. For an authorized update use `library analysis update --no-wait`, retain the job/worker ID and inspect completion/errors. `library analysis cancel` stops further work without undoing completed records. A loaded refresh uses guarded `deck B analyze`; wait completion and recheck source/grid/cues.
+## Carry executable anchors through compression
 
-Reanalysis updates BPM, beat/downbeat timing, key and waveforms. It does not generate cues, label sections or fill empty pads. Saved manual/imported markers stay unchanged.
+Keep the selected raw event object beside a rounded display label. For beat-bound scheduling, return its `beat_index` as evidence for obtaining its exact `performance_observe` handle on a loaded source; the effective `beat_position` is for interval counts and can differ from the index. If source seconds are required, pass the original numeric value directly. A display such as 164.097 s can exceed its actual event at 164.09683227539062 s and resolve to the following beat. Returning only the rounded label loses the selected anchor.
+
+Include manual/uniform provenance and effective downbeat identity when discussing rhythmic overlap. A neural summary and a manually overridden clock can describe different pulses. Supply enough fine local band/peak recurrence to investigate a material discrepancy; do not silently rewrite canonical analysis or claim a bar origin from a downbeat-free clock.

@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { LoaderCircle, Radio, Square } from "lucide-react";
 import { control, isDesktop } from "./api";
 import type { NextMove } from "./next-moves";
 import { TECHNIQUE_NAMES } from "./next-moves";
 import type { EnergyDirection } from "./suggestions";
 import {
+  queueStartArgs,
   mergeQueue,
   reorderQueue,
   type QueueTrack,
@@ -17,6 +19,8 @@ export default function SuccessorQueuePanel({
   direction,
   technique,
   scope,
+  carrierPlaying,
+  defaultCollection,
   onActiveChange,
 }: {
   active: boolean;
@@ -24,24 +28,31 @@ export default function SuccessorQueuePanel({
   direction: EnergyDirection;
   technique: string;
   scope: string;
+  carrierPlaying: boolean;
+  defaultCollection: "liked" | "local";
   onActiveChange: (active: boolean) => void;
 }) {
   const [queue, setQueue] = useState<SuccessorQueue | null>(null);
   const [draft, setDraft] = useState<QueueTrack[]>([]);
-  const [mode, setMode] = useState<"ordered" | "collection">("ordered");
+  const [mode, setMode] = useState<"ordered" | "collection">("collection");
   const [collection, setCollection] = useState(
-    scope === "liked" ? "liked" : "local",
+    scope === "liked"
+      ? "liked"
+      : scope === "local"
+        ? "local"
+        : defaultCollection,
   );
   const [minutes, setMinutes] = useState("");
   const [stretch, setStretch] = useState("4");
   const [replace, setReplace] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [statusReady, setStatusReady] = useState(false);
   const running = !!queue?.queue_id && !queue.terminal;
-  const policyDirection = queue?.queue_id
+  const policyDirection = running
     ? (queue?.policy?.energy_direction ?? direction)
     : direction;
-  const policyTechniques = queue?.queue_id
+  const policyTechniques = running
     ? queue?.policy?.techniques
     : technique === "all"
       ? null
@@ -49,13 +60,23 @@ export default function SuccessorQueuePanel({
   const techniqueLabel = policyTechniques?.length
     ? policyTechniques.map((t) => TECHNIQUE_NAMES[t] ?? t).join(", ")
     : "supported techniques";
-  const items = running || queue?.queue_id ? (queue?.items ?? []) : draft;
+  const items = running ? (queue?.items ?? []) : draft;
   const pending = running ? items.filter((i) => i.state === "pending") : draft;
+  useEffect(() => {
+    setCollection(
+      scope === "liked"
+        ? "liked"
+        : scope === "local"
+          ? "local"
+          : defaultCollection,
+    );
+  }, [scope, defaultCollection]);
   useEffect(() => {
     onActiveChange(running);
   }, [onActiveChange, running]);
   useEffect(() => {
     if (!active || !isDesktop) return;
+    setStatusReady(false);
     let disposed = false;
     let unlisten: (() => void) | undefined;
     void listen<SuccessorQueue>("mix-queue-updated", ({ payload }) => {
@@ -68,7 +89,10 @@ export default function SuccessorQueuePanel({
         }
         unlisten = stop;
         const result = await control<SuccessorQueue>("mix.queue.status", {});
-        if (!disposed) setQueue((old) => mergeQueue(old, result));
+        if (!disposed) {
+          setQueue((old) => mergeQueue(old, result));
+          setStatusReady(true);
+        }
       })
       .catch((e) => {
         if (!disposed) setError(String(e));
@@ -117,274 +141,324 @@ export default function SuccessorQueuePanel({
     );
     void edit(order.map((source) => pending.find((i) => i.source === source)!));
   }
+  let startArgs: Record<string, unknown> | null = null;
+  let validationError = "";
+  try {
+    startArgs = queueStartArgs({
+      mode,
+      collection,
+      sources: draft.map((t) => t.source),
+      direction,
+      technique,
+      minutes,
+      stretch,
+      replace,
+    });
+  } catch (e) {
+    validationError = e instanceof Error ? e.message : String(e);
+  }
+  const start = () =>
+    perform(async () => {
+      if (!startArgs) return;
+      if (mode === "collection" && collection === "liked") {
+        const { coverage } = await control<{ coverage: { complete: boolean } }>(
+          "mix.openers",
+          { playlist: "spotify:liked", provider: "spotify", limit: 1 },
+        );
+        if (!coverage.complete)
+          await control("mix.index_scope", { scope: "spotify:liked" });
+      }
+      const result = await control<SuccessorQueue>(
+        "mix.queue.start",
+        startArgs,
+      );
+      setQueue((old) => mergeQueue(old, result));
+    });
+  const stop = () =>
+    perform(async () => {
+      const result = await control<SuccessorQueue>("mix.queue.stop", {
+        queue_id: queue?.queue_id,
+      });
+      setQueue((old) => mergeQueue(old, result));
+    });
+  const current = queue?.items.find((item) => item.id === queue.current_item);
+  const sourceLabel = running
+    ? queue?.mode === "ordered"
+      ? "Ordered tracks"
+      : queue?.policy?.provider === "spotify"
+        ? "Spotify Liked Songs"
+        : "Local library"
+    : mode === "ordered"
+      ? `${draft.length} ordered tracks`
+      : collection === "liked"
+        ? "Spotify Liked Songs"
+        : "Local library";
   const alreadyQueued =
     !!chosen && pending.some((i) => i.source === chosen.source);
+  const durationLabel = running
+    ? queue.finish_unix_ms
+      ? `until ${new Date(queue.finish_unix_ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+      : queue.mode === "ordered"
+        ? "until track order ends"
+        : "until stopped"
+    : minutes.trim()
+      ? `${minutes} min`
+      : mode === "ordered"
+        ? "until track order ends"
+        : "until stopped";
   return (
-    <details className="suggest-successor-queue">
-      <summary>
-        Successor queue{" "}
-        <span>
-          {queue?.queue_id
-            ? queue.readiness === "preparing"
-              ? "Preparing next track"
-              : queue.state
-            : `${draft.length} planned`}
-        </span>
-      </summary>
-      <div className="suggest-queue-content">
-        <p>
-          Queue owns preparation and native transitions. Musical policy:{" "}
-          {policyDirection} energy · {techniqueLabel}. Start a playing carrier
-          first.
+    <section className="suggest-neural-mix" aria-label="Neural Mix">
+      <div className="suggest-neural-mix-bar">
+        <div>
+          <strong>
+            <Radio size={15} aria-hidden="true" /> Neural Mix
+          </strong>
+          <p>Automatic track selection and beatmatched transitions</p>
+        </div>
+        <button
+          type="button"
+          className={`suggest-neural-mix-toggle ${running ? "is-running" : ""}`}
+          disabled={
+            !isDesktop ||
+            busy ||
+            !statusReady ||
+            (!running && (!carrierPlaying || !startArgs))
+          }
+          onClick={() => void (running ? stop() : start())}
+        >
+          {busy ? (
+            <LoaderCircle size={14} className="spin" aria-hidden="true" />
+          ) : running ? (
+            <Square size={13} aria-hidden="true" />
+          ) : (
+            <Radio size={14} aria-hidden="true" />
+          )}
+          {busy
+            ? running
+              ? "Stopping…"
+              : "Starting…"
+            : running
+              ? "Stop Neural Mix"
+              : "Start Neural Mix"}
+        </button>
+      </div>
+      <p className="suggest-neural-mix-status" role="status">
+        {sourceLabel} · {policyDirection} energy · {durationLabel}
+        {running
+          ? ` · ${queue.readiness === "preparing" ? "Preparing next track" : queue.state.replaceAll("_", " ")} · ${queue.completed_moves ?? 0} mixes completed`
+          : ` · up to ±${stretch}% tempo`}
+        {running && current ? ` · Next: ${current.title}` : ""}
+        {!running && queue?.queue_id
+          ? ` · ${queue.state.replaceAll("_", " ")}${queue.reason ? `: ${queue.reason.replaceAll("_", " ")}` : ""}`
+          : ""}
+      </p>
+      {!running && !carrierPlaying && (
+        <p className="suggest-neural-mix-hint">
+          Play a track on an audible deck first.
         </p>
-        {queue?.coverage?.indexed_members != null && (
+      )}
+      {!running && validationError && (
+        <p className="suggest-neural-mix-hint">{validationError}</p>
+      )}
+      {running && (
+        <p className="suggest-neural-mix-hint">
+          Keeps mixing when you close this drawer. Stopping leaves the current
+          track playing.
+        </p>
+      )}
+      {error && (
+        <p className="suggest-error" role="alert">
+          {error}
+        </p>
+      )}
+      <details className="suggest-successor-queue">
+        <summary>Settings &amp; track order</summary>
+        <div className="suggest-queue-content">
           <p>
-            {queue.coverage.indexed_members} tracks indexed ·{" "}
-            {queue.coverage.analysed_members} analysed
-            {queue.coverage.needs_analysis_members > 0 &&
-              " · New candidates are prepared as needed"}
+            {policyDirection} energy · {techniqueLabel}. Choose a collection for
+            automatic selection, or build a track order.
           </p>
-        )}
-        {!running && !queue?.queue_id && (
-          <div className="suggest-queue-policy">
-            <label>
-              Repertoire
-              <select
-                aria-label="Queue repertoire"
-                value={mode}
-                onChange={(e) => {
-                  const value = e.target.value as "ordered" | "collection";
-                  setMode(value);
-                  if (value === "collection" && !minutes) setMinutes("60");
-                }}
-              >
-                <option value="ordered">Ordered tracks</option>
-                <option value="collection">Choose from collection</option>
-              </select>
-            </label>
-            {mode === "collection" && (
+          {queue?.coverage?.indexed_members != null && (
+            <p>
+              {queue.coverage.indexed_members} tracks indexed ·{" "}
+              {queue.coverage.analysed_members} analysed
+              {queue.coverage.needs_analysis_members > 0 &&
+                " · New candidates are prepared as needed"}
+            </p>
+          )}
+          {!running && (
+            <div className="suggest-queue-policy">
               <label>
-                Collection
+                Repertoire
                 <select
-                  aria-label="Queue collection"
-                  value={collection}
-                  onChange={(e) => setCollection(e.target.value)}
+                  aria-label="Neural Mix repertoire"
+                  value={mode}
+                  onChange={(e) => {
+                    const value = e.target.value as "ordered" | "collection";
+                    setMode(value);
+                  }}
                 >
-                  <option value="liked">Spotify Liked Songs</option>
-                  <option value="local">Local library</option>
+                  <option value="ordered">Ordered tracks</option>
+                  <option value="collection">Choose from collection</option>
                 </select>
               </label>
-            )}
-            <label>
-              End after minutes (optional)
-              <input
-                aria-label="Queue duration minutes"
-                type="number"
-                min="0.017"
-                max="1440"
-                step="1"
-                value={minutes}
-                onChange={(e) => setMinutes(e.target.value)}
-                placeholder="Until ordered queue ends"
-              />
-            </label>
-            <label>
-              Maximum tempo change %
-              <input
-                aria-label="Queue maximum stretch"
-                type="number"
-                min="0"
-                max="100"
-                step="0.25"
-                value={stretch}
-                onChange={(e) => setStretch(e.target.value)}
-              />
-            </label>
-          </div>
-        )}
-        {(!queue?.queue_id || running) &&
-          (!running || queue?.mode === "ordered") &&
-          (running || mode === "ordered") && (
-            <button
-              type="button"
-              disabled={!chosen || busy || alreadyQueued}
-              onClick={() =>
-                chosen &&
-                void edit([
-                  ...pending,
-                  {
-                    source: chosen.source,
-                    title: chosen.title,
-                    artist: chosen.artist,
-                    state: "pending",
-                    availability: "analysis_cached",
-                  },
-                ])
-              }
-            >
-              Add selected track to queue
-            </button>
+              {mode === "collection" && (
+                <label>
+                  Collection
+                  <select
+                    aria-label="Neural Mix collection"
+                    value={collection}
+                    onChange={(e) =>
+                      setCollection(
+                        e.target.value === "liked" ? "liked" : "local",
+                      )
+                    }
+                  >
+                    <option value="liked">Spotify Liked Songs</option>
+                    <option value="local">Local library</option>
+                  </select>
+                </label>
+              )}
+              <label>
+                End after minutes (optional)
+                <input
+                  aria-label="Neural Mix duration minutes"
+                  type="number"
+                  min="0.017"
+                  max="1440"
+                  step="1"
+                  value={minutes}
+                  onChange={(e) => setMinutes(e.target.value)}
+                  placeholder={
+                    mode === "collection"
+                      ? "Until stopped"
+                      : "Until track order ends"
+                  }
+                />
+              </label>
+              <label>
+                Maximum tempo change %
+                <input
+                  aria-label="Neural Mix maximum tempo change"
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.25"
+                  value={stretch}
+                  onChange={(e) => setStretch(e.target.value)}
+                />
+              </label>
+            </div>
           )}
-        {!!items.length && (
-          <ol
-            className="suggest-queue-items"
-            aria-label="Successor queue tracks"
-          >
-            {items.map((item, index) => {
-              const pendingIndex = pending.findIndex(
-                (i) => i.source === item.source,
-              );
-              const editable =
-                (!running && !queue?.queue_id) ||
-                (running && item.state === "pending");
-              return (
-                <li key={item.id ?? `${item.source}-${index}`}>
-                  <div>
-                    <strong>{item.title}</strong>
-                    <small>
-                      {item.artist} ·{" "}
-                      {(item.state ?? "pending").replaceAll("_", " ")} ·{" "}
-                      {(item.availability ?? "unchecked").replaceAll("_", " ")}
-                    </small>
-                    {item.reason && (
-                      <small className="suggest-error">{item.reason}</small>
-                    )}
-                  </div>
-                  {editable && (
-                    <div className="suggest-queue-edit">
-                      <button
-                        type="button"
-                        aria-label={`Move ${item.title} earlier`}
-                        disabled={busy || pendingIndex <= 0}
-                        onClick={() => move(pendingIndex, -1)}
-                      >
-                        ↑
-                      </button>
-                      <button
-                        type="button"
-                        aria-label={`Move ${item.title} later`}
-                        disabled={busy || pendingIndex >= pending.length - 1}
-                        onClick={() => move(pendingIndex, 1)}
-                      >
-                        ↓
-                      </button>
-                      <button
-                        type="button"
-                        aria-label={`Remove ${item.title} from queue`}
-                        disabled={busy}
-                        onClick={() =>
-                          void edit(
-                            pending.filter((_, i) => i !== pendingIndex),
-                          )
-                        }
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  )}
-                </li>
-              );
-            })}
-          </ol>
-        )}
-        {queue?.queue_id && (
-          <p role="status">
-            Queue: {queue.state.replaceAll("_", " ")} ·{" "}
-            {queue.completed_moves ?? 0} handovers completed
-            {queue.reason ? ` · ${queue.reason.replaceAll("_", " ")}` : ""}
-          </p>
-        )}
-        {!running && !queue?.queue_id && (
-          <>
-            <label className="suggest-review">
-              <input
-                type="checkbox"
-                checked={replace}
-                onChange={(e) => setReplace(e.target.checked)}
-              />
-              Allow replacing a paused prepared deck
-            </label>
-            <button
-              type="button"
-              disabled={
-                !isDesktop ||
-                busy ||
-                (mode === "ordered" && !draft.length) ||
-                !Number.isFinite(Number(stretch)) ||
-                (minutes !== "" && Number(minutes) <= 0)
-              }
-              onClick={() =>
-                void perform(async () => {
-                  const result = await control<SuccessorQueue>(
-                    "mix.queue.start",
+          {(!running || queue?.mode === "ordered") &&
+            (running || mode === "ordered") && (
+              <button
+                type="button"
+                disabled={!chosen || busy || alreadyQueued}
+                onClick={() =>
+                  chosen &&
+                  void edit([
+                    ...pending,
                     {
-                      ...(mode === "ordered"
-                        ? {
-                            sources: draft.map((t) => t.source),
-                          }
-                        : collection === "liked"
-                          ? { playlist: "spotify:liked", provider: "spotify" }
-                          : { provider: "local" }),
-                      energy_direction: direction,
-                      max_stretch_percent: Number(stretch),
-                      ...(technique !== "all"
-                        ? { techniques: [technique] }
-                        : {}),
-                      replace_prepared: replace,
-                      max_skips: 3,
-                      ...(minutes
-                        ? { duration_seconds: Number(minutes) * 60 }
-                        : {}),
+                      source: chosen.source,
+                      title: chosen.title,
+                      artist: chosen.artist,
+                      state: "pending",
+                      availability: "analysis_cached",
                     },
-                  );
-                  setQueue(result);
-                })
-              }
-            >
-              Start successor queue
-            </button>
-          </>
-        )}
-        {running && (
-          <button
-            type="button"
-            className="danger"
-            disabled={busy}
-            onClick={() =>
-              void perform(async () => {
-                const result = await control<SuccessorQueue>("mix.queue.stop", {
-                  queue_id: queue?.queue_id,
-                });
-                setQueue((old) => mergeQueue(old, result));
-              })
-            }
-          >
-            Stop successor queue
-          </button>
-        )}
-        {!running && !!queue?.queue_id && (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => {
-              setQueue(null);
-              setDraft([]);
-            }}
-          >
-            Plan a new queue
-          </button>
-        )}
-        {error && (
-          <p className="suggest-error" role="alert">
-            {error}
+                  ])
+                }
+              >
+                Add selected track to queue
+              </button>
+            )}
+          {!!items.length && (
+            <ol className="suggest-queue-items" aria-label="Neural Mix tracks">
+              {items.map((item, index) => {
+                const pendingIndex = pending.findIndex(
+                  (i) => i.source === item.source,
+                );
+                const editable =
+                  !running || (running && item.state === "pending");
+                return (
+                  <li key={item.id ?? `${item.source}-${index}`}>
+                    <div>
+                      <strong>{item.title}</strong>
+                      <small>
+                        {item.artist} ·{" "}
+                        {(item.state ?? "pending").replaceAll("_", " ")} ·{" "}
+                        {(item.availability ?? "unchecked").replaceAll(
+                          "_",
+                          " ",
+                        )}
+                      </small>
+                      {item.reason && (
+                        <small className="suggest-error">{item.reason}</small>
+                      )}
+                    </div>
+                    {editable && (
+                      <div className="suggest-queue-edit">
+                        <button
+                          type="button"
+                          aria-label={`Move ${item.title} earlier`}
+                          disabled={busy || pendingIndex <= 0}
+                          onClick={() => move(pendingIndex, -1)}
+                        >
+                          ↑
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Move ${item.title} later`}
+                          disabled={busy || pendingIndex >= pending.length - 1}
+                          onClick={() => move(pendingIndex, 1)}
+                        >
+                          ↓
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Remove ${item.title} from queue`}
+                          disabled={busy}
+                          onClick={() =>
+                            void edit(
+                              pending.filter((_, i) => i !== pendingIndex),
+                            )
+                          }
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ol>
+          )}
+          {queue?.queue_id && (
+            <p role="status">
+              Neural Mix: {queue.state.replaceAll("_", " ")} ·{" "}
+              {queue.completed_moves ?? 0} handovers completed
+              {queue.reason ? ` · ${queue.reason.replaceAll("_", " ")}` : ""}
+            </p>
+          )}
+          {!running && (
+            <>
+              <label className="suggest-review">
+                <input
+                  type="checkbox"
+                  checked={replace}
+                  onChange={(e) => setReplace(e.target.checked)}
+                />
+                Allow replacing a paused prepared deck
+              </label>
+            </>
+          )}
+          <p className="suggest-preview-note">
+            A duration endpoint stops playback at its deadline. Exhausted or
+            failed queues ask for attention and preserve the current music; Stop
+            cancels automation without pausing ordinary playback.
           </p>
-        )}
-        <p className="suggest-preview-note">
-          A duration endpoint stops playback at its deadline. Exhausted or
-          failed queues ask for attention and preserve the current music; Stop
-          cancels automation without pausing ordinary playback.
-        </p>
-      </div>
-    </details>
+        </div>
+      </details>
+    </section>
   );
 }

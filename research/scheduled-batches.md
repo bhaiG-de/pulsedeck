@@ -50,4 +50,4 @@ Open-queue steps have unique string `action_id` values. `batch.append` takes the
 
 `events wait --since CURSOR --job-id JOB_ID --timeout 60s` waits on the existing event stream. An off-callback observer publishes `job.action`, `job.patch` and `job.updated` semantic changes without a CLI status request. Native receipts distinguish dispatch frame from verified completion frame, so a ramp start is not reported as its endpoint finishing. The agent can wait, prepare ahead, append or atomically update while native timing continues. The observer sleeps while idle and wakes on control events; it does no analysis or waveform work.
 
-See the concise [DJ execution reference](../.agents/skills/references/timed-execution.md) for the agent workflow. `tools/skill-trials/incremental_queue_workflow.py` exercises the CLI against generated muted audio in an explicitly isolated profile; it is not a musical strategy.
+See the concise [DJ execution reference](../docs/CLI.md) for the agent workflow. `tools/skill-trials/incremental_queue_workflow.py` exercises the CLI against generated muted audio in an explicitly isolated profile; it is not a musical strategy.

@@ -34,7 +34,11 @@ Use channel faders and crossfader to change contribution, trim/gain to establish
 
 A bass-swap approach often introduces B with attenuated lows, transfers the low end at a relevant boundary, then clears A. Adapt the attenuation and timing to the pair. Cutting lows also affects the kick, while vocal and bass harmonics span multiple bands. Broad EQ cannot extract a clean acappella or guarantee removal of a conflicting part.
 
-Prefer removing excess to adding indiscriminate boost. Avoid hollowing out both tracks or boosting both to manufacture excitement. Reset performance treatments on the freed deck so the next entry does not inherit an unintended filter or missing bass.
+Prefer removing excess to adding indiscriminate boost. Withholding both foundations can deliberately create anticipation when its duration and release are designed; for continuous drive, retain suitable support from one source. Keep boosts within real headroom rather than using gain as a substitute for arrangement. Reset performance treatments on the freed deck so the next entry does not inherit an unintended filter or missing bass.
+
+## Separate tone, contribution and level
+
+Establish a source-tone baseline from representative played material. Keep room/output correction separate from this baseline, and temporary transition coloration separate from both. Opening a filter toward a return is an arrangement gesture; correcting a persistently over-heavy source is a tonal balance decision. Remember which settings should survive the handover.
 
 ## Preserve level and headroom
 
@@ -49,3 +53,18 @@ The musical question is whether perceived level and weight remain appropriate, n
 Specify the event, target, duration and ending: a brief echo of a completed word, a filter opening toward a known arrival, or a restrained tail joining textures. Respect existing production effects and space for the next foreground. Busy source material may need no additional gesture.
 
 Know the actual signal path through the control skill. Per-channel processing and supported native exit recipes can route tails differently; PulseDeck's native echo/reverb exits expose independent post-fader returns. Do not assume a closed fader either kills or preserves every effect tail. Use the executor's documented send closure and bounded return when choosing that recipe. A loop or effect cannot by itself repair wrong phrase placement, an unfinished lyric or a missing replacement groove. Use the controls whose audible contribution serves the idea.
+
+
+## Choose from the whole vocabulary by function
+
+| Musical situation | Useful control construction |
+|---|---|
+| A supports B's sparse approach | Reveal B's useful body/top while A carries lows; exchange lows at B's real return |
+| A's foreground is finishing while B's body becomes denser | Reduce A's channel or selected mid/high contribution around completion, then expose B's foreground; broad EQ changes tone and cannot isolate a singer |
+| Different persistent source tone or local impact | Establish trim/EQ baseline from representative normalized material and preserve headroom through the later dense passage |
+| A clean unit must persist until B arrives | Use a counted, seam-checked loop with a planned release; re-count the source/performance timeline |
+| B's attractive arrival has an unsuitable long lead | Use a different complete cue/entry and recount, rather than playing all of the lead behind closed lows |
+| A completed motif deserves a tail | Shape a bounded echo/reverb send around its ending, leaving space for B's next foreground |
+| A gradual pulse change serves the next section | Place a deliberate source-relative tempo program in suitable material; separate it from phase repair |
+
+Controls are a vocabulary, not a usage quota. A whole-channel exchange may correctly transfer a dense foreground; a bass swap may be enough for complementary arrangements. Choose more controls only when the source map identifies another role to shape. Useful restraint and arbitrary repetition are different: the reason for each retained or changed control must follow this pair's evolving music.

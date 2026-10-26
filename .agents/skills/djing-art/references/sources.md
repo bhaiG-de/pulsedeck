@@ -1,6 +1,6 @@
 # Sources and the limits of the synthesis
 
-The musical guidance was rewritten from the relevant musicianship chapters in the two user-supplied EPUBs. This is an original, selective synthesis for a performing agent, not a replacement for the books. Gear purchasing, promotion, business, and physical vinyl practice were outside this rewrite. Chapter names and EPUB resource paths are stable locators for these copies; reflowable page numbers are not used.
+Both supplied EPUBs were audited cover to cover, including their instructional figures: Morse 51/51 spine resources and 25 images; Broughton/Brewster 67/67 resources, all 50 numbered chapters and 224 nondecorative figures. The performance guidance below is an original selective synthesis, not a replacement for the books. Gear purchasing, promotion, business and physical vinyl exercises were read for context but do not become runtime requirements. Chapter names and EPUB resource paths are stable locators for these copies; reflowable page numbers are not used.
 
 ## Phil Morse — Rock the Dancefloor
 
@@ -41,7 +41,7 @@ These are instructor perspectives, including broad simplifications and period-sp
 - Universal four/eight-bar form, first kick as beat one, and fixed blend lengths: use them as search expectations, then establish actual meter, local phrase origin, pickups and extensions.
 - Key labels as a guarantee of harmony, mandatory perfect pitch, categorical major/minor emotions, or automatic energy from wheel movement: evaluate the played passages, chord context and uncertainty.
 - Simplified rhythm definitions: syncopation concerns emphasis against metrical expectation; swing concerns subdivision timing. Neither means a globally incorrect tempo.
-- Tempo percentages: retain Morse's roughly ±4% as a practical starting guideline for ordinary beatmix selection, not an inaudibility guarantee or universal cap. Broughton/Brewster's roughly ±3% warning concerns pitch changes without key lock, not a time-stretch quality threshold. Wider changes need a musical reason and listening support; use a tempo reset when preserving the record's character matters more than maintaining one BPM. Rate changes can create fractional-semitone tuning shifts.
+- Tempo percentages: retain Morse's roughly ±4% as a practical starting guideline for ordinary beatmix selection, not an inaudibility guarantee or universal cap. Broughton/Brewster chapter 31's roughly ±3% warning concerns pitch without key lock. Chapter 25 also warns that few records retain their character beyond roughly +4% in the context of inheriting an over-fast predecessor, suggesting gradual slowing by about 3% or a purposeful fresh start. These are contextual listening/practice guidelines, not time-stretch quality guarantees. Wider changes need a musical reason and listening support; use a tempo reset when preserving the record's character matters more than maintaining one BPM. Rate changes can create fractional-semitone tuning shifts.
 - Analog meter targets: do not equate an analog nominal 0 dB level with 0 dBFS. Digital peaks need actual headroom.
 - Categorical demographic claims and guesses about a crowd's identity or state: use the brief and observed responses.
 - Blanket rejection of planned sets: preserve user-requested choreography, fixed order and recorded-set preparation. Adaptability is useful for open live selection.
@@ -51,10 +51,10 @@ These are instructor perspectives, including broad simplifications and period-sp
 
 Working backward from the desired arrival operationalizes the books' counting and placement advice. Evidence provenance, exact effective events, source revision checks, compact passage maps, the optional timing helper and the separation of execution from listening quality are adaptations to PulseDeck. They are not claims that the books describe this software.
 
-The worked cases are synthetic arrangements with explicit assumptions. Style guidance is a starting hypothesis; no artist signature or decoded performance is asserted. Runtime capabilities and field semantics come from the neighboring control/library skills, not these historical books.
+Worked cases distinguish synthetic counted arrangements from measured source/transition examples. Style guidance is a starting hypothesis; no artist signature or decoded performance is asserted. Runtime capabilities and field semantics come from the neighboring control/library skills, not these historical books.
 
 ## Skill design sources
 
 [OpenAI's skill guidance](https://developers.openai.com/plugins/build/skills) supports focused workflows with clear decision points, examples and supporting resources. [Rethinking skills and prompts](https://developers.openai.com/blog/rethinking-skills-and-prompts-for-gpt-6-astra) supports precise discovery and avoiding accumulated contradictory instruction. [Testing Agent Skills Systematically with Evals](https://developers.openai.com/blog/eval-skills) supports defining observable outcomes and separating deterministic checks from qualitative assessment.
 
-The entrypoint contains the shared decision process; detailed theory is routed by the question being solved. The books are preparation-time research, not required files or internet lookups during performance. Packaging checks establish discoverability and link integrity; timing tests establish arithmetic behavior. Listening remains necessary to establish the musical result.
+The entrypoint contains the shared decision process; detailed theory is routed by the question being solved. The books are preparation-time research, not required files or internet lookups during performance. Packaging checks establish discoverability and link integrity; timing tests establish arithmetic behavior. Waveform-based evaluations establish structural reasoning and realized control relationships; listening/user feedback establishes additional audible qualities.

@@ -10,7 +10,9 @@
     "package": "tauri build",
     "test": "bash tools/test-all.sh",
     "cli": "bash tools/rust-env.sh cargo run --quiet -p pulsedeck-cli --",
-    "package:macos": "tauri build --bundles app && cargo build --release -p pulsedeck-cli && python3 tools/package-macos.py"
+    "package:macos": "tauri build --bundles app && cargo build --release -p pulsedeck-cli && python3 tools/package-macos.py",
+    "plugin:build": "python3 tools/package-agent-plugin.py",
+    "plugin:test": "python3 tools/test-agent-plugin.py"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.9.0"

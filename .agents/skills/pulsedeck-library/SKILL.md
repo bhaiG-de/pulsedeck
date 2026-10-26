@@ -1,34 +1,43 @@
 ---
 name: pulsedeck-library
-description: Find and organize PulseDeck local tracks and Spotify collections; manage playlists, tags, stored analysis, canonical cues/beatgrids and rekordbox XML. Use for source evidence and saved library knowledge; musical choices use djing-art and deck performance uses pulsedeck-control.
+description: Find PulseDeck tracks and Spotify collections and inspect counted waveform structure and saved cue/grid evidence through MCP. Use for source knowledge and collection requests; pair with djing-art for musical decisions and pulsedeck-control for playback.
 ---
 
-# Manage Library
+# Source knowledge for DJing
 
-Keep the collection and saved source knowledge accurate without disturbing performance. Bind the requested running instance with [CLI setup](../references/cli.md). Discover only unfamiliar methods and use observed source IDs and revisions.
+Use the connected tools in [MCP access and capabilities](../references/mcp.md). Return reliable source identity, collection membership and musical evidence without disturbing playback. Discover only unfamiliar schemas and use observed IDs/revisions. If a required tool is absent, report that missing capability rather than invoking a different transport.
 
-## Select the work
-
-| Request | Reference and responsibility |
+| Request | Reference |
 |---|---|
-| Browse/import, inspect membership, tag, shortlist or save order | [Collections and playlists](references/collections.md): records, pagination, scoped suggestions and verified writes |
-| Inspect passages and return evidence | [Track knowledge](references/track-knowledge.md): bounded reads, manual/imported cues and exact events |
-| Save a cue or correct an authorized grid | [Track knowledge](references/track-knowledge.md): provenance, revisions and narrow edits |
-| Explain or refresh stored analysis, refresh measured features | [Analysis and persistence](references/analysis-and-persistence.md), [analysis semantics](../references/musical-evidence.md) and [named anchors](../references/named-cues-and-suggestions.md) |
-| Exchange saved metadata | [XML exchange](references/xml-exchange.md): preview, partial import and export verification |
+| Browse scoped repertoire, collections or a shortlist | [Collections](references/collections.md) |
+| Decode a source's measured structure or inspect a passage | [Track knowledge](references/track-knowledge.md), [analysis semantics](../references/musical-evidence.md) |
+| Read named source anchors or make an authorized exposed slot/grid edit | [Named anchors](../references/named-cues-and-suggestions.md), [track knowledge](references/track-knowledge.md) |
+| Explain stored analysis and readiness | [Analysis and persistence](references/analysis-and-persistence.md) |
 
-Use [DJing — the art](../djing-art/SKILL.md) to judge successors, phrases and set order. Supply source-specific evidence, not a supposed automatically correct mix point. Use [Controlling PulseDeck and workflows](../pulsedeck-control/SKILL.md) for loading, audition, transport and recording. Complete the authorized parts of compound requests.
+[DJing — the art](../djing-art/SKILL.md) interprets evidence and chooses the combined result; [PulseDeck control](../pulsedeck-control/SKILL.md) prepares and performs it. Complete the available authorized parts of compound requests, and identify any missing write/import/export capability precisely.
 
-## Preserve identity and knowledge
+## Find repertoire for the musical idea
 
-Match canonical ID/path or provider URI, artist/title, duration and version. Preserve the requested collection, membership, order and exclusions. For a set, scoped `mix.openers` and `mix.options` provide useful proposals. The DJ can choose and inspect successive sources itself or use the optional autonomous queue. Collection indexing and audio analysis are separate: an unanalysed song remains valid repertoire and is prepared on demand; do not wait for a large batch to finish before loading the next deck. Browse or shortlist successors when useful for the musical idea. For one individual move use scoped `mix.options`; it searches the indexed analysed collection and returns passage evidence. Avoid separately paging the latest liked songs or loading candidates just to shortlist them. If collection coverage is incomplete, `mix.index_scope` indexes all pages; indexing and audio analysis are separate. Use targeted reads for missing evidence so the active move can be submitted promptly. Do not substitute the whole library for an unavailable scoped cache.
+Preserve the requested collection, exclusions and played history. Match provider URI or canonical ID/path, artist/title, duration and version; a remix or relink can have different structure. Reuse complete indexed scope. `mix_index_scope` obtains missing membership; indexing is separate from audio analysis. An unanalysed song remains eligible and can be prepared on demand on an available isolated target. Do not wait for collection-wide analysis before the next deck can load.
 
-Read-only inspection does not require loading a deck. A performance request permits source reads and necessary preparation, including completing missing playback analysis on the isolated queued target. It does not imply permanent cue edits, playlist replacement or replacing a confirmed grid. Distinguish source BPM/grid correction from playback tempo matching.
+Choose discovery for the question: `library_tracks` and provider collection reads for direction, `library_suggest_next` for a scoped shortlist, and `track_inspect` for actual passage relationships. `mix_openers`/`mix_options` are proposals, not required first steps or the limit of the agent's repertoire. Their rank, selected entry and technique remain choices for the DJ to assess. Keep the requested collection; an incomplete cache is not permission to widen the repertoire.
 
-Keep cue IDs, bindings, provenance, edits. Re-read before a write; use cue `expected_revision` and a loaded target’s `expected_load_revision` for their distinct guards. Reconcile conflicts. Playlist/tag replacements replace arrays: preserve unmentioned content and verify exact saved objects. Playlist writes have no revision guard. XML can partially succeed; do not claim rollback.
+Maintain working source maps and used source IDs. This supports recognition, variety and deliberate callbacks without clearing played history or creating permanent tags/cues.
 
-## Return usable evidence
+## Return a temporal shape
 
-Return selected spans with exact effective event timestamps/beat positions, meter, grid provenance, neighboring features, provenance and uncertainty. Check truncation. Cue names and band energy cannot establish vocals, emotional mood or a verified first drop. Cue generation and automatic section labeling are unavailable. Full source durations and conditional played-set estimates are different quantities.
+For relevant sources supply ordered counted windows: exact effective beat positions/timestamps, meter and grid provenance, low/mid/high and peak behavior, changes before and after the join, and the next sustained return/withdrawal. Preserve event coverage and source/analysis revisions. Missing named cues do not prevent provisional functional inference from recurrence, withdrawal, increasing activity and return.
 
-For writes, verify persistence and unchanged transport; for jobs, inspect terminal status rather than treating `ok:true` as successful completion. On an uncertain timeout, inspect the receipt and state before retrying. Keep saved knowledge, musical judgment and audible quality distinct.
+Capture `track_inspect` tool JSON. The art skill's [offline passage condenser](../djing-art/scripts/passage_map.py) combines those saved packets into a compact counted trajectory, retaining exact anchors and provenance. It never calls the app. Complete truncated ranges with additional MCP inspections before relying on interval counts.
+
+Separate measured local amplitude from rhythmic drive/tension and normalized played level. Raw band averages across different masters are not an energy ranking; a band is not a vocal/instrument label. Let the art skill judge the combined musical course and retain the evidence supporting each inference.
+
+The control validator's transition `forecast` reuses cached loaded-source bands to project the scored exposure on one timeline. Use its source provenance, coverage and omitted ranges to target further inspection. It complements the source map: an unexposed return, a later development outside the sampled forecast or an uncertain loop/filter projection still needs musical interpretation from the relevant bounded source evidence.
+
+## Preserve saved knowledge
+
+Read-only inspection needs no deck load. A performance request allows source reads and necessary isolated preparation, including missing per-source analysis. It does not imply permanent metadata changes, playlist replacement or collection-wide reanalysis.
+
+`cues_get` reads canonical points/bindings. Exposed native slot/grid setters use `deck_control` under current source guards; verify through canonical reads. Arbitrary named-point editing, playlist/tag writes, imports, bulk analysis and XML exchange are not exposed by this connection. Report that limit when requested, preserving existing metadata and playback. Do not replace arrays, trigger a cue or reload a contributing source as a workaround.
+
+Inspect actual persistence/job results; acceptance is not completion. Reconcile a changed source or revision before retrying. Saved evidence, executed controls and listening quality establish different things.

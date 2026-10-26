@@ -1,36 +1,33 @@
-# Timed performances and continuity
+# Timed performance and continuity
 
-Choose direct controls, individually selected native moves, a persistent command session, or the optional successor queue as the performance needs. These are execution choices; they do not dictate songs, phrasing, tempo relationships or techniques.
+The agent keeps choosing the records and arranging their passages. The endpoint session supplies time ownership without choosing songs. Use the connected MCP tools; a missing session tool is a connection/capability problem, not a reason to start a second transport.
 
-## Keep the requested finish time
+## Keep the original finish
 
-`mix.session.start` owns an application-monotonic endpoint, independent of either song's clock. It accepts `duration_seconds` or an absolute `finish_unix_ms`; `prepared_id` is optional. Start it once while a ready carrier is playing. Keep the absolute finish timestamp for recovery instead of starting another full duration. A session never resumes playback after an app restart.
+Start `mix_session_start` once while a ready carrier plays, with exactly one of `duration_seconds` or `finish_unix_ms`. `prepared_id` is optional. A duration request is, for example:
 
-```sh
-pd call mix.session.start --args '{"duration_seconds":3600}'
-pd call mix.session.status --args '{}'
+```json
+{"duration_seconds":3600}
 ```
 
-CLI performance gestures (tempo, loops, EQ, faders, FX and ramps) preserve this endpoint. Human deck/mixer gestures yield the automation; headphone controls and positive master-level adjustments do not cancel it. Explicit session/queue/automation stops and a Pause of the only carrier revoke it. `mix.session.stop` cancels the endpoint and its pending owned move while ordinary music keeps playing; pause the decks too when the user requests music to stop.
+Keep its returned `session_id` and absolute finish. Use `mix_session_status` with that identity and copy the coherent `performance_observe.session` endpoint into a closing score. Score/direct performance gestures preserve the endpoint. Recovery does not earn another full duration; an app restart does not resume playback.
 
-A failed transition or missing audible route is attention, not successful completion. The timer remains active through a recoverable gap and still pauses the decks at the original endpoint. Engine stop/restart, stalled audio or an audio device error interrupts the session. Inspect `continuity_notice`, the actual decks and the event stream. Do not resurrect playback after a genuine user stop.
+`mix_session_stop` cancels that endpoint and its pending owned move while ordinary music keeps playing. If the user wants music stopped, also apply the appropriate direct `pause` controls. `automation_stop` is a broader automation operation; use it only for that intended scope because it also revokes/yields the active endpoint.
 
-## Prepare a chosen successor ahead
+A failed move or missing audible route is attention, not completion. The timer remains active through a recoverable gap and still stops the decks at the original endpoint. Human takeover/stop, engine restart, stalled output or device errors can end authority. Inspect the actual lifecycle and `continuity_notice` before continuing.
 
-Once the incoming song and entry are chosen, load and cue it while the released deck is isolated. Plan the normal musical transition before the current carrier exhausts its usable material. A loaded track or Play behind a closed fader is not an audible handover. Native moves report completion when their final controls and role transfer have been verified; use that event to prepare the released deck.
+## Prepare and arrange the continuation
 
-For direct performance, `mix.session.successor` optionally arms that prepared source as a one-shot emergency handover. It requires an active timed session, a ready paused isolated target and a playing carrier. It does not require analysed phrase/grid evidence. For example, after preparing B:
+Load and cue the chosen successor while its deck is isolated. Plan the normal musical exchange while the carrier still has a useful statement and exits. A loaded track or Play behind a closed fader is not an audible handover. Use verified score receipts to identify the released deck and prepare the following move.
 
-```sh
-pd call mix.session.successor --args '{"deck":"B"}'
-```
+`mix_session_successor` can explicitly reserve a ready paused isolated source as a one-shot emergency handover: `{"deck":"B","session_id":"OBSERVED_SESSION"}`. This is optional artist-selected contingency, not repertoire selection. If the carrier reaches its last second without an active normal transition, the runtime starts that prepared entry, neutralizes its gain/EQ/filter/FX, disables incoming Sync and opens its fader before pausing the outgoing source. It preserves the output route and can fail if that route cannot carry the source. Those tone resets are part of this fallback's contract; use the score's authored recovery when deliberate timbre must be preserved instead.
 
-The normal mix takes priority. If the carrier reaches its last second without an active native transition, this fallback disables incoming Sync, restores its gain/EQ/filter/FX to neutral, plays its current prepared entry and opens its fader. It pauses the outgoing carrier only after the incoming route succeeds. This prevents EOF silence; it is not a phrase-aware blend. It preserves the current output/crossfader route and reports failure if that route cannot carry the incoming track.
+Loading, seeking or playing the reserved target invalidates the reservation. A normal handover consumes it. Cancel with `mix_session_successor` using the same deck/session and `cancel:true`; do not repeatedly rearm a stale entry.
 
-Loading, seeking or playing the target invalidates the reservation. A normal handover consumes it without replay. Rearm after choosing/changing the next entry. Cancel with `mix.session.successor` arguments `deck` and `cancel:true`, or stop the session. It never substitutes an arbitrary idle track.
+## Follow and close musically
 
-## Follow actionable feedback
+Use `events_get` with `session_id`, the saved `since` cursor and a bounded `wait_ms`. `successor_due`, `no_audible_carrier_route` and fallback outcomes are decision prompts, not musical phrase boundaries. Keep the performer active enough to choose and register its next passage; a passive log does not wake an idle agent.
 
-`mix.session.updated` reports `successor_due` when an unarmed carrier has at most a minute remaining, `no_audible_carrier_route` for a gap, and the armed fallback's result. These are prompts to assess the live state, not musical timing rules. Use `events.get` with `session_id` and the last `since` cursor for bounded event waits. A passive observer log alone does not wake an idle performer.
+For the final passage, compare remaining session time with usable source time at its played rate, including loops, tempo changes and final fade. Arrange a worthwhile continuation/extension before exhaustion. Declare `closing` on the final score using the observed session endpoint and place the final gesture with `when:{"type":"finish","before_endpoint_seconds":0}`. The compiler accounts for the action’s curve duration and native completion; choose an earlier finish offset when the musical ending needs it. Validate coverage against the original endpoint. An intentionally earlier silence belongs in the closing plan; an accidental EOF gap does not become a successful finish because the timer later completes.
 
-If silence occurs, restore sound from the intended ready source using current controls rather than an ended outgoing clock. Preserve the original endpoint, report the gap and continue only while the performance remains authorized. Runtime receipts establish execution; listening and musical judgment establish the blend's quality.
+After a failed transition, establish sound from the intended available source and current route; an ended outgoing clock cannot trigger future work. Report any gap and evaluate the recovered musical course separately from the original blend.

@@ -18,7 +18,7 @@ Passive inspection is read-only. A set request does not itself request permanent
 
 ## Apply an authorized update
 
-For requested analysis refresh or grid correction, use [track knowledge](track-knowledge.md#refresh-analysis-deliberately). Retain job identity, inspect completion/errors and reread the canonical result. Cancellation does not roll back records already processed.
+For an exposed requested grid correction, use [track knowledge](track-knowledge.md#authorized-slot-and-grid-corrections). Retain source/revision identity and reread the canonical result. Bulk analysis-refresh tools are not exposed by this connection; report the missing capability rather than starting another transport. Necessary per-source analysis can complete during authorized isolated preparation.
 
 There are no automatic cue-binding or section-vocabulary settings. Analysis covers tempo, beat/downbeat timing, key and waveform features. Manual/imported cues are independent source knowledge and survive reanalysis.
 

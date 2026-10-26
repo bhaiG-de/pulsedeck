@@ -38,6 +38,7 @@ struct DeckAtoms {
     normalization_db: AtomicU32,
     gain: AtomicU32,
     fader: AtomicU32,
+    fader_actual: AtomicU32,
     eq: [AtomicU32; 3],
     filter: AtomicU32,
     cue: AtomicU64,
@@ -60,6 +61,7 @@ struct DeckAtoms {
     grid_anchor: AtomicU64,
     beat_position: AtomicU64,
     launch_at: AtomicU64,
+    launch_clock: AtomicU64,
     sync: AtomicBool,
     sync_min_rate: AtomicU64,
     sync_max_rate: AtomicU64,
@@ -92,6 +94,7 @@ impl DeckAtoms {
             normalization_db: float(0.),
             gain: float(1.0),
             fader: float(1.0),
+            fader_actual: float(1.0),
             eq: std::array::from_fn(|_| float(1.0)),
             filter: float(0.0),
             cue: double(0.0),
@@ -114,6 +117,7 @@ impl DeckAtoms {
             grid_anchor: AtomicU64::new(u64::MAX),
             beat_position: double(f64::NAN),
             launch_at: double(f64::NAN),
+            launch_clock: AtomicU64::new(u64::MAX),
             sync: AtomicBool::new(false),
             sync_min_rate: double(f64::NAN),
             sync_max_rate: double(f64::NAN),
@@ -150,6 +154,7 @@ impl DeckAtoms {
             normalization_gain_db: getf(&self.normalization_db),
             gain: getf(&self.gain),
             channel_fader: getf(&self.fader),
+            channel_fader_actual: getf(&self.fader_actual),
             eq_low: getf(&self.eq[0]),
             eq_mid: getf(&self.eq[1]),
             eq_high: getf(&self.eq[2]),
@@ -179,6 +184,10 @@ impl DeckAtoms {
                 .then(|| self.grid_anchor.load(Ordering::Relaxed) as usize),
             beat_position: optional(getd(&self.beat_position)),
             launch_pending: getd(&self.launch_at).is_finite(),
+            launch_clock: {
+                let clock = self.launch_clock.load(Ordering::Relaxed);
+                (clock < 2).then_some(clock as usize)
+            },
             launch_at_seconds: optional(getd(&self.launch_at)),
             sync_enabled: self.sync.load(Ordering::Relaxed),
             sync_rate_limits: optional(getd(&self.sync_min_rate)).map(|min_rate| SyncRateLimits {
@@ -255,11 +264,12 @@ pub(crate) struct SnapshotAtoms {
     load_revisions: [AtomicU64; 2],
     pub applied_fence: AtomicU64,
     pub guarded_control_receipts: [AtomicU64; 64],
+    direct_control_receipts: [[AtomicU64; 25]; 64],
     control_revision: AtomicU64,
     deck_control_revisions: [AtomicU64; 2],
     target_control_revisions: [AtomicU64; crate::COMMAND_TARGET_COUNT],
-    batch: [AtomicU64; 16],
-    batch_events: [[AtomicU64; 22]; crate::scheduled::MAX_SCHEDULED_STEPS],
+    batch: [AtomicU64; 17],
+    batch_events: [[AtomicU64; 23]; crate::scheduled::MAX_SCHEDULED_STEPS],
     batch_updates: [[AtomicU64; 5]; crate::scheduled::MAX_QUEUE_UPDATES],
     sequence: AtomicU64,
     rate: AtomicU32,
@@ -281,11 +291,64 @@ pub(crate) struct SnapshotAtoms {
     decks: [DeckAtoms; 2],
 }
 impl SnapshotAtoms {
+    /// Same seqlock as transport publication: receipt state is one callback
+    /// decision, never a mixture of a reused ring slot and newer playback.
+    pub fn direct_control_receipt(&self, ticket: u64) -> Option<crate::DirectControlReceipt> {
+        loop {
+            let start = self.sequence.load(Ordering::Acquire);
+            if start & 1 != 0 {
+                std::hint::spin_loop();
+                continue;
+            }
+            let words = self.direct_control_receipts[ticket as usize % 64]
+                .each_ref()
+                .map(|a| a.load(Ordering::Relaxed));
+            std::sync::atomic::fence(Ordering::Acquire);
+            if self.sequence.load(Ordering::Acquire) != start {
+                continue;
+            }
+            if words[0] == 0 {
+                return None;
+            }
+            let state = |w: &[u64]| crate::DirectDeckState {
+                load_revision: w[0],
+                position_revision: w[1],
+                playing: w[2] != 0,
+                position_seconds: f64::from_bits(w[3]),
+                channel_fader: f32::from_bits(w[4] as u32),
+                channel_fader_actual: f32::from_bits(w[5] as u32),
+                launch_pending: w[6] != 0,
+                launch_at_seconds: {
+                    let at = f64::from_bits(w[7]);
+                    at.is_finite().then_some(at)
+                },
+                channel_fader_ramp_active: w[8] != 0,
+                launch_clock: (w[9] < 2).then_some(w[9] as usize),
+            };
+            return Some(crate::DirectControlReceipt {
+                ticket: words[0],
+                frame: words[1],
+                deck: words[2] as usize,
+                outcome: match words[3] {
+                    0 => crate::DirectControlOutcome::Applied,
+                    1 => crate::DirectControlOutcome::CancelledPending,
+                    2 => crate::DirectControlOutcome::NoPendingLaunch,
+                    _ => crate::DirectControlOutcome::Rejected,
+                },
+                failure: crate::CommandFailureCause::from_code(words[4]),
+                before: state(&words[5..15]),
+                after: state(&words[15..25]),
+            });
+        }
+    }
     pub fn new() -> Self {
         Self {
             quality: QualityAtoms::new(),
             applied_fence: AtomicU64::new(0),
             guarded_control_receipts: std::array::from_fn(|_| AtomicU64::new(0)),
+            direct_control_receipts: std::array::from_fn(|_| {
+                std::array::from_fn(|_| AtomicU64::new(0))
+            }),
             control_revision: AtomicU64::new(0),
             deck_control_revisions: std::array::from_fn(|_| AtomicU64::new(0)),
             target_control_revisions: std::array::from_fn(|_| AtomicU64::new(0)),
@@ -315,6 +378,49 @@ impl SnapshotAtoms {
     }
     pub fn publish(&self, m: &Mixer, channels: u16, frames: u32, master: [f32; 2], cue: [f32; 2]) {
         self.sequence.fetch_add(1, Ordering::AcqRel);
+        for (atoms, receipt) in self
+            .direct_control_receipts
+            .iter()
+            .zip(m.direct_control_receipts)
+        {
+            let Some(receipt) = receipt else { continue };
+            if atoms[0].load(Ordering::Relaxed) == receipt.ticket {
+                continue;
+            }
+            let mut words = [0; 25];
+            words[..5].copy_from_slice(&[
+                receipt.ticket,
+                receipt.frame,
+                receipt.deck as u64,
+                match receipt.outcome {
+                    crate::DirectControlOutcome::Applied => 0,
+                    crate::DirectControlOutcome::CancelledPending => 1,
+                    crate::DirectControlOutcome::NoPendingLaunch => 2,
+                    crate::DirectControlOutcome::Rejected => 3,
+                },
+                receipt.failure.map_or(0, |f| f as u64),
+            ]);
+            for (chunk, state) in words[5..]
+                .chunks_mut(10)
+                .zip([receipt.before, receipt.after])
+            {
+                chunk.copy_from_slice(&[
+                    state.load_revision,
+                    state.position_revision,
+                    state.playing as u64,
+                    state.position_seconds.to_bits(),
+                    state.channel_fader.to_bits() as u64,
+                    state.channel_fader_actual.to_bits() as u64,
+                    state.launch_pending as u64,
+                    state.launch_at_seconds.unwrap_or(f64::NAN).to_bits(),
+                    state.channel_fader_ramp_active as u64,
+                    state.launch_clock.map_or(u64::MAX, |c| c as u64),
+                ]);
+            }
+            for (atom, word) in atoms.iter().zip(words) {
+                atom.store(word, Ordering::Relaxed);
+            }
+        }
         for (a, v) in self
             .guarded_control_receipts
             .iter()
@@ -357,6 +463,7 @@ impl SnapshotAtoms {
                 b.update_count as u64,
                 b.command_queue as u64,
                 decks as u64,
+                (b.recovery_end != 0) as u64,
             ];
             for (a, v) in self.batch.iter().zip(values) {
                 a.store(v, Ordering::Relaxed);
@@ -398,6 +505,7 @@ impl SnapshotAtoms {
                         .unwrap_or(f64::NAN)
                         .to_bits(),
                     e.ramp_end_frame.unwrap_or(u64::MAX),
+                    e.curve_boundary_verified as u64,
                 ]) {
                     slot.store(v, Ordering::Relaxed);
                 }
@@ -481,6 +589,7 @@ impl SnapshotAtoms {
             );
             putf(&a.gain, d.gain.target);
             putf(&a.fader, d.channel_fader.target);
+            putf(&a.fader_actual, d.channel_fader.value);
             for j in 0..3 {
                 putf(&a.eq[j], d.eq[j].target);
             }
@@ -535,6 +644,10 @@ impl SnapshotAtoms {
                 &a.launch_at,
                 m.launches[i].map_or(f64::NAN, |p| p.at_seconds),
             );
+            a.launch_clock.store(
+                m.launches[i].map_or(u64::MAX, |p| p.clock as u64),
+                Ordering::Relaxed,
+            );
             a.sync.store(d.sync_enabled, Ordering::Relaxed);
             putd(
                 &a.sync_min_rate,
@@ -566,7 +679,7 @@ impl SnapshotAtoms {
                 std::hint::spin_loop();
                 continue;
             }
-            let batch: [u64; 16] = std::array::from_fn(|i| self.batch[i].load(Ordering::Relaxed));
+            let batch: [u64; 17] = std::array::from_fn(|i| self.batch[i].load(Ordering::Relaxed));
             let mut result = EngineSnapshot {
                 engine_epoch: self.stream_revision.load(Ordering::Relaxed),
                 control_revision: self.control_revision.load(Ordering::Relaxed),
@@ -578,6 +691,7 @@ impl SnapshotAtoms {
                 }),
                 scheduled_batch: crate::scheduled::ScheduledBatchSnapshot {
                     command_queue: batch[14] != 0,
+                    recovery_applied: batch[16] != 0,
                     revision: batch[7],
                     open: batch[8] != 0,
                     clock: batch[9] as usize,
@@ -666,6 +780,7 @@ impl SnapshotAtoms {
                                 let v = a[21].load(Ordering::Relaxed);
                                 (v != u64::MAX).then_some(v)
                             },
+                            curve_boundary_verified: a[22].load(Ordering::Relaxed) != 0,
                         })
                         .collect(),
                 },

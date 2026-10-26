@@ -892,6 +892,27 @@ fn engine_command_inner(
     human_control: bool,
     expected_revision: Option<u64>,
 ) -> Result<(), String> {
+    engine_command_inner_tracked(
+        app,
+        state,
+        command,
+        smart_modes,
+        human_control,
+        expected_revision,
+        None,
+    )
+    .map(|_| ())
+}
+
+fn engine_command_inner_tracked(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    command: EngineCommand,
+    smart_modes: bool,
+    human_control: bool,
+    expected_revision: Option<u64>,
+    direct: Option<(Option<deck_engine::DirectStateGuard>, std::time::Duration)>,
+) -> Result<Option<deck_engine::DirectControlReceipt>, String> {
     if command
         .deck()
         .is_some_and(|d| expected_revision.is_some_and(|r| state.engine.load_revision(d) != r))
@@ -913,7 +934,7 @@ fn engine_command_inner(
                     value: (position + 1.) * 0.5,
                 },
             )?;
-            return Ok(());
+            return Ok(None);
         }
     }
     if let EngineCommand::SetFilter { deck, amount } = command {
@@ -931,7 +952,7 @@ fn engine_command_inner(
                     value: (amount + 1.) * 0.5,
                 },
             )?;
-            return Ok(());
+            return Ok(None);
         }
     }
     let manual_bpm = if let EngineCommand::SetBpm { deck, bpm } = &command {
@@ -961,9 +982,24 @@ fn engine_command_inner(
     } else {
         None
     };
-    state
-        .engine
-        .command_for_revision(command.clone(), expected_revision)?;
+    let direct_receipt = if let Some((guard, timeout)) = direct {
+        let ticket = state
+            .engine
+            .command_for_state(command.clone(), expected_revision, guard)?;
+        let receipt = state
+            .engine
+            .wait_for_direct_receipt(ticket, timeout)
+            .map_err(|e| format!("{e}; direct_receipt_ticket={ticket}"))?;
+        if receipt.failure.is_some() {
+            return Ok(Some(receipt));
+        }
+        Some(receipt)
+    } else {
+        state
+            .engine
+            .command_for_revision(command.clone(), expected_revision)?;
+        None
+    };
     control::mix_session_control(&app, &command, human_control);
     state
         .controller
@@ -1030,7 +1066,7 @@ fn engine_command_inner(
             )?;
         }
     }
-    Ok(())
+    Ok(direct_receipt)
 }
 
 fn set_controller_selection(state: State<'_, AppState>, track_id: i64) -> Result<(), String> {

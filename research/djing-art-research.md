@@ -6,7 +6,7 @@ The central design change is to make the agent choose **a relationship between t
 
 ## What the current skills already know
 
-Before consolidation, the musicianship reference already distinguished beats, bars, phrases and sections, counted backward from an arrival, protected requested payoffs, and considered spectral balance. The transition skill already requested evidence and completion checks. These responsibilities now live in [DJing — the art](../.agents/skills/djing-art/SKILL.md) and [transition execution](../.agents/skills/pulsedeck-control/references/transitions.md). Adding another sentence saying “mix in phrase” would have repeated existing instructions.
+Before consolidation, the musicianship reference already distinguished beats, bars, phrases and sections, counted backward from an arrival, protected requested payoffs, and considered spectral balance. The transition skill already requested evidence and completion checks. These responsibilities now live in [DJing — the art](../.agents/skills/djing-art/SKILL.md) and [transition execution](../.agents/skills/pulsedeck-control/references/typed-performance.md). Adding another sentence saying “mix in phrase” would have repeated existing instructions.
 
 The likely instruction-design weaknesses were the distribution of musical reasoning across seven entrypoints, the amount of software detail surrounding it, and the lack of enough concrete examples where a mathematically valid transition must be rejected. This is a repository review inference, not a demonstrated explanation of every previous performance failure. The old seven entrypoints and shared references contained roughly 23,000 whitespace-delimited words.
 

@@ -3022,3 +3022,1059 @@ fn dependency_resolution_reports_actual_source_target_before_the_dependent_dispa
     assert!((done.clock_seconds - expected).abs() < 0.002);
     assert_eq!(done.ramp_end_frame, Some(done.frame + 300));
 }
+
+fn artist_score(m: &Mixer) -> control_protocol::performance::Plan {
+    use control_protocol::performance::*;
+    let s = snapshot(m);
+    Plan {
+        operation_id: "typed-score".into(),
+        generation: crate::performance::generation(&s),
+        actions: vec![Action {
+            id: "filter".into(),
+            when: Timing::In {
+                duration: Duration::Seconds { value: 1. },
+            },
+            after: vec![],
+            commands: vec![EngineCommand::SetFilter {
+                deck: 0,
+                amount: 0.25,
+            }],
+            curves: vec![],
+            alignment: None,
+        }],
+        recovery: Recovery {
+            carrier: 0,
+            seconds: 0.2,
+            commands: vec![
+                EngineCommand::SetChannelFader { deck: 0, value: 1. },
+                EngineCommand::SetChannelFader { deck: 1, value: 0. },
+                EngineCommand::SetEq {
+                    deck: 0,
+                    low: 1.,
+                    mid: 0.5,
+                    high: 0.5,
+                },
+                EngineCommand::SetFilter {
+                    deck: 0,
+                    amount: 0.,
+                },
+            ],
+        },
+        closing: None,
+    }
+}
+#[test]
+fn artist_singleton_compiles_and_keeps_authored_recovery_timbre() {
+    let m = mixer();
+    let s = snapshot(&m);
+    let p = artist_score(&m);
+    let compiled = crate::performance::compile(71, &p, &s).unwrap();
+    assert_eq!(compiled.validation.native_steps, 1);
+    assert!(compiled.batch.steps[0].as_ref().unwrap().group_id.is_none());
+    assert!(matches!(
+        compiled.batch.recovery[2],
+        Some(EngineCommand::SetEq {
+            mid: 0.5,
+            high: 0.5,
+            ..
+        })
+    ));
+}
+#[test]
+fn artist_completion_relative_adjacent_curve_segments_share_timing_uncertainty() {
+    use control_protocol::performance::*;
+    let mut m = mixer();
+    let mut p = artist_score(&m);
+    p.actions[0].id = "prepare".into();
+    p.actions.push(Action {
+        id: "blend".into(),
+        when: Timing::After {
+            action: "prepare".into(),
+            offset: Some(Duration::Seconds { value: 0.01 }),
+        },
+        after: vec![],
+        commands: vec![],
+        alignment: None,
+        curves: [
+            ControlTarget::ChannelFader { deck: 1 },
+            ControlTarget::EqLow { deck: 1 },
+            ControlTarget::ChannelFader { deck: 0 },
+            ControlTarget::EqLow { deck: 0 },
+        ]
+        .into_iter()
+        .map(|target| Curve {
+            target,
+            points: vec![
+                CurvePoint {
+                    at: Duration::Seconds { value: 16. },
+                    value: 0.5,
+                },
+                CurvePoint {
+                    at: Duration::Seconds { value: 32. },
+                    value: 0.8,
+                },
+            ],
+        })
+        .collect(),
+    });
+    let s = snapshot(&m);
+    let compiled = crate::performance::compile(88, &p, &s).unwrap();
+    assert_eq!(compiled.validation.native_steps, 9);
+    m.arm_batch(compiled.batch);
+    render(&mut m, 34.);
+    assert_eq!(
+        m.scheduled.as_ref().unwrap().state,
+        BatchLifecycle::Completed
+    );
+    let actual = &m.scheduled.as_ref().unwrap().receipts[..9];
+    assert!(
+        actual.iter().all(|r| r.state == 2),
+        "Every completed curve segment is verified: {actual:?}"
+    );
+    let duplicate = p.actions[1].curves[0].clone();
+    p.actions[1].curves.push(duplicate);
+    assert_eq!(
+        crate::performance::validate(&p, &s).unwrap_err().code,
+        "control_conflict",
+        "Distinct curves still conflict"
+    );
+}
+fn artist_short_filter_curve(m: &Mixer) -> control_protocol::performance::Plan {
+    use control_protocol::performance::*;
+    let mut p = artist_score(m);
+    p.actions[0].id = "filter-curve".into();
+    p.actions[0].when = Timing::In {
+        duration: Duration::Seconds { value: 0.1 },
+    };
+    p.actions[0].commands.clear();
+    p.actions[0].curves = vec![Curve {
+        target: ControlTarget::Filter { deck: 0 },
+        points: vec![
+            CurvePoint {
+                at: Duration::Seconds { value: 0.6 },
+                value: 0.6,
+            },
+            CurvePoint {
+                at: Duration::Seconds { value: 1.2 },
+                value: -0.2,
+            },
+        ],
+    }];
+    p
+}
+#[test]
+fn artist_curve_boundary_verifies_rendered_trajectory_then_continues_without_settling_gap() {
+    use control_protocol::performance::*;
+    for rate in [1000, 48000] {
+        let mut m = mixer();
+        m.sample_rate = rate;
+        let mut p = artist_short_filter_curve(&m);
+        p.actions.push(Action {
+            id: "after-settled-final".into(),
+            when: Timing::After {
+                action: "filter-curve".into(),
+                offset: None,
+            },
+            after: vec![],
+            commands: vec![EngineCommand::SetEq {
+                deck: 1,
+                low: 0.7,
+                mid: 1.,
+                high: 1.,
+            }],
+            curves: vec![],
+            alignment: None,
+        });
+        m.arm_batch(
+            crate::performance::compile(89, &p, &snapshot(&m))
+                .unwrap()
+                .batch,
+        );
+        render(&mut m, 0.7);
+        m.frame();
+        let b = m.scheduled.as_ref().unwrap();
+        assert_eq!(b.receipts[0].state, 2, "{rate}");
+        assert!(b.receipts[0].curve_boundary_verified, "{rate}");
+        assert_eq!(
+            Some(b.receipts[0].completed_frame),
+            b.receipts[0].ramp_end_frame
+        );
+        assert_eq!(
+            b.receipts[1].frame, b.receipts[0].completed_frame,
+            "No held settling interval"
+        );
+        assert!(
+            (m.decks[0].filter.value - 0.6).abs() > crate::dsp::CONTROL_ENDPOINT_TOLERANCE,
+            "An intermediate moving point is a verified trajectory, not settled final output"
+        );
+        assert!(snapshot(&m).scheduled_batch.events[0].curve_boundary_verified);
+        render(&mut m, 0.8);
+        let b = m.scheduled.as_ref().unwrap();
+        assert_eq!(b.state, BatchLifecycle::Completed);
+        assert!(
+            b.receipts[..3].iter().all(|r| r.state == 2),
+            "{rate}: {:?}",
+            &b.receipts[..3]
+        );
+        assert!(
+            !b.receipts[1].curve_boundary_verified,
+            "Final endpoint uses ordinary settling"
+        );
+        assert!(
+            b.receipts[2].frame >= b.receipts[1].completed_frame,
+            "After still waits for the settled final endpoint"
+        );
+        assert!((m.decks[0].filter.value + 0.2).abs() < crate::dsp::CONTROL_ENDPOINT_TOLERANCE);
+    }
+}
+#[test]
+fn artist_curve_continuation_rejects_unverified_actual_control_progression() {
+    let mut m = mixer();
+    let p = artist_short_filter_curve(&m);
+    m.arm_batch(
+        crate::performance::compile(90, &p, &snapshot(&m))
+            .unwrap()
+            .batch,
+    );
+    render(&mut m, 0.7);
+    m.decks[0].filter.value = -0.8; // Fault injection: target progressed, rendered control did not.
+    m.frame();
+    let b = m.scheduled.as_ref().unwrap();
+    assert_eq!(b.state, BatchLifecycle::Recovering);
+    assert!(!b.receipts[0].curve_boundary_verified);
+    assert_eq!(b.receipts[1].state, 4);
+    assert_eq!(b.receipts[1].frame, 0, "Successor never applied");
+    assert_eq!(
+        b.receipts[1].failure.unwrap().cause,
+        CommandFailureCause::ControlEndpointUnverified
+    );
+}
+#[test]
+fn artist_unrelated_replacement_of_unsettled_endpoint_stays_cancelled() {
+    use control_protocol::performance::*;
+    let mut m = mixer();
+    let mut p = artist_score(&m);
+    p.actions[0].when = Timing::In {
+        duration: Duration::Seconds { value: 0.1 },
+    };
+    p.actions[0].commands = vec![EngineCommand::Ramp {
+        target: ControlTarget::Filter { deck: 0 },
+        value: 0.6,
+        seconds: 0.6,
+        clock: None,
+        beats: None,
+        quantize: None,
+    }];
+    p.actions.push(Action {
+        id: "independent-retarget".into(),
+        when: Timing::In {
+            duration: Duration::Seconds { value: 0.7 },
+        },
+        after: vec![],
+        commands: vec![EngineCommand::SetFilter {
+            deck: 0,
+            amount: -0.2,
+        }],
+        curves: vec![],
+        alignment: None,
+    });
+    m.arm_batch(
+        crate::performance::compile(91, &p, &snapshot(&m))
+            .unwrap()
+            .batch,
+    );
+    render(&mut m, 1.);
+    let b = m.scheduled.as_ref().unwrap();
+    assert_eq!(b.receipts[0].state, 3);
+    assert!(!b.receipts[0].curve_boundary_verified);
+    assert_eq!(b.receipts[1].state, 2);
+}
+#[test]
+fn artist_final_pause_after_verified_fade_accepts_only_declared_silence() {
+    use control_protocol::performance::*;
+    let m = mixer();
+    let s = snapshot(&m);
+    let mut p = artist_score(&m);
+    p.actions[0].id = "fade".into();
+    p.actions[0].when = Timing::In {
+        duration: Duration::Seconds { value: 2. },
+    };
+    p.actions[0].commands = vec![EngineCommand::Ramp {
+        target: ControlTarget::ChannelFader { deck: 0 },
+        value: 0.,
+        seconds: 6.,
+        clock: None,
+        beats: None,
+        quantize: None,
+    }];
+    p.actions.push(Action {
+        id: "pause".into(),
+        when: Timing::After {
+            action: "fade".into(),
+            offset: None,
+        },
+        after: vec![],
+        commands: vec![EngineCommand::Pause { deck: 0 }],
+        curves: vec![],
+        alignment: None,
+    });
+    p.closing = Some(Closing {
+        endpoint_seconds: 10.,
+        carrier: 0,
+        silence_from_seconds: Some(8.),
+        session_id: None,
+    });
+    let checked = crate::performance::validate(&p, &s);
+    assert!(checked.is_ok(), "{checked:?}");
+    p.closing.as_mut().unwrap().silence_from_seconds = None;
+    assert!(
+        crate::performance::validate(&p, &s).is_err(),
+        "An unplanned early silent ending stays rejected"
+    );
+}
+#[test]
+fn artist_dependencies_reject_a_fixed_event_before_curve_completion() {
+    use control_protocol::performance::*;
+    let m = mixer();
+    let s = snapshot(&m);
+    let mut p = artist_score(&m);
+    p.actions[0].id = "reveal".into();
+    p.actions[0].when = Timing::Event {
+        event: crate::performance::event_handle(&s, 0, 4).unwrap(),
+    };
+    p.actions[0].commands = vec![EngineCommand::Ramp {
+        target: ControlTarget::EqHigh { deck: 1 },
+        value: 1.,
+        seconds: 16.,
+        clock: None,
+        beats: None,
+        quantize: None,
+    }];
+    p.actions.push(Action {
+        id: "bass".into(),
+        when: Timing::Event {
+            event: crate::performance::event_handle(&s, 0, 35).unwrap(),
+        },
+        after: vec!["reveal".into()],
+        commands: vec![EngineCommand::SetEq {
+            deck: 1,
+            low: 1.,
+            mid: 1.,
+            high: 1.,
+        }],
+        curves: vec![],
+        alignment: None,
+    });
+    assert_eq!(
+        crate::performance::validate(&p, &s).unwrap_err().code,
+        "dependency_deadline"
+    );
+}
+#[test]
+fn artist_observation_clock_does_not_slide_a_closing_deadline() {
+    use control_protocol::performance::*;
+    let m = mixer();
+    let mut s = snapshot(&m);
+    let mut p = artist_score(&m);
+    p.actions[0].when = Timing::In {
+        duration: Duration::Seconds { value: 8. },
+    };
+    p.closing = Some(Closing {
+        endpoint_seconds: 10.,
+        carrier: 0,
+        silence_from_seconds: None,
+        session_id: None,
+    });
+    s.rendered_frames += 9000;
+    assert_eq!(
+        crate::performance::validate(&p, &s).unwrap_err().code,
+        "arming_margin"
+    );
+}
+#[test]
+fn artist_event_identity_rejects_rounded_source_seconds() {
+    let m = mixer();
+    let s = snapshot(&m);
+    let mut h = crate::performance::event_handle(&s, 0, 4).unwrap();
+    h.source_seconds += 0.0001;
+    assert_eq!(
+        crate::performance::resolve_event(&s, &h).unwrap_err().code,
+        "event_mismatch"
+    );
+}
+#[test]
+fn artist_guarded_arm_rejects_manual_changes_before_callback() {
+    let mut m = mixer();
+    let s = snapshot(&m);
+    let p = artist_score(&m);
+    let b = crate::performance::compile(72, &p, &s).unwrap().batch;
+    m.command(EngineCommand::SetFilter {
+        deck: 0,
+        amount: -0.25,
+    });
+    m.arm_batch(b);
+    assert_eq!(m.scheduled.as_ref().unwrap().state, BatchLifecycle::Failed);
+    assert_eq!(
+        m.scheduled.as_ref().unwrap().reason,
+        BatchReason::ManualTakeover
+    );
+}
+#[test]
+fn artist_b_only_carrier_does_not_depend_on_default_a_clock() {
+    let mut m = mixer();
+    m.command(EngineCommand::Pause { deck: 0 });
+    m.command(EngineCommand::Play { deck: 1 });
+    let s = snapshot(&m);
+    let p = artist_score(&m);
+    let b = crate::performance::compile(73, &p, &s).unwrap().batch;
+    m.arm_batch(b);
+    assert_eq!(m.scheduled.as_ref().unwrap().state, BatchLifecycle::Armed);
+}
+#[test]
+fn artist_incoming_source_event_remains_native_after_known_launch() {
+    use control_protocol::performance::*;
+    let m = mixer();
+    let s = snapshot(&m);
+    let mut p = artist_score(&m);
+    p.actions[0].id = "launch".into();
+    p.actions[0].when = Timing::Event {
+        event: crate::performance::event_handle(&s, 0, 4).unwrap(),
+    };
+    p.actions[0].commands = vec![EngineCommand::Play { deck: 1 }];
+    p.actions.push(Action {
+        id: "return".into(),
+        when: Timing::Event {
+            event: crate::performance::event_handle(&s, 1, 32).unwrap(),
+        },
+        after: vec!["launch".into()],
+        commands: vec![EngineCommand::SetEq {
+            deck: 1,
+            low: 1.,
+            mid: 1.,
+            high: 1.,
+        }],
+        curves: vec![],
+        alignment: None,
+    });
+    let b = crate::performance::compile(74, &p, &s).unwrap().batch;
+    let step = b.steps[1].as_ref().unwrap();
+    assert_eq!(step.clock, Some(1));
+    assert_eq!(step.at, 16.);
+}
+#[test]
+fn artist_native_alignment_guard_prevents_partial_coupled_bass() {
+    use control_protocol::performance::*;
+    let mut m = mixer();
+    let s = snapshot(&m);
+    let mut p = artist_score(&m);
+    p.actions[0].commands = vec![
+        EngineCommand::SetEq {
+            deck: 0,
+            low: 0.,
+            mid: 1.,
+            high: 1.,
+        },
+        EngineCommand::SetEq {
+            deck: 1,
+            low: 1.,
+            mid: 1.,
+            high: 1.,
+        },
+    ];
+    p.actions[0].alignment = Some(Alignment {
+        maintain: false,
+        deck: 1,
+        phase_tolerance_beats: 0.05,
+        bar_beats: None,
+    });
+    let b = crate::performance::compile(75, &p, &s).unwrap().batch;
+    m.arm_batch(b);
+    render(&mut m, 1.005);
+    let b = m.scheduled.as_ref().unwrap();
+    assert_eq!(b.state, BatchLifecycle::Recovering);
+    assert_eq!(b.receipts[0].state, 4);
+    assert_eq!(b.receipts[1].state, 4);
+    assert_eq!(m.decks[0].eq[0].target, 1.);
+    assert_eq!(m.decks[1].eq[0].target, 0.3);
+}
+
+fn artist_guarded_launch(m: &Mixer) -> control_protocol::performance::Plan {
+    use control_protocol::performance::*;
+    let mut p = artist_score(m);
+    p.actions[0].id = "launch".into();
+    p.actions[0].when = Timing::Event {
+        event: crate::performance::event_handle(&snapshot(m), 0, 4).unwrap(),
+    };
+    p.actions[0].commands = vec![EngineCommand::Play { deck: 1 }];
+    p.actions[0].alignment = Some(Alignment {
+        maintain: false,
+        deck: 1,
+        phase_tolerance_beats: 0.05,
+        bar_beats: Some(4),
+    });
+    p.actions[0].curves = vec![Curve {
+        target: ControlTarget::ChannelFader { deck: 1 },
+        points: vec![
+            CurvePoint {
+                at: Duration::Seconds { value: 0.2 },
+                value: 0.4,
+            },
+            CurvePoint {
+                at: Duration::Seconds { value: 0.6 },
+                value: 0.8,
+            },
+        ],
+    }];
+    p
+}
+
+#[test]
+fn artist_paused_sync_launch_checks_atomic_entry_then_runs_later_curve_points() {
+    let mut m = mixer();
+    m.command(EngineCommand::SetSync {
+        deck: 1,
+        enabled: true,
+    });
+    let p = artist_guarded_launch(&m);
+    let compiled = crate::performance::compile(85, &p, &snapshot(&m)).unwrap();
+    let steps = &compiled.batch.steps;
+    assert_eq!(steps[0].as_ref().unwrap().require.unwrap().playing, None);
+    assert_eq!(steps[1].as_ref().unwrap().require.unwrap().playing, None);
+    assert!(steps[2].as_ref().unwrap().require.is_none());
+    m.arm_batch(compiled.batch);
+    render(&mut m, 2.);
+    assert!(!m.decks[1].playing);
+    m.frame();
+    assert!(m.decks[1].playing);
+    assert!(
+        m.launches[1].is_none(),
+        "selected event launches in this renderer frame"
+    );
+    assert_eq!(m.scheduled.as_ref().unwrap().receipts[0].state, 1);
+    render(&mut m, 0.8);
+    let b = m.scheduled.as_ref().unwrap();
+    assert_eq!(b.state, BatchLifecycle::Completed);
+    assert_eq!(b.receipts[0].state, 2);
+    assert_eq!(b.receipts[2].state, 2);
+    assert!(b.receipts[..b.len].iter().all(|r| r.failure.is_none()));
+    assert!((snapshot(&m).decks[1].channel_fader - 0.8).abs() < 0.002);
+}
+
+#[test]
+fn artist_paused_launch_bad_phase_fails_before_play_or_exposure() {
+    let mut m = mixer();
+    m.command(EngineCommand::Seek {
+        deck: 1,
+        seconds: 0.25,
+    });
+    let mut p = artist_guarded_launch(&m);
+    p.actions[0].alignment.as_mut().unwrap().bar_beats = None;
+    m.arm_batch(
+        crate::performance::compile(86, &p, &snapshot(&m))
+            .unwrap()
+            .batch,
+    );
+    render(&mut m, 2.001);
+    let b = m.scheduled.as_ref().unwrap();
+    assert_eq!(b.state, BatchLifecycle::Recovering);
+    assert_eq!(
+        b.receipts[0].failure.unwrap().cause,
+        CommandFailureCause::AlignmentFailed
+    );
+    assert_eq!(
+        b.receipts[1].failure.unwrap().cause,
+        CommandFailureCause::AlignmentFailed
+    );
+    assert!(!m.decks[1].playing);
+    assert_eq!(m.decks[1].channel_fader.target, 0.);
+}
+
+#[test]
+fn artist_alignment_without_target_launch_still_requires_playing() {
+    use control_protocol::performance::*;
+    let mut m = mixer();
+    let mut p = artist_score(&m);
+    p.actions[0].commands = vec![EngineCommand::Play { deck: 0 }];
+    p.actions[0].alignment = Some(Alignment {
+        maintain: false,
+        deck: 1,
+        phase_tolerance_beats: 0.05,
+        bar_beats: None,
+    });
+    let compiled = crate::performance::compile(87, &p, &snapshot(&m)).unwrap();
+    assert_eq!(
+        compiled.batch.steps[0]
+            .as_ref()
+            .unwrap()
+            .require
+            .unwrap()
+            .playing,
+        Some(true)
+    );
+    m.arm_batch(compiled.batch);
+    render(&mut m, 1.01);
+    assert_eq!(
+        m.scheduled.as_ref().unwrap().receipts[0]
+            .failure
+            .unwrap()
+            .cause,
+        CommandFailureCause::AlignmentFailed
+    );
+}
+
+#[test]
+fn artist_source_race_rejects_before_any_callback_gesture() {
+    let mut m = mixer();
+    let s = snapshot(&m);
+    let p = artist_score(&m);
+    let b = crate::performance::compile(76, &p, &s).unwrap().batch;
+    m.load(0, fixture(240.));
+    m.load_revisions[0] += 1;
+    m.arm_batch(b);
+    assert_eq!(m.scheduled.as_ref().unwrap().state, BatchLifecycle::Failed);
+    assert_eq!(
+        m.scheduled.as_ref().unwrap().reason,
+        BatchReason::SourceChanged
+    );
+    assert_eq!(m.decks[0].filter.target, 0.);
+}
+#[test]
+fn artist_recovery_reports_actual_timbre_and_yields_to_manual_takeover() {
+    use control_protocol::performance::*;
+    let mut m = mixer();
+    let s = snapshot(&m);
+    let mut p = artist_score(&m);
+    p.actions[0].alignment = Some(Alignment {
+        maintain: false,
+        deck: 1,
+        phase_tolerance_beats: 0.05,
+        bar_beats: None,
+    });
+    m.arm_batch(crate::performance::compile(77, &p, &s).unwrap().batch);
+    render(&mut m, 1.005);
+    assert_eq!(
+        m.scheduled.as_ref().unwrap().state,
+        BatchLifecycle::Recovering
+    );
+    assert_eq!(m.decks[0].eq[1].target, 0.5);
+    assert!(snapshot(&m).scheduled_batch.recovery_applied);
+    m.command(EngineCommand::SetEq {
+        deck: 0,
+        low: 0.7,
+        mid: 0.8,
+        high: 0.9,
+    });
+    render(&mut m, 0.3);
+    assert_eq!(m.scheduled.as_ref().unwrap().state, BatchLifecycle::Yielded);
+    assert_eq!(m.decks[0].eq[1].target, 0.8);
+    assert!(snapshot(&m).scheduled_batch.recovery_applied);
+}
+#[test]
+fn artist_creative_pitch_loop_filter_fx_and_piecewise_curve_execute_natively() {
+    use control_protocol::performance::*;
+    let mut m = mixer();
+    let s = snapshot(&m);
+    let mut p = artist_score(&m);
+    p.actions[0].commands = vec![
+        EngineCommand::SetPitch {
+            deck: 1,
+            semitones: 2.,
+        },
+        EngineCommand::SetFilter {
+            deck: 0,
+            amount: -0.3,
+        },
+        EngineCommand::SetFx {
+            deck: 0,
+            echo: 0.2,
+            reverb: 0.1,
+        },
+    ];
+    p.actions[0].curves = vec![Curve {
+        target: ControlTarget::EqLow { deck: 1 },
+        points: vec![
+            CurvePoint {
+                at: Duration::Seconds { value: 0.5 },
+                value: 0.5,
+            },
+            CurvePoint {
+                at: Duration::Seconds { value: 1. },
+                value: 0.8,
+            },
+        ],
+    }];
+    p.actions.push(Action {
+        id: "loop".into(),
+        when: Timing::In {
+            duration: Duration::Seconds { value: 2.5 },
+        },
+        after: vec![],
+        commands: vec![EngineCommand::SetLoop {
+            deck: 1,
+            beats: Some(4.),
+        }],
+        curves: vec![],
+        alignment: None,
+    });
+    m.arm_batch(crate::performance::compile(78, &p, &s).unwrap().batch);
+    render(&mut m, 3.);
+    assert_eq!(
+        m.scheduled.as_ref().unwrap().state,
+        BatchLifecycle::Completed
+    );
+    assert_eq!(m.decks[1].pitch, 2.);
+    assert!(m.decks[1].loop_region.is_some());
+    assert_eq!(m.decks[0].filter.target, -0.3);
+    assert_eq!(m.decks[0].echo.target, 0.2);
+    assert_eq!(m.decks[1].eq[0].target, 0.8);
+}
+#[test]
+fn artist_fixed_endpoint_cancels_work_that_becomes_unreachable() {
+    use control_protocol::performance::*;
+    let mut m = mixer();
+    let s = snapshot(&m);
+    let mut p = artist_score(&m);
+    p.actions[0].when = Timing::Event {
+        event: crate::performance::event_handle(&s, 0, 4).unwrap(),
+    };
+    p.closing = Some(Closing {
+        endpoint_seconds: 3.,
+        carrier: 0,
+        silence_from_seconds: None,
+        session_id: None,
+    });
+    m.arm_batch(crate::performance::compile(79, &p, &s).unwrap().batch);
+    // Simulate a stalled source clock independently of the advancing renderer.
+    m.decks[0].playing = false;
+    render(&mut m, 3.1);
+    let b = m.scheduled.as_ref().unwrap();
+    assert_eq!(b.state, BatchLifecycle::Failed);
+    assert_eq!(b.reason, BatchReason::DeadlineExpired);
+    assert_eq!(b.receipts[0].state, 3);
+    assert_eq!(m.decks[0].filter.target, 0.);
+}
+
+#[test]
+fn artist_loop_wraps_preserve_pending_release_but_manual_seek_yields() {
+    use control_protocol::performance::*;
+    let mut m = mixer();
+    let s = snapshot(&m);
+    let mut p = artist_score(&m);
+    p.actions[0].commands = vec![EngineCommand::SetLoop {
+        deck: 0,
+        beats: Some(4.),
+    }];
+    p.actions.push(Action {
+        id: "release".into(),
+        when: Timing::In {
+            duration: Duration::Seconds { value: 7. },
+        },
+        after: vec![],
+        commands: vec![EngineCommand::SetLoop {
+            deck: 0,
+            beats: None,
+        }],
+        curves: vec![],
+        alignment: None,
+    });
+    m.arm_batch(crate::performance::compile(80, &p, &s).unwrap().batch);
+    render(&mut m, 7.2);
+    assert_eq!(
+        m.scheduled.as_ref().unwrap().state,
+        BatchLifecycle::Completed
+    );
+    assert!(m.decks[0].loop_region.is_none());
+    let mut m = mixer();
+    let s = snapshot(&m);
+    p.generation = crate::performance::generation(&s);
+    m.arm_batch(crate::performance::compile(81, &p, &s).unwrap().batch);
+    render(&mut m, 3.2);
+    m.command(EngineCommand::Seek {
+        deck: 0,
+        seconds: 30.,
+    });
+    render(&mut m, 0.1);
+    assert_eq!(m.scheduled.as_ref().unwrap().state, BatchLifecycle::Yielded);
+}
+
+#[test]
+fn artist_bar_guard_rejects_whole_beat_displacement_without_partial_bass() {
+    use control_protocol::performance::*;
+    let mut m = mixer();
+    m.command(EngineCommand::Play { deck: 1 });
+    m.decks[0].grid_downbeat = true;
+    m.decks[1].grid_downbeat = true;
+    let s = snapshot(&m);
+    let mut p = artist_score(&m);
+    p.actions[0].commands = vec![
+        EngineCommand::SetEq {
+            deck: 0,
+            low: 0.,
+            mid: 1.,
+            high: 1.,
+        },
+        EngineCommand::SetEq {
+            deck: 1,
+            low: 1.,
+            mid: 1.,
+            high: 1.,
+        },
+    ];
+    p.actions[0].alignment = Some(Alignment {
+        maintain: false,
+        deck: 1,
+        phase_tolerance_beats: 0.05,
+        bar_beats: Some(4),
+    });
+    let batch = crate::performance::compile(82, &p, &s).unwrap().batch;
+    // A whole beat of phase drift preserves fractional beat phase. This direct
+    // fixture drift deliberately leaves revisions unchanged to exercise the gate.
+    m.decks[1].position = 500.;
+    m.arm_batch(batch);
+    render(&mut m, 1.01);
+    assert_eq!(
+        m.scheduled.as_ref().unwrap().state,
+        BatchLifecycle::Recovering
+    );
+    assert_eq!(m.scheduled.as_ref().unwrap().receipts[0].state, 4);
+    assert_eq!(m.scheduled.as_ref().unwrap().receipts[1].state, 4);
+}
+#[test]
+fn artist_rejects_clamped_seek_and_nested_launch_timing() {
+    let m = mixer();
+    let s = snapshot(&m);
+    let mut p = artist_score(&m);
+    p.actions[0].commands = vec![EngineCommand::Seek {
+        deck: 0,
+        seconds: -100.,
+    }];
+    assert_eq!(
+        crate::performance::validate(&p, &s).unwrap_err().code,
+        "seek_out_of_range"
+    );
+    p.actions[0].commands = vec![EngineCommand::PlayQuantized {
+        deck: 1,
+        clock: 0,
+        clock_revision: s.load_revisions[0],
+        at_seconds: Some(4.),
+        quantize: 1.,
+    }];
+    assert_eq!(
+        crate::performance::validate(&p, &s).unwrap_err().code,
+        "nested_timing"
+    );
+}
+
+#[test]
+fn artist_closing_frame_conversion_rejects_unbounded_endpoints() {
+    use control_protocol::performance::*;
+    let m = mixer();
+    let s = snapshot(&m);
+    let mut p = artist_score(&m);
+    p.closing = Some(Closing {
+        endpoint_seconds: 1e300,
+        carrier: 0,
+        silence_from_seconds: None,
+        session_id: None,
+    });
+    assert_eq!(
+        crate::performance::validate(&p, &s).unwrap_err().code,
+        "invalid_arguments"
+    );
+}
+
+#[test]
+fn artist_fixed_completion_constraints_include_native_smoothing_bound() {
+    use control_protocol::performance::*;
+    let m = mixer();
+    let s = snapshot(&m);
+    let mut p = artist_score(&m);
+    p.actions[0].id = "ramp".into();
+    p.actions[0].commands = vec![EngineCommand::Ramp {
+        target: ControlTarget::Filter { deck: 0 },
+        value: 0.9,
+        seconds: 1.,
+        clock: None,
+        beats: None,
+        quantize: None,
+    }];
+    p.actions.push(Action {
+        id: "fixed".into(),
+        when: Timing::In {
+            duration: Duration::Seconds { value: 2. },
+        },
+        after: vec!["ramp".into()],
+        commands: vec![EngineCommand::SetEq {
+            deck: 1,
+            low: 1.,
+            mid: 1.,
+            high: 1.,
+        }],
+        curves: vec![],
+        alignment: None,
+    });
+    let error = crate::performance::validate(&p, &s).unwrap_err();
+    assert_eq!(error.code, "dependency_deadline");
+    assert!(error.details["dependency_end_seconds"].as_f64().unwrap() > 2.05);
+    p.actions[1].when = Timing::In {
+        duration: Duration::Seconds { value: 2.1 },
+    };
+    let compiled = crate::performance::compile(83, &p, &s).unwrap();
+    let mut m = m;
+    m.arm_batch(compiled.batch);
+    render(&mut m, 2.3);
+    assert_eq!(
+        m.scheduled.as_ref().unwrap().state,
+        BatchLifecycle::Completed
+    );
+}
+#[test]
+fn artist_after_curve_waits_for_verified_final_segments() {
+    use control_protocol::performance::*;
+    let mut m = mixer();
+    let s = snapshot(&m);
+    let mut p = artist_score(&m);
+    p.actions[0].id = "curve".into();
+    p.actions[0].commands = vec![];
+    p.actions[0].curves = vec![Curve {
+        target: ControlTarget::Filter { deck: 0 },
+        points: vec![
+            CurvePoint {
+                at: Duration::Seconds { value: 0.5 },
+                value: 0.8,
+            },
+            CurvePoint {
+                at: Duration::Seconds { value: 1. },
+                value: 0.,
+            },
+        ],
+    }];
+    p.actions.push(Action {
+        id: "after".into(),
+        when: Timing::After {
+            action: "curve".into(),
+            offset: None,
+        },
+        after: vec![],
+        commands: vec![EngineCommand::SetEq {
+            deck: 1,
+            low: 1.,
+            mid: 1.,
+            high: 1.,
+        }],
+        curves: vec![],
+        alignment: None,
+    });
+    m.arm_batch(crate::performance::compile(84, &p, &s).unwrap().batch);
+    render(&mut m, 2.3);
+    let b = m.scheduled.as_ref().unwrap();
+    assert_eq!(b.state, BatchLifecycle::Completed);
+    assert_eq!(b.receipts[2].state, 2);
+    assert!(b.receipts[2].frame >= b.receipts[1].completed_frame);
+}
+#[test]
+fn artist_closing_uses_loop_exit_upper_bound_instead_of_frozen_entry() {
+    use control_protocol::performance::*;
+    let m = mixer();
+    let s = snapshot(&m);
+    let mut p = artist_score(&m);
+    p.actions[0].commands = vec![EngineCommand::SetLoop {
+        deck: 0,
+        beats: Some(4.),
+    }];
+    p.actions.push(Action {
+        id: "release".into(),
+        when: Timing::In {
+            duration: Duration::Seconds { value: 4. },
+        },
+        after: vec![],
+        commands: vec![EngineCommand::SetLoop {
+            deck: 0,
+            beats: None,
+        }],
+        curves: vec![],
+        alignment: None,
+    });
+    p.closing = Some(Closing {
+        endpoint_seconds: 243.,
+        carrier: 0,
+        silence_from_seconds: None,
+        session_id: None,
+    });
+    assert_eq!(
+        crate::performance::validate(&p, &s).unwrap_err().code,
+        "closing_coverage"
+    );
+    p.closing.as_mut().unwrap().endpoint_seconds = 240.;
+    assert!(crate::performance::validate(&p, &s).is_ok());
+}
+
+#[test]
+fn artist_closing_rejects_uncertain_arrival_of_carrier_tempo_edit() {
+    use control_protocol::performance::*;
+    let mut m = mixer();
+    m.command(EngineCommand::Play { deck: 1 });
+    let mut s = snapshot(&m);
+    s.decks[1].sync_enabled = true;
+    s.decks[1].sync_rate_limits = Some(crate::SyncRateLimits {
+        min_rate: 0.1,
+        max_rate: 2.,
+        max_slew_per_second: 1.,
+    });
+    let mut p = artist_score(&m);
+    p.generation = crate::performance::generation(&s);
+    p.actions[0].when = Timing::Event {
+        event: crate::performance::event_handle(&s, 1, 20).unwrap(),
+    };
+    p.actions[0].commands = vec![EngineCommand::SetTempo {
+        deck: 0,
+        percent: -50.,
+    }];
+    p.closing = Some(Closing {
+        endpoint_seconds: 475.,
+        carrier: 0,
+        silence_from_seconds: None,
+        session_id: None,
+    });
+    assert_eq!(
+        crate::performance::validate(&p, &s).unwrap_err().code,
+        "coverage_unproven"
+    );
+}
+
+#[test]
+fn artist_fixed_dependency_reserves_explicit_native_scrub_duration() {
+    use control_protocol::performance::*;
+    let m = mixer();
+    let s = snapshot(&m);
+    let mut p = artist_score(&m);
+    p.actions[0].id = "scrub".into();
+    p.actions[0].commands = vec![EngineCommand::ScrubTo {
+        deck: 0,
+        seconds: 2.,
+        duration_ms: 100.,
+    }];
+    p.actions.push(Action {
+        id: "too-soon".into(),
+        when: Timing::In {
+            duration: Duration::Seconds { value: 1.05 },
+        },
+        after: vec!["scrub".into()],
+        commands: vec![EngineCommand::SetFilter {
+            deck: 1,
+            amount: 0.2,
+        }],
+        curves: vec![],
+        alignment: None,
+    });
+    assert_eq!(
+        crate::performance::validate(&p, &s).unwrap_err().code,
+        "dependency_deadline"
+    );
+}
+
+#[path = "scheduled_tests_forecast.rs"]
+mod forecast_tests;
+
+#[path = "scheduled_tests_rhythm.rs"]
+mod rhythm_tests;

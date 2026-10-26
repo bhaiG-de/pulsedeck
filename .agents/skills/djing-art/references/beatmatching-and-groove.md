@@ -74,6 +74,24 @@ Do not jump an audible incoming record back to native tempo immediately after cl
 
 Make the rate decision before arming, while a different source or technique is still feasible. If the proposal needs an unacceptable bend, reject that proposal and secure a reachable alternative while the carrier still has useful music. Merely shortening a synced overlap does not remove its large tempo change. After a rejected/failed handoff, reconcile its actual state before replacing it; do not leave the outgoing track to end while repeatedly troubleshooting the same pair. An accidental gap is a recovery failure, not an intentional tempo reset.
 
-PulseDeck's one-time absolute playback BPM is an entry setting. A sustained overlap of nonuniform clocks needs its supported ongoing master/follower strategy, rather than assuming the first BPM setting locks every later beat. Do not save a constant source grid just to flatten human timing for this mix. Grid editing and performance tempo matching are different actions.
+PulseDeck's one-time absolute playback BPM is an entry setting. Express an ordinary sustained beatmix as a prepared bounded master/follower Sync relationship plus `alignment.maintain:true` on the action spanning both rhythmic contributions through clearance. This runs the chosen relationship on the native clock, including corrections and recovery, rather than leaving later phase to another model call. For intentionally independent clocks, use the forecast’s phase progression across the complete overlap and design their exposed rhythmic relationship explicitly. Do not save a constant source grid just to flatten human timing for this mix. Grid editing and performance tempo matching are different actions.
 
 If reliable rhythmic overlap cannot be established in time, choose a musically supported alternative. Preserve a requested smooth result by trying better passages or a better successor while runway remains. Name an emergency recovery honestly if that opportunity is lost.
+
+
+## Derive an actual playing-pulse strategy
+
+Suppose two rhythm-bearing passages naturally run at 112 and 117 BPM. Over 20 seconds at natural speed their relative progression changes by `(117 − 112) × 20 / 60 ≈ 1.67 beats`. Launching both on a boundary or closing one low band does not remove that difference; rhythmic material extends across the spectrum.
+
+One plausible nearby common pulse is 114 BPM: A needs `100 × (114/112 − 1) ≈ +1.79%`, B needs `100 × (114/117 − 1) ≈ −2.56%`. If a gentle lift serves the brief, establish A's small gradual change in suitable material before B's audible overlap, prepare B at the chosen entry, and use valid master/follower Sync or demonstrated stable matching to maintain the pulse. Verify actual rendered rates and phase through the overlap. This is a candidate construction, not an instruction always to split the difference. Choose another closer source or a designed tempo exchange when a common pulse would damage character or the musical direction.
+
+For an intentional unbeatmatched exchange, map the audible rhythm: A can finish its pulse while B contributes a genuinely noncompeting atmospheric approach, then B's complete rhythmic arrival establishes the new pulse. A long overlap of two exposed rhythms is a different construction and needs deliberate rhythmic compatibility; “café” does not make drift smooth.
+
+## Establish what the clock represents
+
+A valid effective clock can still be a manual uniform BPM override with no bar identity. Keep that provenance visible. In one failed live join, Don't Forget My Love had a manual 122.9 BPM uniform effective clock, a stored neural estimate around 121 BPM and `beatgrid_downbeat:false`. Matching its fractional clock phase to another record did not establish acoustic pulse or bar compatibility. A modulo-four difference is also inconclusive when a bar origin is unknown.
+
+Resolve the chosen passage using available local evidence: compare recurring low/peak rhythmic attacks over a fine bounded waveform window with the effective event intervals and the stored analysis provenance, and establish a credible metrical/phrase origin. Distinguish an intentional human correction from an unverified override. If this cannot be established while a healthy alternative remains, choose a source with supported local rhythm or a complete scene exchange. Preserve the user's canonical BPM/grid; a playback test does not authorize rewriting it or treating the original neural estimate as automatically right.
+
+
+Intentional ratio relationships/polyrhythms can also coexist when the recurring cycles, accents and exposure are designed and counted. Compare equivalent pulse units and shared cycle arrivals; fractional phase on unlike beat units is not by itself their success criterion. This is a deliberate construction, not a reason to ignore unexplained drift in an ordinary beatmix.

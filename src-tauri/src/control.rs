@@ -33,6 +33,7 @@ pub struct Control {
     journal: Mutex<Option<std::path::PathBuf>>,
     journal_writer: Mutex<()>,
     performance_baseline: Mutex<Option<Value>>,
+    performance_drafts: Mutex<VecDeque<PerformanceDraft>>,
     job_sequence: AtomicU64,
     _server: Mutex<Option<control_protocol::ipc::Server>>,
 }
@@ -304,6 +305,12 @@ pub fn execute(app: &tauri::AppHandle, request: Request) -> Response {
         request.expected_load_revision,
         request.no_wait
     ]);
+    if let Some(guard) = request.expected_state {
+        identity
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"expected_state":guard}));
+    }
     if let Some(view) = &request.view {
         identity.as_array_mut().unwrap().push(json!({"view": view}));
     }
@@ -326,6 +333,8 @@ pub fn execute(app: &tauri::AppHandle, request: Request) -> Response {
     let _scheduled = if matches!(
         request.command.as_str(),
         "batch.run"
+            | "performance.commit"
+            | "performance.cancel"
             | "mix.arm"
             | "mix.session.start"
             | "mix.session.stop"
@@ -484,6 +493,16 @@ fn apply_with_control_guard(
             .iter()
             .all(|d| !d.playing);
     let d = command.deck();
+    let launch_clock = match &command {
+        EngineCommand::PlayQuantized { clock, .. } => Some(*clock),
+        _ => None,
+    };
+    if request.expected_state.is_some() && d.is_none() {
+        return Err(ControlError::new(
+            "invalid_arguments",
+            "expected_state requires a target deck",
+        ));
+    }
     let cue_edit = matches!(
         &command,
         EngineCommand::SetCue { .. }
@@ -605,13 +624,25 @@ fn apply_with_control_guard(
         .validate()
         .map_err(|e| ControlError::new("invalid_arguments", e))?;
     state.engine.ensure_prepared(&command).map_err(failure)?;
-    if expected_control_revision.is_none() && manual_transport_takeover(&command) {
+    if request.expected_state.is_some()
+        && d.is_some_and(|deck| app.state::<Control>().has_pending_load(deck))
+    {
+        return Err(ControlError::new(
+            "resource_conflict",
+            "A source load is pending on the guarded deck; resolve its outcome before preparation",
+        ));
+    }
+    if request.expected_state.is_none()
+        && expected_control_revision.is_none()
+        && manual_transport_takeover(&command)
+    {
         if let Some(deck) = d {
             if app.state::<Control>().has_pending_load(deck) {
                 crate::spotify_decks::cancel_spotify_load(app.clone(), deck).map_err(failure)?;
             }
         }
     }
+    let mut direct_receipt = None;
     if let Some(revision) = expected_control_revision {
         // Recipes apply literal controls; smart controller macros belong to manual gestures.
         let receipt = state
@@ -628,24 +659,88 @@ fn apply_with_control_guard(
             .map_err(failure)?
             .observe(&command, false);
     } else {
-        crate::engine_command_inner(
+        let tracked = (request.command == "engine.command" && d.is_some() && !request.no_wait)
+            .then_some((
+                request.expected_state,
+                Duration::from_millis(request.timeout_ms),
+            ));
+        direct_receipt = crate::engine_command_inner_tracked(
             app.clone(),
             app.state(),
             command,
             request.from_ui,
             request.from_ui,
             request.expected_load_revision,
+            tracked,
         )
-        .map_err(failure)?;
+        .map_err(|message| {
+            let code = message
+                .split_once(':')
+                .map(|(code, _)| code)
+                .filter(|code| {
+                    serde_json::from_value::<deck_engine::CommandFailureCause>(json!(code)).is_ok()
+                });
+            let mut error = code.map_or_else(
+                || failure(&message),
+                |code| ControlError::new(code, &message),
+            );
+            if let Some(deck) = d {
+                error = error
+                    .with_detail("deck", deck)
+                    .with_detail("actual", json!(state.engine.direct_deck_state(deck)));
+            }
+            if let Some(guard) = request.expected_state {
+                error = error.with_detail("expected_state", json!(guard));
+            }
+            if let Some(clock) = launch_clock {
+                error = error
+                    .with_detail("clock", clock)
+                    .with_detail("clock_state", json!(state.engine.direct_deck_state(clock)));
+            }
+            if let Some(ticket) = message
+                .rsplit_once("direct_receipt_ticket=")
+                .and_then(|(_, n)| n.parse::<u64>().ok())
+            {
+                error = error.with_detail("receipt_ticket", ticket).with_detail(
+                    "receipt_lookup",
+                    json!({"tool":"engine_transport","arguments":{"receipt_ticket":ticket}}),
+                );
+            }
+            error
+        })?;
+        if let Some(receipt) = direct_receipt {
+            if let Some(cause) = receipt.failure {
+                let code = serde_json::to_value(cause)
+                    .unwrap()
+                    .as_str()
+                    .unwrap()
+                    .to_owned();
+                return Err(
+                    ControlError::new(code, "Direct control rejected before application")
+                        .with_detail("failed_predicate", json!(cause))
+                        .with_detail("receipt", json!(receipt))
+                        .with_detail("expected_state", json!(request.expected_state)),
+                );
+            }
+        }
     }
     if request.no_wait {
         return Ok(json!({"accepted":true}));
     }
-    let fence = state.engine.fence().map_err(failure)?;
+    let acknowledge_error = |e: String| {
+        let mut error = failure(e);
+        if let Some(receipt) = direct_receipt {
+            error = error
+                .with_detail("receipt", json!(receipt))
+                .with_detail("receipt_ticket", receipt.ticket);
+        }
+        error
+    };
+    let fence = state.engine.fence().map_err(&acknowledge_error)?;
     state
         .engine
         .wait_for_fence(fence, Duration::from_millis(request.timeout_ms))
-        .map_err(failure)?;
+        .map_err(acknowledge_error)?;
     if first_playback {
         let snapshot = state.engine.transport_snapshot();
         if snapshot.decks.iter().any(|d| d.playing) {
@@ -676,7 +771,7 @@ fn apply_with_control_guard(
         None
     };
     Ok(
-        json!({"sequence":fence,"load_revision":d.map(|d|state.engine.load_revision(d)),"cue_revision":persisted,"engine":state.engine.transport_snapshot()}),
+        json!({"receipt":direct_receipt,"sequence":fence,"load_revision":d.map(|d|state.engine.load_revision(d)),"cue_revision":persisted,"engine":state.engine.transport_snapshot()}),
     )
 }
 pub fn restore_cues(
@@ -816,6 +911,7 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
         };
     }
     let result = match request.command.as_str() {
+        name if name.starts_with("performance.") => return performance_dispatch(app, request),
         "mix.execute" => return execute_mix(app, request),
         "mix.prepare" => return prepare_mix(app, request),
         "mix.arm" => return arm_mix(app, request),
@@ -890,6 +986,16 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
         "app.activity" => call!(crate::get_activity_state(app.state())),
         "engine.snapshot" => serialized(state.engine.snapshot())?,
         "engine.transport" => {
+            if let Some(ticket) = optional::<u64>(a, "receipt_ticket")? {
+                let receipt = state
+                    .engine
+                    .direct_control_receipt(ticket)
+                    .map_err(failure)?;
+                return Ok((
+                    "applied",
+                    json!({"receipt_ticket":ticket,"pending":receipt.is_none(),"receipt":receipt}),
+                ));
+            }
             let (mut transport, metadata) = compact_engine_state(&state.engine);
             transport["metadata_revision"] = metadata["revision"].clone();
             transport
@@ -2750,6 +2856,7 @@ fn manual_transport_takeover(command: &EngineCommand) -> bool {
     )
 }
 include!("control_scheduled.rs");
+include!("control_performance.rs");
 include!("mix_execution.rs");
 include!("mix_session.rs");
 include!("mix_queue.rs");
@@ -2764,10 +2871,16 @@ mod request_reservation_tests {
         let error = failure("Spotify track loading failed after native sign-in: the provider rejected or could not complete the playback key request. No partial audio was loaded.");
         assert_eq!(error.code, "source_unavailable");
         assert!(!error.retryable);
-        assert!(!error.details["hint"].as_str().unwrap().contains("spotify native login"));
+        assert!(!error.details["hint"]
+            .as_str()
+            .unwrap()
+            .contains("spotify native login"));
         assert_eq!(failure("Spotify full-track metadata retrieval failed (Unavailable) after Premium session sign-in and before audio decoding").code, "source_unavailable");
         assert_eq!(failure("Spotify native playback is cooling down for 60 seconds after a playback-key failure").code, "provider_cooldown");
-        assert_eq!(failure("Sign in to the native player separately").code, "auth_required");
+        assert_eq!(
+            failure("Sign in to the native player separately").code,
+            "auth_required"
+        );
     }
     #[test]
     fn compact_sources_distinguish_ready_empty_pending_and_replaced_epochs() {

@@ -89,6 +89,14 @@ export default function SuggestPanel({
       (o) => technique === "all" || o.technique === technique,
     ) ?? [];
   const chosen = options.find((o) => o.id === selected) ?? options[0];
+  const audibleDeck = engine.decks.find(
+    (d, i) =>
+      d.playing &&
+      d.track &&
+      !d.preparation_pending &&
+      (d.channel_fader ?? 1) > 0.001 &&
+      (i === 0 ? (engine.crossfader ?? 0) < 1 : (engine.crossfader ?? 0) > -1),
+  );
   const targetTrack = chosen ? engine.decks[chosen.target_deck]?.track : null;
   const needsReplacement = !!(
     targetTrack &&
@@ -344,7 +352,7 @@ export default function SuggestPanel({
               ))}
           </select>
         </label>
-        <span className="suggest-speed">Natural speed · up to ±2%</span>
+        <span className="suggest-speed">Natural speed · up to ±4%</span>
       </div>
       {list && (
         <div className="suggest-coverage">
@@ -394,6 +402,10 @@ export default function SuggestPanel({
         direction={direction}
         technique={technique}
         scope={scope}
+        carrierPlaying={!!engine.running && !!audibleDeck}
+        defaultCollection={
+          audibleDeck?.track?.path.startsWith("spotify:") ? "liked" : "local"
+        }
         onActiveChange={setQueueActive}
       />
       <div className="suggest-body">

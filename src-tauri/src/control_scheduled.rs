@@ -350,6 +350,7 @@ fn reconcile_queue_status(
                     1 => "applied",
                     2 => "verified",
                     3 => "cancelled",
+                    4 => "failed",
                     _ => "pending",
                 };
                 if action["state"] != state {

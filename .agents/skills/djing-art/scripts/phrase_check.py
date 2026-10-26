@@ -3,14 +3,18 @@
 import argparse
 import json
 import math
-import subprocess
+from pathlib import Path
 import sys
 
 
 def payload(value):
-    if 'ok' in value and not value['ok']:
-        raise ValueError(str(value.get('error', value)))
-    return value.get('result', value)
+    if value.get('jsonrpc')=='2.0':
+        if value.get('error'):raise ValueError(str(value['error']))
+        value=value['result']
+    if value.get('isError'):raise ValueError('failed captured MCP tool result')
+    if 'structuredContent' in value:return value['structuredContent']
+    if 'ok' in value and not value['ok']:raise ValueError(str(value.get('error',value)))
+    return value.get('result',value)
 
 
 def anchor(packet, seconds):
@@ -113,7 +117,10 @@ def check(a, b, state, out, inc, launch, handover, entry, arrival, technique='bl
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--cli', default='pulsedeckctl')
+    p.add_argument('--state',type=Path,required=True,help='Captured status MCP JSON after source inspection')
+    p.add_argument('--outgoing-packet',type=Path,required=True)
+    p.add_argument('--incoming-packet',type=Path,required=True)
+    p.add_argument('--before-state',type=Path,help='Optional captured status before inspection for continuity checks')
     p.add_argument('--outgoing', choices=['A', 'B'], required=True)
     p.add_argument('--incoming', choices=['A', 'B'], required=True)
     for name in ('launch', 'handover', 'entry', 'arrival'):
@@ -122,37 +129,33 @@ def main():
     p.add_argument('--preflight', action='store_true', help='Check prepared paused sources before the opener starts; does not certify live execution.')
     p.add_argument('--save', help='Optional JSON evidence output path')
     args = p.parse_args()
-    def call(command, data):
-        argv = ([args.cli, 'status', '--view', 'compact', '--json'] if command == 'state.get'
-                else [args.cli, 'call', command, '--args', json.dumps(data), '--json'])
-        result = subprocess.run(argv,
-                                capture_output=True, text=True, check=True, timeout=20)
-        return payload(json.loads(result.stdout))
     try:
         times = [args.launch, args.handover, args.entry, args.arrival]
         if not all(math.isfinite(t) and t >= 0 for t in times):
             raise ValueError('Source times must be finite and nonnegative.')
         if args.outgoing == args.incoming:
             raise ValueError('Choose different outgoing/incoming decks.')
-        before = call('state.get', {'view': 'compact'})
-        def inspect(deck, lo, hi):
-            # Duration comes from the same bound loaded source, not an invented end.
-            i = 0 if deck == 'A' else 1
-            duration = before['metadata']['tracks'][i]['duration_seconds']
-            if max(lo, hi) >= duration:
-                raise ValueError('Selected anchor is outside the loaded source.')
-            return call('track.inspect', {'deck': deck, 'start_seconds': max(0, min(lo, hi)-.01),
-                        'end_seconds': min(duration, max(lo, hi)+.01), 'points': 512})
-        a = inspect(args.outgoing, args.launch, args.handover)
-        b = inspect(args.incoming, args.entry, args.arrival)
-        after = call('state.get', {'view': 'compact'})
-        for field in ('load_revisions',):
-            if before['engine'][field] != after['engine'][field]:
-                raise ValueError('Sources changed during inspection; inspect the new sources.')
-        for i in (0, 1):
-            for field in ('grid_revision', 'position_revision'):
-                if before['engine']['decks'][i][field] != after['engine']['decks'][i][field]:
-                    raise ValueError('Grid/seek changed during inspection; recheck.')
+        after=payload(json.loads(args.state.read_text()))
+        if 'engine' not in after and 'decks' in after:after={'engine':after}
+        a=payload(json.loads(args.outgoing_packet.read_text()))
+        b=payload(json.loads(args.incoming_packet.read_text()))
+        before=payload(json.loads(args.before_state.read_text())) if args.before_state else after
+        if 'engine' not in before and 'decks' in before:before={'engine':before}
+        if before['engine']['load_revisions']!=after['engine']['load_revisions']:
+            raise ValueError('Sources changed during captured inspection; obtain new evidence')
+        for i in (0,1):
+            for field in ('grid_revision','position_revision'):
+                if before['engine']['decks'][i].get(field)!=after['engine']['decks'][i].get(field):
+                    raise ValueError('Grid/seek changed during captured inspection; obtain new evidence')
+        for packet,deck in ((a,args.outgoing),(b,args.incoming)):
+            i='AB'.index(deck)
+            source=(after['engine']['decks'][i].get('track') or {}).get('path')
+            if not source or packet.get('source')!=source:
+                raise ValueError(f'Captured packet source differs from deck {deck} in captured status')
+            if packet.get('load_revision') is not None and packet['load_revision']!=after['engine']['load_revisions'][i]:
+                raise ValueError('Captured packet source generation differs from captured status')
+            if packet.get('grid_revision') is not None and packet['grid_revision']!=after['engine']['decks'][i].get('grid_revision'):
+                raise ValueError('Captured packet grid differs from captured status')
         out, inc = ('AB'.index(args.outgoing), 'AB'.index(args.incoming))
         result = check(a, b, after, out, inc, *times, args.technique, args.preflight)
         if args.save:
@@ -160,7 +163,7 @@ def main():
                 json.dump({'check': result, 'outgoing_packet': a, 'incoming_packet': b, 'state': after}, f, indent=2)
         print(json.dumps(result, indent=2))
         return 0 if result['timing_pass'] else 1
-    except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError) as e:
+    except (ValueError, KeyError, TypeError, OSError) as e:
         print(json.dumps({'timing_pass': False, 'errors': [str(e)]}, indent=2))
         return 2
 

@@ -71,7 +71,7 @@ class SkillPackageTests(unittest.TestCase):
     def test_shared_reference_collision_refused(self):
         source = self.root / "source"
         shutil.copytree(installer.SOURCE, source)
-        (source / "pulsedeck-library/references/cli.md").write_text("different instructions")
+        (source / "pulsedeck-library/references/mcp.md").write_text("different instructions")
         with patch.object(installer, "SOURCE", source):
             with self.assertRaisesRegex(ValueError, "Reference name collision"):
                 installer.install(self.destination)

@@ -1,38 +1,38 @@
 ---
 name: pulsedeck-control
-description: Operate PulseDeck through pulsedeckctl for deck preparation, direct performance controls, supported native transitions, optional autonomous queues, recovery, audio setup and recording. Pair with djing-art for musical judgment and pulsedeck-library for source knowledge.
+description: Perform artist-chosen PulseDeck mixes through connected MCP tools, including full deck controls, native musical timelines, preparation and recovery. Use with djing-art for musical judgment and pulsedeck-library for source knowledge.
 ---
 
-# Playing PulseDeck
+# Perform the musical plan
 
-Use the installed `/Applications/PulseDeck.app/Contents/MacOS/pulsedeckctl` for the configured Applications instance, or the checkout client for a development instance. `pd` in examples means the intended client. Read [CLI semantics](../references/cli.md) for unfamiliar transport or ownership details; discover an unfamiliar method with `commands describe METHOD`.
+Use the connected PulseDeck MCP tools directly. Read [connection and capabilities](../references/mcp.md) when establishing access or discovering an unfamiliar control. If a required tool is missing, report the missing connection/capability; do not switch to a shell client or private transport.
 
-The agent is free to choose songs, passages, tempo strategy, loops, EQ, filters, FX and transition style within the actual tool capabilities and user's brief. A supported recipe is convenient, not compulsory. There is no requirement to delegate the set to AutoDJ, quit after the first arm, keep a universal BPM/key limit, or use a fixed number of bars. Artistic suggestions come from [DJing — the art](../djing-art/SKILL.md).
+When asked to DJ, retain musical ownership throughout the requested duration: choose songs, paired passages, playing tempo, energy course and control gestures using [DJing — the art](../djing-art/SKILL.md). Translate that arrangement into native execution. Proposals can inform it; they do not choose the listener's experience for you.
 
-## Choose the appropriate control path
+## Derive execution from the music
 
-| Approach | Reference |
+Retain each source's playing BPM/rate and Sync strategy, incoming entry and later arrival, first audibility, foundation/body/foreground ownership, outgoing clearance and the combined course through the next developed phrase. Bind those milestones to observed source events and revisions. Runway determines what is reachable; it does not explain why the passage serves the listener.
+
+| Need | Reference |
 |---|---|
-| Select a proposed move and let the native executor perform it | [Assisted next moves](references/assisted-next-moves.md) |
-| Choose and perform individual phrase/loop/EQ/FX gestures | [Transition execution](references/transitions.md), [persistent session contract](../references/timed-execution.md) |
-| Prepare the next deck, tempo and Sync | [Deck preparation](references/deck-preparation.md) |
-| Let the application choose subsequent songs and moves | [Optional continuous queue](references/continuous-sets.md) |
-| Keep a custom performance running to a requested endpoint | [Sessions and continuity](references/session.md) |
-| Inspect routing, audio, MIDI, headphones or login | [Setup and recovery](references/setup-and-recovery.md) |
-| Make an authorized recording | [Recording](references/recording.md) |
+| Exact source events, atomic controls, curves, loops and authored recovery | [Typed performance](references/typed-performance.md) |
+| Load and establish the chosen entry, tempo and Sync | [Deck preparation](references/deck-preparation.md) |
+| Keep the requested finish while choosing successive moves | [Sessions and continuity](references/session.md) |
+| Recompose after a failed move without losing valid preparation | [Musical recovery](references/recovery.md) |
+| Inspect ownership, readiness, routing or provider trouble | [State and ownership](references/state-and-ownership.md), [targeted diagnosis](references/setup-and-recovery.md) |
 
-Use individual moves or direct controls when you want to decide the actual phrase relationship. The autonomous queue chooses its own windows from numeric evidence; it does not consume the art manual or a spoken musical plan. It is useful when that level of automation fits the request. Avoid competing owners for the same deck/controls; stop or yield the owned automation before replacing it with another workflow.
+## Prepare ahead; let the native clock perform
 
-## Prepare ahead and follow the music
+A performance request authorizes necessary preparation and playback. Planning stays read-only; preparation alone leaves the incoming deck paused. Protect contributing and user-prepared sources. Keep one native owner per affected control.
 
-A performance request authorizes the necessary preparation and playback. Planning alone stays read-only, and preparation alone leaves the incoming deck paused. Protect an audible or user-prepared source from accidental replacement. Source/load revisions bind actions to the intended recording; a preparation or accepted queue is not yet an executed handover.
+After preparing, obtain a coherent `performance_observe` packet. Build a bounded score from its unchanged generation and integer source-event anchors, typed commands and curves. Call `performance_validate` with `{"plan":SCORE}` and compare its timed transition `forecast` with the art skill's intended course. Resolve unintended support/arrival relationships by changing the musical placement or controls and validating again; interpret partial coverage from the source evidence. Then call `performance_commit` with its returned `ticket`, preserving the reviewed score and cue without re-entering them. For a sustained beatmix, prepare bounded native Sync and use the action’s `alignment.maintain` contract through the complete audible overlap and clearance; the launch gate alone does not hold phase. Register the known entrance, role transfers, clearance and following development together; native execution handles control timing while you compose the next move. Use the full available palette when it serves the passage rather than reducing every arrangement to a bass/fader swap.
 
-Use native beat/event scheduling for known musical actions so model latency does not determine their execution. Follow lifecycle feedback for meaningful musical decisions and failures; inspect current state when it resolves an ambiguity. Observing a live set, choosing successive moves and following an event stream are allowed. There is no policy requiring an agent to disappear while the set is running.
+Keep the original endpoint of a bounded set using `mix_session_start`; it owns time without choosing songs. Read `mix_session_status` and follow actual feedback through `events_get` and `performance_receipts`. A passive log alone does not wake an idle performer. Prepare the next source while worthwhile musical exits remain.
 
-For a queue, `--wait-ready` is an optional bounded startup check. An agent can hand off after the first successor is armed when unattended operation was intended, or remain involved when performing/observing was requested. Retain the queue/operation identity and original finish time. A stopped or failed queue may leave ordinary music playing; prepare the next move before that carrier runs out. The current host may need to deliver an actionable event to resume an idle agent; a passive log alone does not do so.
+## Recover from what actually played
 
-## Recover from what actually happened
+`performance_receipts` distinguishes pending, applied, verified, failed and cancelled members, current controls and actual recovery. A rejected score leaves successful preparation intact. Retry an uncertain commit with the same ticket or identical operation ID/body; an altered arrangement is a new operation.
 
-Inspect failed receipts and actual deck positions before retrying. Preserve healthy music and do not replay a partly completed sequence blindly. A source rejection is not a musical instruction: another song, another passage, another technique or another supported workflow may be appropriate.
+A running failure uses the authored recovery only while its declared carrier remains available. Reobserve after recovery, or cancel the owned pending score before a reachable replacement. Preserve useful loaded/cued sources and deliberate timbre. If both decks end unintentionally, report the gap and establish the intended ready source through an available route, then rebuild the phrase plan. An ended clock cannot launch future work. Honor a genuine user stop/takeover and retain the original finish time.
 
-If both decks end unintentionally, report the gap, establish a ready incoming entry with audible controls and plain-play it before rebuilding a phrase plan. An ended outgoing clock cannot execute a future launch. Preserve the original endpoint rather than starting another full hour. Yield to a genuine user stop/takeover. Recording and durable library/account edits still require the corresponding user intent. Execution receipts do not certify listening quality.
+Executed receipts establish controls; source trajectories and listening establish their musical consequences. Recording and durable library/account changes require their corresponding intent and exposed capabilities.

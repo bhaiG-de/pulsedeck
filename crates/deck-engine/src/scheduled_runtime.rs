@@ -15,22 +15,21 @@ impl Mixer {
         mut batch: Box<crate::scheduled::NativeBatch>,
     ) -> Option<Box<crate::scheduled::NativeBatch>> {
         use crate::scheduled::{BatchLifecycle as L, BatchReason as R};
+        let guarded = !batch.command_queue || batch.recovery_targets != 0;
         let reason = if self.scheduled.as_ref().is_some_and(|b| {
             b.state.active()
                 && !(b.command_queue && b.receipts[..b.len].iter().all(|r| r.state >= 2))
-        }) || !batch.command_queue && self.ramps.iter().any(Option::is_some)
+        }) || guarded && self.ramps.iter().any(Option::is_some)
             || self.launches.iter().any(Option::is_some)
         {
             R::ResourceConflict
-        } else if !batch.command_queue && self.load_revisions != batch.sources {
+        } else if guarded && self.load_revisions != batch.sources {
             R::SourceChanged
-        } else if !batch.command_queue
-            && self.decks.each_ref().map(|d| d.position_revision) != batch.positions
-        {
+        } else if guarded && self.decks.each_ref().map(|d| d.position_revision) != batch.positions {
             R::PositionChanged
-        } else if !batch.command_queue && self.grid_revisions != batch.grids {
+        } else if guarded && self.grid_revisions != batch.grids {
             R::GridChanged
-        } else if !batch.command_queue && self.control_revision != batch.control_revision {
+        } else if guarded && self.control_revision != batch.control_revision {
             R::ManualTakeover
         } else if !batch.command_queue
             && (self.batch_rate_changed(&batch)
@@ -42,6 +41,13 @@ impl Mixer {
             R::ResourceConflict
         } else if !batch.command_queue && !self.decks[batch.clock].playing {
             R::ClockStopped
+        } else if batch
+            .rhythm
+            .iter()
+            .flatten()
+            .any(|guard| !self.rhythm_prepared(guard))
+        {
+            R::RhythmLost
         } else if self.engine_epoch != batch.engine_epoch || self.sample_rate != batch.sample_rate {
             R::AudioStopped
         } else if self.decks[batch.clock].seconds() >= batch.arm_before {
@@ -575,7 +581,10 @@ impl Mixer {
                 let target = self.target_value(t);
                 let settled = match t {
                     crate::ControlTarget::TempoPercent { .. } => true,
-                    _ => (self.target_mut(t).value - e).abs() <= 0.002,
+                    _ => {
+                        (self.target_mut(t).value - e).abs()
+                            <= crate::dsp::CONTROL_ENDPOINT_TOLERANCE
+                    }
                 };
                 if (target - e).abs() > 1e-4 || !settled || self.ramps[i].is_some() {
                     return false;
@@ -612,7 +621,7 @@ impl Mixer {
             b.state = L::Yielded;
             return;
         }
-        if b.command_queue {
+        if b.command_queue && b.recovery_targets == 0 {
             b.state = L::Failed;
             return;
         }
@@ -674,7 +683,33 @@ impl Mixer {
             return;
         }
         self.batch_internal = true;
-        if b.command_queue {
+        if b.command_queue && b.authored_loops != 0 {
+            for deck in 0..2 {
+                if b.authored_loops & (1 << deck) == 0 || self.decks[deck].loop_region.is_none() {
+                    continue;
+                }
+                for step in b.steps[..b.len].iter_mut().flatten() {
+                    if step.source_revisions[deck] == self.load_revisions[deck]
+                        && step.grid_revisions[deck] == self.grid_revisions[deck]
+                        && step.deck_control_revisions[deck] == self.deck_control_revisions[deck]
+                    {
+                        step.position_revisions[deck] = self.decks[deck].position_revision;
+                    }
+                }
+                b.positions[deck] = self.decks[deck].position_revision;
+            }
+        }
+        if b.command_queue && b.recovery_targets != 0 && self.rendered_frames >= b.expires_frame {
+            self.cancel_owned(&b);
+            self.cancel_batch_receipts(&mut b);
+            b.state = L::Failed;
+            b.reason = R::DeadlineExpired;
+            b.frame = self.rendered_frames;
+            self.batch_internal = false;
+            self.scheduled = Some(b);
+            return;
+        }
+        if b.command_queue && b.state != L::Recovering {
             self.advance_command_queue(&mut b);
             self.batch_internal = false;
             self.scheduled = Some(b);
@@ -901,13 +936,17 @@ impl Mixer {
                 }
             }
         }
+        if b.recovery_targets != 0 {
+            self.recover_batch(b, reason);
+            return;
+        }
         self.cancel_owned(b);
         self.cancel_batch_receipts(b);
         b.state = crate::BatchLifecycle::Failed;
         b.reason = reason;
         b.frame = self.rendered_frames;
     }
-    fn command_prerequisite_failure(
+    pub(crate) fn command_prerequisite_failure(
         &self,
         command: &crate::EngineCommand,
         action_id: u64,
@@ -1151,6 +1190,22 @@ impl Mixer {
         i: usize,
     ) -> Result<bool, crate::BatchReason> {
         use crate::scheduled::QueueTiming;
+        if let Some(previous) = b.steps[i].as_ref().unwrap().curve_predecessor {
+            let receipt = b.receipts[previous];
+            if receipt.state >= 3 {
+                return Err(crate::BatchReason::PrerequisiteFailed);
+            }
+            if receipt.state == 0 {
+                return Ok(false);
+            }
+            let frame = receipt
+                .ramp_end_frame
+                .ok_or(crate::BatchReason::InvalidPatch)?;
+            let step = b.steps[i].as_mut().unwrap();
+            step.at_frame = Some(frame);
+            step.dependency = None;
+            return Ok(true);
+        }
         let Some(QueueTiming::AfterAction {
             action_id,
             seconds,
@@ -1184,6 +1239,27 @@ impl Mixer {
                 }
                 let member = &b.receipts[j];
                 if member.state == 3 || member.state == 4 {
+                    return Err(crate::BatchReason::PrerequisiteFailed);
+                }
+                if member.state != 2 {
+                    return Ok(false);
+                }
+                if member.completed_frame > latest.completed_frame {
+                    latest = member;
+                }
+            }
+            latest
+        } else {
+            receipt
+        };
+        let receipt = if b.steps[i].as_ref().unwrap().completion_requirements != 0 {
+            let mut latest = receipt;
+            for required in 0..b.len {
+                if b.steps[i].as_ref().unwrap().completion_requirements & (1u64 << required) == 0 {
+                    continue;
+                }
+                let member = &b.receipts[required];
+                if member.state >= 3 {
                     return Err(crate::BatchReason::PrerequisiteFailed);
                 }
                 if member.state != 2 {
@@ -1295,6 +1371,58 @@ impl Mixer {
         }
         Ok(true)
     }
+    fn rhythm_prepared(&self, guard: &crate::scheduled::MaintainedAlignment) -> bool {
+        let deck = guard.require.deck;
+        self.master_deck == 1 - deck
+            && self.decks[deck].sync_enabled
+            && self.decks[deck].sync_rate_limits == Some(guard.limits)
+            && self.decks.iter().all(|d| {
+                d.grid_valid && !d.jog_touch && d.loop_region.is_none() && !d.preparation_pending()
+            })
+    }
+    fn maintain_command_rhythm(&mut self, b: &mut crate::scheduled::NativeBatch) -> bool {
+        for slot in 0..b.len {
+            let Some(guard) = b.rhythm[slot] else {
+                continue;
+            };
+            let started = (0..b.len)
+                .any(|i| guard.members & (1u64 << i) != 0 && matches!(b.receipts[i].state, 1 | 2));
+            let pending =
+                (0..b.len).any(|i| guard.members & (1u64 << i) != 0 && b.receipts[i].state <= 1);
+            if !started || !pending {
+                continue;
+            }
+            // A Sync Play may still await its native launch. Its initial atomic
+            // phase gate remains authoritative; actual completion releases After work.
+            let waiting_launch = !self.decks[guard.require.deck].playing
+                && self.launches[guard.require.deck].is_some();
+            let healthy = self.rhythm_prepared(&guard)
+                && self.decks[1 - guard.require.deck].playing
+                && (waiting_launch
+                    || self.batch_prerequisite(guard.require)
+                        && guard
+                            .limits
+                            .contains(self.decks[guard.require.deck].actual_rate()));
+            if healthy {
+                continue;
+            }
+            self.cancel_owned(b);
+            for i in 0..b.len {
+                if guard.members & (1u64 << i) != 0 && b.receipts[i].state <= 1 {
+                    b.receipts[i].state = 4;
+                    b.receipts[i].completed_frame = self.rendered_frames;
+                    b.receipts[i].failure = Some(crate::scheduled::CommandFailure {
+                        cause: crate::scheduled::CommandFailureCause::AlignmentFailed,
+                        deck: Some(guard.require.deck),
+                        action_id: b.receipts[i].action_id,
+                    });
+                }
+            }
+            self.fail_command_queue(b, crate::BatchReason::RhythmLost, None);
+            return false;
+        }
+        true
+    }
     fn advance_command_queue(&mut self, b: &mut crate::scheduled::NativeBatch) {
         use crate::scheduled::{BatchLifecycle as L, BatchReason as R};
         let reason = if self.engine_epoch != b.engine_epoch || self.sample_rate != b.sample_rate {
@@ -1308,6 +1436,9 @@ impl Mixer {
             b.state = L::Yielded;
             b.reason = reason;
             b.frame = self.rendered_frames;
+            return;
+        }
+        if !self.maintain_command_rhythm(b) {
             return;
         }
         self.advance_ramps();
@@ -1350,6 +1481,12 @@ impl Mixer {
                 continue;
             }
             let step = b.steps[i].as_ref().unwrap();
+            if step
+                .curve_predecessor
+                .is_some_and(|previous| b.receipts[previous].state == 0)
+            {
+                continue;
+            }
             if step.clock.is_some_and(|clock| {
                 !self.decks[clock].playing
                     && self.decks[clock].track.as_ref().is_some_and(|t| {
@@ -1368,12 +1505,16 @@ impl Mixer {
                 self.fail_command_queue(b, R::ClockStopped, Some(i));
                 return;
             }
-            let due = step
-                .at_frame
-                .is_some_and(|frame| self.rendered_frames >= frame)
-                || step
-                    .clock
-                    .is_some_and(|clock| self.decks[clock].seconds() >= step.at);
+            let due = if step.curve_predecessor.is_some() {
+                step.at_frame
+                    .is_some_and(|frame| self.rendered_frames >= frame)
+            } else {
+                step.at_frame
+                    .is_some_and(|frame| self.rendered_frames >= frame)
+                    || step
+                        .clock
+                        .is_some_and(|clock| self.decks[clock].seconds() >= step.at)
+            };
             if !due {
                 continue;
             }
@@ -1399,12 +1540,66 @@ impl Mixer {
                 return;
             }
             let mut failure = None;
+            let mut rhythm_failure = false;
             for j in 0..b.len {
                 if b.receipts[j].state == 0
                     && Self::same_command_group(step, b.steps[j].as_ref().unwrap())
                 {
                     let member = b.steps[j].as_ref().unwrap();
-                    failure = self.command_prerequisite_failure(&member.command, member.action_id);
+                    if let Some(guard) = b.rhythm.iter().flatten().find(|guard| {
+                        guard.members & (1u64 << j) != 0
+                            && (!self.rhythm_prepared(guard)
+                                || !self.decks[1 - guard.require.deck].playing)
+                    }) {
+                        rhythm_failure = true;
+                        failure = Some(crate::scheduled::CommandFailure {
+                            cause: crate::scheduled::CommandFailureCause::AlignmentFailed,
+                            deck: Some(guard.require.deck),
+                            action_id: member.action_id,
+                        });
+                    } else if b.receipts[..b.len].iter().enumerate().any(|(index, r)| {
+                        member.completion_requirements & (1u64 << index) != 0 && r.state != 2
+                    }) {
+                        failure = Some(crate::scheduled::CommandFailure {
+                            cause: crate::scheduled::CommandFailureCause::DependencyFailed,
+                            deck: member.clock,
+                            action_id: member.action_id,
+                        });
+                    } else if member.require.is_some_and(|r| !self.batch_prerequisite(r)) {
+                        failure = Some(crate::scheduled::CommandFailure {
+                            cause: crate::scheduled::CommandFailureCause::AlignmentFailed,
+                            deck: member.require.map(|r| r.deck),
+                            action_id: member.action_id,
+                        });
+                    } else {
+                        if let Some(previous) = member.curve_predecessor {
+                            if b.receipts[previous].state == 1 {
+                                let verified = match b.steps[previous].as_ref().unwrap().command {
+                                    crate::EngineCommand::Ramp { target, value, .. } => {
+                                        self.ramp_boundaries[target.index()].is_some_and(
+                                            |(frame, endpoint, tracking)| {
+                                                Some(frame) == b.receipts[previous].ramp_end_frame
+                                                    && frame == self.rendered_frames
+                                                    && (endpoint - value).abs() < 1e-6
+                                                    && tracking
+                                            },
+                                        ) && (self.target_value(target) - value).abs() < 1e-4
+                                    }
+                                    _ => false,
+                                };
+                                if !verified {
+                                    failure=Some(crate::scheduled::CommandFailure {
+                                        cause:crate::scheduled::CommandFailureCause::ControlEndpointUnverified,
+                                        deck:member.command.deck(),action_id:member.action_id,
+                                    });
+                                }
+                            }
+                        }
+                        if failure.is_none() {
+                            failure = self
+                                .command_prerequisite_failure(&member.command, member.action_id);
+                        }
+                    }
                     if failure.is_some() {
                         break;
                     }
@@ -1412,7 +1607,15 @@ impl Mixer {
             }
             if let Some(failure) = failure {
                 self.set_command_group_failure(b, i, failure);
-                self.fail_command_queue(b, R::PrerequisiteFailed, Some(i));
+                self.fail_command_queue(
+                    b,
+                    if rhythm_failure {
+                        R::RhythmLost
+                    } else {
+                        R::PrerequisiteFailed
+                    },
+                    Some(i),
+                );
                 return;
             }
             b.state = L::Running;
@@ -1452,11 +1655,28 @@ impl Mixer {
                         ) & targets
                             != 0
                     {
-                        b.receipts[old].state = 3;
+                        let continuing = step.curve_predecessor == Some(old);
+                        b.receipts[old].state = if continuing { 2 } else { 3 };
+                        b.receipts[old].curve_boundary_verified = continuing;
                         b.receipts[old].completed_frame = self.rendered_frames;
+                        if continuing {
+                            b.receipts[old].completed_clock_seconds =
+                                self.decks.each_ref().map(|d| d.seconds());
+                            b.receipts[old].completed_load_revisions = self.load_revisions;
+                            b.receipts[old].completed_grid_revisions = self.grid_revisions;
+                            b.receipts[old].completed_position_revisions =
+                                self.decks.each_ref().map(|d| d.position_revision);
+                        }
                     }
                 }
                 self.command(command);
+                if let crate::EngineCommand::SetLoop { deck, beats } = &step.command {
+                    if beats.is_some() {
+                        b.authored_loops |= 1 << deck;
+                    } else {
+                        b.authored_loops &= !(1 << deck);
+                    }
+                }
                 b.receipts[j] = crate::scheduled::BatchEventReceipt {
                     step: j,
                     action_id: step.action_id,

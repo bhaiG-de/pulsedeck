@@ -5,6 +5,7 @@ edition = "2021"
 license = "MIT"
 
 [dependencies]
+control-protocol = { path = "../control-protocol" }
 schemars = "0.8.22"
 serde = { version = "1", features = ["derive"] }
 # Cache dependencies include exact BPM/grid bits; parsing saved JSON must retain them.

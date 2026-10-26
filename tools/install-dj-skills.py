@@ -102,4 +102,4 @@ if __name__ == "__main__":
     except (ValueError, OSError) as error:
         parser.exit(2, str(error) + "\n")
     print(f"Installed {len(names)} skills in {args.destination}; "
-          "use pulsedeck-control/references/cli.md to bind the runtime")
+          "use pulsedeck-control/references/mcp.md for connected tool access")

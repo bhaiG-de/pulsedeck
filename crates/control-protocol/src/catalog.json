@@ -68,7 +68,7 @@
     "example_args": {},
     "input_schema": {
       "type": "object",
-      "properties": {},
+      "properties": {"receipt_ticket": {"type":"integer","minimum":1,"description":"Read a bounded native direct-control receipt after an uncertain acknowledgement. Returns pending until applied; expired receipts are reported explicitly."}},
       "additionalProperties": false,
       "required": []
     },
@@ -435,7 +435,8 @@
           "type": [
             "integer",
             "string"
-          ]
+          ],
+          "description": "Local playlist ID (integer, decimal string or local:ID). For Spotify liked tracks use spotify_liked; for a Spotify playlist use spotify_playlist_tracks."
         },
         "waveform": {
           "type": "boolean"

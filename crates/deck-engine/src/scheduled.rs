@@ -197,6 +197,7 @@ pub enum BatchReason {
     IdConflict,
     QueueSealed,
     QueueInactive,
+    RhythmLost,
 }
 impl BatchReason {
     pub fn from_code(v: u64) -> Self {
@@ -220,56 +221,12 @@ impl BatchReason {
             17 => Self::IdConflict,
             18 => Self::QueueSealed,
             19 => Self::QueueInactive,
+            20 => Self::RhythmLost,
             _ => Self::None,
         }
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-#[repr(u64)]
-pub enum CommandFailureCause {
-    SourceMissing = 1,
-    ClockSourceChanged,
-    ClockNotPlaying,
-    ClockEof,
-    IncomingAlreadyPlaying,
-    GridMissing,
-    JogHeld,
-    LoopActive,
-    PreparationPending,
-    SyncMasterSelf,
-    HotCueMissing,
-    PlaybackBpmReferenceMissing,
-    PlaybackBpmUnreachable,
-    DependencyFailed,
-    LaunchAborted,
-    DeadlineMissed,
-    SyncRateOutsideLimits,
-}
-impl CommandFailureCause {
-    pub(crate) fn from_code(code: u64) -> Option<Self> {
-        Some(match code {
-            1 => Self::SourceMissing,
-            2 => Self::ClockSourceChanged,
-            3 => Self::ClockNotPlaying,
-            4 => Self::ClockEof,
-            5 => Self::IncomingAlreadyPlaying,
-            6 => Self::GridMissing,
-            7 => Self::JogHeld,
-            8 => Self::LoopActive,
-            9 => Self::PreparationPending,
-            10 => Self::SyncMasterSelf,
-            11 => Self::HotCueMissing,
-            12 => Self::PlaybackBpmReferenceMissing,
-            13 => Self::PlaybackBpmUnreachable,
-            14 => Self::DependencyFailed,
-            15 => Self::LaunchAborted,
-            16 => Self::DeadlineMissed,
-            17 => Self::SyncRateOutsideLimits,
-            _ => return None,
-        })
-    }
-}
+pub use control_protocol::commands::CommandFailureCause;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommandFailure {
     pub cause: CommandFailureCause,
@@ -298,11 +255,15 @@ pub struct BatchEventReceipt {
     pub clock_source_headroom_seconds: Option<f64>,
     /// Actual native ramp endpoint; absent until the ramp has started.
     pub ramp_end_frame: Option<u64>,
+    /// An intermediate curve point verified its envelope and rendered tracking;
+    /// the final segment still requires the ordinary settled endpoint check.
+    pub curve_boundary_verified: bool,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ScheduledBatchSnapshot {
     pub command_queue: bool,
+    pub recovery_applied: bool,
     pub revision: u64,
     pub open: bool,
     pub clock: usize,
@@ -354,6 +315,9 @@ pub(crate) struct CompiledStep {
     pub at_frame: Option<u64>,
     pub dependency: Option<QueueTiming>,
     pub dependency_id: u64,
+    pub completion_requirements: u64,
+    /// Earlier segment of this artist-authored curve, not an arbitrary override.
+    pub curve_predecessor: Option<usize>,
     pub grouped: bool,
     pub group_id: Option<u64>,
     pub strict_time: bool,
@@ -363,6 +327,12 @@ pub(crate) struct CompiledStep {
     pub position_revisions: [u64; 2],
     pub deck_control_revisions: [u64; 2],
     pub target_control_revisions: [u64; crate::COMMAND_TARGET_COUNT],
+}
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct MaintainedAlignment {
+    pub require: BatchPrerequisite,
+    pub limits: crate::SyncRateLimits,
+    pub members: u64,
 }
 #[derive(Debug)]
 pub(crate) struct NativeBatch {
@@ -397,6 +367,8 @@ pub(crate) struct NativeBatch {
     pub targets: u32,
     pub expected_endpoints: [Option<f32>; crate::CONTROL_TARGET_COUNT],
     pub launched: [bool; 2],
+    pub authored_loops: u8,
+    pub rhythm: [Option<MaintainedAlignment>; MAX_SCHEDULED_STEPS],
     pub state: BatchLifecycle,
     pub reason: BatchReason,
     pub completed: usize,
@@ -488,7 +460,7 @@ fn group_command_resources(command: &EngineCommand) -> u32 {
     }
 }
 pub(crate) fn active_ownership(b: &NativeBatch) -> (u8, u32) {
-    if !b.command_queue {
+    if !b.command_queue || b.state == BatchLifecycle::Recovering {
         return (if b.state.active() { 3 } else { 0 }, b.targets);
     }
     let mut decks = 0;
@@ -500,7 +472,11 @@ pub(crate) fn active_ownership(b: &NativeBatch) -> (u8, u32) {
             targets |= command_targets(&step.command);
         }
     }
-    (decks, targets)
+    if b.state.active() && b.recovery_targets != 0 {
+        (decks | 3, targets | b.recovery_targets)
+    } else {
+        (decks, targets)
+    }
 }
 pub(crate) fn endpoints(c: &EngineCommand, out: &mut [Option<f32>; crate::CONTROL_TARGET_COUNT]) {
     use EngineCommand::*;
@@ -681,6 +657,8 @@ pub(crate) fn compile(
         targets: 0,
         expected_endpoints: [None; crate::CONTROL_TARGET_COUNT],
         launched: [false; 2],
+        authored_loops: 0,
+        rhythm: [None; MAX_SCHEDULED_STEPS],
         state: BatchLifecycle::Armed,
         reason: BatchReason::None,
         completed: 0,
@@ -956,6 +934,8 @@ fn compile_actions(
             at_frame: None,
             dependency: None,
             dependency_id: 0,
+            completion_requirements: 0,
+            curve_predecessor: None,
             group_id: None,
             grouped: true,
             strict_time: true,
@@ -1181,6 +1161,8 @@ pub(crate) fn compile_command_queue(
         targets: 0,
         expected_endpoints: [None; crate::CONTROL_TARGET_COUNT],
         launched: [false; 2],
+        authored_loops: 0,
+        rhythm: [None; MAX_SCHEDULED_STEPS],
         state: BatchLifecycle::Armed,
         reason: BatchReason::None,
         completed: 0,
@@ -1408,6 +1390,8 @@ pub(crate) fn compile_command_patch(
             at_frame: None,
             dependency: None,
             dependency_id: 0,
+            completion_requirements: 0,
+            curve_predecessor: None,
             group_id: item.group_id,
             grouped: !matches!(
                 item.when,

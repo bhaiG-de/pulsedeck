@@ -385,11 +385,50 @@
     grid-template-columns: 1fr;
   }
 }
-.suggest-successor-queue {
+.suggest-neural-mix {
   border-block: 1px solid var(--seam);
-  padding: 8px 14px;
+  padding: 13px 22px;
   font-size: 12px;
   flex: 0 0 auto;
+  background: color-mix(in srgb, var(--ok) 4%, transparent);
+}
+.suggest-neural-mix-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.suggest-neural-mix-bar strong,
+.suggest-panel .suggest-neural-mix-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.suggest-neural-mix-bar p,
+.suggest-neural-mix-hint {
+  margin: 5px 0;
+  font-size: 11px;
+  opacity: 0.65;
+}
+.suggest-panel .suggest-neural-mix-toggle {
+  border-color: var(--ok-ink);
+  color: var(--ok-ink);
+  white-space: nowrap;
+}
+.suggest-panel .suggest-neural-mix-toggle.is-running {
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+}
+.suggest-neural-mix-status {
+  margin: 10px 0 8px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.suggest-neural-mix > .suggest-error {
+  padding: 6px 0;
+}
+.suggest-successor-queue {
+  font-size: 11px;
 }
 .suggest-successor-queue summary {
   cursor: pointer;

@@ -19,7 +19,7 @@ Use a **local phrase origin** supported by the music. File zero, an arbitrary mu
 
 Map the current statement, the next useful exits, and B's entry through its arrival and first following phrase. For each relevant point retain source time / effective beat position, what enters or leaves, and how you know. Useful content includes bass entry/withdrawal, lead/vocal onset and completion, fills, tension, and the return of a full groove.
 
-Evidence for a boundary combines context: a repeated pattern completes, a fill resolves, a lyric ends, harmony settles, or a new element enters and remains. A crash alone could be an accent inside a phrase. Inspect before and after. When only bands are available, call it a measured texture change; do not name a vocal, verse or drop from that alone.
+Evidence for a boundary combines context: a repeated pattern completes, a fill resolves, a lyric ends, harmony settles, or a new element enters and remains. A crash alone could be an accent inside a phrase. Inspect before and after. With band evidence, infer the functional relationship: a recurring foundation, sustained withdrawal, developing activity or strong return. Neighboring and repeated patterns support candidate phrase boundaries. Keep the semantic label provisional, but use the measured function to place and shape the mix; a verified section name is not a prerequisite.
 
 ## Choose the outgoing statement
 

@@ -4,10 +4,13 @@ use crate::{
 };
 use std::sync::Arc;
 
+pub(crate) const CONTROL_SMOOTH_SECONDS: f64 = 0.008;
+pub(crate) const CONTROL_ENDPOINT_TOLERANCE: f32 = 0.002;
+
 #[derive(Clone, Copy)]
 pub(crate) struct Smooth {
     pub target: f32,
-    value: f32,
+    pub(crate) value: f32,
 }
 impl Smooth {
     fn new(value: f32) -> Self {
@@ -320,7 +323,8 @@ impl Deck {
         if self.output_rate != output_rate {
             self.processor.invalidate();
             self.output_rate = output_rate;
-            self.smoothing = 1.0 - (-1.0 / (output_rate as f32 * 0.008)).exp();
+            self.smoothing =
+                1.0 - (-1.0 / (output_rate as f32 * CONTROL_SMOOTH_SECONDS as f32)).exp();
             self.low_coefficient =
                 1.0 - (-2.0 * std::f32::consts::PI * 250.0 / output_rate as f32).exp();
             self.high_coefficient =
@@ -468,6 +472,7 @@ impl Deck {
 struct ControlRamp {
     target: ControlTarget,
     from: f32,
+    actual_from: Option<f32>,
     to: f32,
     start: u64,
     end: u64,
@@ -479,7 +484,7 @@ struct ControlRamp {
 }
 #[derive(Clone, Copy)]
 pub(crate) struct ScheduledLaunch {
-    clock: usize,
+    pub(crate) clock: usize,
     pub at_seconds: f64,
     revisions: [u64; 2],
     positions: [u64; 2],
@@ -495,6 +500,7 @@ pub(crate) struct Mixer {
     pub grid_revisions: [u64; 2],
     pub control_revision: u64,
     pub guarded_control_receipts: [u64; 64],
+    pub direct_control_receipts: [Option<crate::DirectControlReceipt>; 64],
     pub deck_control_revisions: [u64; 2],
     pub target_control_revisions: [u64; crate::COMMAND_TARGET_COUNT],
     pub engine_epoch: u64,
@@ -502,6 +508,7 @@ pub(crate) struct Mixer {
     batch_internal: bool,
     pub load_revisions: [u64; 2],
     ramps: [Option<ControlRamp>; crate::CONTROL_TARGET_COUNT],
+    ramp_boundaries: [Option<(u64, f32, bool)>; crate::CONTROL_TARGET_COUNT],
     pub launches: [Option<ScheduledLaunch>; 2],
     pub decks: [Deck; 2],
     pub main_fx: [crate::effects::EffectBus; 2],
@@ -533,6 +540,7 @@ impl Mixer {
             grid_revisions: [0; 2],
             control_revision: 0,
             guarded_control_receipts: [0; 64],
+            direct_control_receipts: [None; 64],
             deck_control_revisions: [0; 2],
             target_control_revisions: [0; crate::COMMAND_TARGET_COUNT],
             engine_epoch: 0,
@@ -540,6 +548,7 @@ impl Mixer {
             batch_internal: false,
             load_revisions: [0; 2],
             ramps: [None; crate::CONTROL_TARGET_COUNT],
+            ramp_boundaries: [None; crate::CONTROL_TARGET_COUNT],
             launches: [None; 2],
             decks: [Deck::new(), Deck::new()],
             main_fx: std::array::from_fn(|_| crate::effects::EffectBus::new()),
@@ -1024,6 +1033,7 @@ impl Mixer {
                 self.ramps[target.index()] = Some(ControlRamp {
                     target,
                     from,
+                    actual_from: None,
                     to: value,
                     start,
                     end: start + frames,
@@ -1036,6 +1046,7 @@ impl Mixer {
                         _ => None,
                     },
                 });
+                self.ramp_boundaries[target.index()] = None;
             }
             CancelRamps => self.ramps.fill(None),
             Play { deck } => {
@@ -1590,7 +1601,7 @@ impl Mixer {
     }
     fn advance_ramps(&mut self) {
         for i in 0..self.ramps.len() {
-            let Some(ramp) = self.ramps[i] else {
+            let Some(mut ramp) = self.ramps[i] else {
                 continue;
             };
             let guard = ramp.clock.or(ramp.target.deck());
@@ -1611,6 +1622,13 @@ impl Mixer {
             if self.rendered_frames < ramp.start {
                 continue;
             }
+            if ramp.actual_from.is_none() {
+                ramp.actual_from = Some(match ramp.target {
+                    ControlTarget::TempoPercent { .. } => self.target_value(ramp.target),
+                    _ => self.target_mut(ramp.target).value,
+                });
+                self.ramps[i] = Some(ramp);
+            }
             let progress = ((self.rendered_frames - ramp.start) as f64
                 / (ramp.end - ramp.start) as f64)
                 .min(1.0) as f32;
@@ -1624,6 +1642,25 @@ impl Mixer {
                 self.target_mut(ramp.target).target = value;
             }
             if progress >= 1.0 {
+                // A curve may continue at this exact boundary before its
+                // smoother settles. Verify the rendered control trajectory,
+                // not merely that the requested duration elapsed. The linear
+                // recurrence is x[n+1]=x[n]+alpha*(target[n]-x[n]).
+                let tracking = if matches!(ramp.target, ControlTarget::TempoPercent { .. }) {
+                    true
+                } else {
+                    let n = (ramp.end - ramp.start) as f64;
+                    let alpha = (1.0
+                        - (-1.0 / (self.sample_rate as f32 * CONTROL_SMOOTH_SECONDS as f32)).exp())
+                        as f64;
+                    let slope = (ramp.to - ramp.from) as f64 / n;
+                    let expected = ramp.to as f64 - slope / alpha
+                        + (ramp.actual_from.unwrap() as f64 - ramp.from as f64 + slope / alpha)
+                            * (1. - alpha).powf(n);
+                    (self.target_mut(ramp.target).value as f64 - expected).abs()
+                        <= CONTROL_ENDPOINT_TOLERANCE as f64
+                };
+                self.ramp_boundaries[i] = Some((self.rendered_frames, ramp.to, tracking));
                 self.ramps[i] = None;
             }
         }
@@ -1663,7 +1700,8 @@ impl Mixer {
     pub fn frame(&mut self) -> ([f32; 2], [f32; 2]) {
         if self.smoothing_rate != self.sample_rate {
             self.smoothing_rate = self.sample_rate;
-            self.smoothing = 1.0 - (-1.0 / (self.sample_rate as f32 * 0.008)).exp();
+            self.smoothing =
+                1.0 - (-1.0 / (self.sample_rate as f32 * CONTROL_SMOOTH_SECONDS as f32)).exp();
             self.sync_smoothing = 1.0 - (-1.0 / (self.sample_rate as f64 * 0.250)).exp();
             self.sync_tempo_smoothing = 1.0 - (-1.0 / self.sample_rate as f64).exp();
         }
@@ -3941,5 +3979,24 @@ mod local_absolute_bpm_regressions {
         m.decks[1].jog_touch = true;
         m.unload(0);
         assert_eq!(m.master_deck, 0);
+    }
+}
+
+impl Mixer {
+    pub(crate) fn direct_deck_state(&self, deck: usize) -> crate::DirectDeckState {
+        let d = &self.decks[deck];
+        crate::DirectDeckState {
+            load_revision: self.load_revisions[deck],
+            position_revision: d.position_revision,
+            playing: d.playing,
+            position_seconds: d.seconds(),
+            channel_fader: d.channel_fader.target,
+            channel_fader_actual: d.channel_fader.value,
+            launch_pending: self.launches[deck].is_some(),
+            launch_clock: self.launches[deck].map(|l| l.clock),
+            launch_at_seconds: self.launches[deck].map(|l| l.at_seconds),
+            channel_fader_ramp_active: self.ramps[ControlTarget::ChannelFader { deck }.index()]
+                .is_some(),
+        }
     }
 }

@@ -1,52 +1,55 @@
-# Choose and prepare the transition
+# Compose the overlap, then choose its executor
 
-Book basis: Morse's five basic transitions; Broughton/Brewster chapters 9–13 and 28–29. This is the bridge from musical judgment to the [control skill](../../pulsedeck-control/SKILL.md), which owns command syntax, scheduling and recovery.
+Book basis: Morse's five transitions, Sync/loops and EQ; Broughton/Brewster chapters 9–14, 28–31 and 44. The [control skill](../../pulsedeck-control/SKILL.md) owns syntax and execution. This reference makes the musical actions concrete.
 
-## Choose by content and purpose
+## Draw the course before selecting a recipe
 
-| Approach | A musical reason | Establish before committing |
-|---|---|---|
-| Fade into a new opening | A resolved tail, a tempo/style change, or a gentle new paragraph | Where A finishes, a complete B opening, level and any sustained tonal coexistence |
-| End-to-end | The outgoing ending itself is worth hearing | The actual audible ending and a convincing immediate B entry; file EOF can include silence |
-| Phrase cut / short exchange | A decisive edit, dense foregrounds, or a purposeful pulse reset | Complete A unit, complete B entrance/pickup, and appropriate level/impact |
-| Single-phrase blend | Complementary passages can share a short musical unit | Stable timing, useful audible contributions, and clearance before conflict |
-| Developed blend / bass transfer | The composite groove has room to develop | Internal arrangement, bass availability, harmony, headroom and sustained timing |
-| Breakdown/atmospheric bridge | A release or a new mood deserves space | The surviving motifs, tonal relationship and where pulse/drive returns |
-| Payoff replacement / double drop | An intentional surprise or combined impact | Exact leads and post-arrival compatibility; don't stack two full bass arrangements by default |
-| Loop/tease/call-and-response | A recognizable fragment or stable bed improves the transition | Complete content, seams, repetitions, final reveal and release timing |
+Choose the current statement to preserve and the next experience to create. Map A and B from approach through the first developed phrase after handover. Identify the foundation, body, foreground and tension at every important change. Count the waiting time to any later return. Work backward from the desired incoming arrival to a complete entry and a still-future outgoing launch.
 
-Morse's basic vocabulary includes fade, end-to-end, cut, single-phrase beatmix and bassline-swap beatmix. These are useful options, not a five-step sequence. Pick a technique after deciding the join. Smoothness, brevity and surprise are goals that depend on the brief.
+Budget the arrival and its payoff together. If the set finishes at F, reserve H for the developed statement after the return and C for its close: latest arrival is `F − H − C`; launch is that arrival minus the entry-to-return travel. In a measured trial, about 159 seconds remained when Lola entered at source 116.219. Its strong return was at 294.283; at rate .991 that approach alone needed about 180 seconds. A 24-second blend could not make the return arrive sooner. Before launching, choose a complete later approach or another destination that fits the payoff and close. With changing rates, use the supported travel bounds and counted events. Once playing, compare actual position and return ETA with the same fixed budget; an already missed launch calls for a reachable new musical destination.
 
-For a smooth-blending request, create positive audible overlap with useful material from both tracks. A muted run-up followed by a channel swap does not satisfy that. If the first pair cannot support the result, inspect other complete entries, viable A windows or a different successor while runway remains. Effects are optional.
+Derive these moments separately: playback entry, first audibility, bass transfer, foreground handover and outgoing clearance. For each, name the source event it serves. Then choose the simplest supported executor that realizes those moments. A native option is useful when its exact entry, timing, rate and control actions fit. If not, change the option, author a supported native timeline, or choose another musical construction. A technique label and “enough runway” are not a description of the resulting music.
 
-## Design the musical timeline
+## Constructive patterns
 
-Retain A's protected statement and future opportunities; B's entry and target; the launch and target interval; the actual source/grid identity; and the audible role transfers. Count phrases from their local origins. A fixed 20-second fade or fixed 16-bar overlap is not a placement decision.
+These are patterns to adapt to actual evidence, not fixed bar counts or required complexity.
 
-Inspect every important event inside the overlap. B may introduce a voice before its bass; A may lose its kick before its lead. A low-end transfer and foreground transfer can happen on different boundaries. Read [mixing and blending](mixing-and-blending.md) for those choices and [phrasing](phrasing-and-arrangement.md) for the countdown.
+### Carry the groove into a reveal
 
-A silent rehearsal/pre-roll can check the incoming signal before reveal. It is useful when time and routing permit, but it is separate from the audible blend. Known cues can also support a confident immediately audible launch. Choose the amount of rehearsal for uncertainty, not as a mandatory extra phrase on every track.
+B has a thin developing approach and a strong return 16 bars later. A has a compatible established groove and can finish a statement over those 16 bars. Launch B's complete approach at that statement's start; make its useful top/body contribution audible while A supplies foundation. Transfer low ownership when B's actual foundation returns, give B the foreground, and clear A before its next conflicting change. If A loses its low end earlier, transfer earlier only if B already contains useful support; otherwise choose a shorter B approach or another A window.
 
-## Prepare before the opportunity expires
+This makes B's development part of the music rather than waiting until A's outro to begin an additional 16-bar run-up. It can preserve momentum without increasing tempo.
 
-Use the exact recording/version and final entry. Establish level, tempo/Sync/pitch and initial audible treatment. Inspect B beyond its target so the handover leads somewhere. Resolve missing timing or content with bounded reads or real audition where available. Leave a viable fallback before exploratory work.
+### Withhold, then release
 
-Known musical events should be armed using supported native timing, with ownership and guards managed by control. Choosing a proposal or completing a queue does not prove that the selected source launched or that the handover sounded good. An autonomous selector cannot consume a verbal phrase map from this skill.
+Both sources can thin for a bounded four/eight-bar approach before B's strong return. If the brief wants anticipation, deliberately reduce A's foundation as B's activity develops. Keep enough rhythmic orientation for that idea, set the release boundary, then restore B's actual low/body content there. A measured return supplies the release; opening low EQ on an empty band does not. Compare the return's level and the next developed unit before deciding how much to expose.
 
-For a supported linear custom plan, use [checked phrase plans](checked-phrase-plans.md) for coordinate validation when useful. A real mismatch needs correction; an unsupported pickup or loop needs a separate explicit count and a supported execution path. Never relabel a blend as a cut solely to bypass timing preparation.
+For a continuity brief, a 20-bar unsupported withdrawal may instead be too much. Change the entry/offset or retain a clean rhythmic bed. Quietness can be purposeful; the question is the designed depth, duration and resolution.
 
-## Give creative gestures an ending
+### Extend a useful bed
 
-A loop that adds one extra eight-bar repetition delays the subsequent source events by eight bars on the performance timeline. Recalculate the other track's relationship and know when the loop releases. A live source clock may wrap, so verify how the control scheduler handles the loop rather than attaching a future action to an unreachable position.
+A supplies a clean repeating eight-bar groove but ends before B's desired arrival. If a compatible loop seam and supported release are available, retain that unit for one extra repetition under B's approach. Count the added 32 beats in 4/4, plan the release and transfer at B's arrival, and use a scheduling clock that remains reachable when A wraps. Listen/inspect the seam and tonal relationship; a loop should preserve useful movement rather than repeatedly chop a foreground statement. If the seam or execution cannot be established, use a different entry/window instead.
 
-Separate advance planning from repair after launch. An earlier launch can solve a lead mismatch only before that launch has passed; it is not a live recovery action after B is already running. Reconcile the actual loop position and choose a reachable future release, supported entry/target change, later handover or compatible extension of A. Recount from the current state before arming replacement events.
+### Replace a payoff deliberately
 
-A tease should leave space for the current foreground and have an intended eventual reveal. Repeating a recognizable vocal fragment without ever delivering or resolving it can wear out its value. Shortening loops and sweeping filters can build tension; use them when that tension belongs in the set.
+A's developing activity points to an arrival. B has a complete approach into a suitably strong return. Align the return to replace A's expected payoff; expose enough B approach to prepare the new color, finish or deliberately interrupt A's foreground, and exchange low ownership at the impact. Keep the post-arrival body credible. For a double drop, choose complementary contributions and reserve headroom rather than stacking two full arrangements by default. A sparse unrelated B opening rarely fulfills the same expectation just because it lands on beat one.
 
-Choose effects around a sound or boundary, and account for their routing and tails. Avoid a long outgoing echo masking the incoming lyric or retaining a clashing chord. A transition can be complete with one good gesture.
+### Reveal a new foreground / harmonic contrast
 
-## Verify the intended result
+Let B contribute a less exposed rhythmic layer while A finishes its foreground. Move attention to B at a complete arrival; reduce A's pitched exposure before incompatible B harmony leads. This can introduce a new tonal color without requiring a harmonic-wheel neighbor or a full fade to silence. With only broad-band evidence, keep simultaneous foreground exposure modest; EQ is not stem isolation. A heard/annotated pickup needs space before its downbeat.
 
-After the move, establish whether the actual sources reached the planned events, B is audible with its intended controls, and A cleared. Judge phrasing, groove, balance and the new direction from real listening or feedback when available. A numerical pass remains a timing result.
+### Close a paragraph or change scene
 
-If the launch or preparation fails, re-read the advancing sources and choose a still-viable musical opportunity. Recovery belongs to control. Preserve healthy playback, and distinguish an intentional pause from an accidental gap. Do not defend the old musical plan after its timing relationship has ceased to exist.
+A completed statement and B's complete opening can earn a cut, short exchange, atmospheric bridge or fade. Compare the landing level, pulse and subsequent development. An outro/drop pairing can work if the departure prepares the arrival and its impact serves the brief. Neither a long blend nor a simple cut is automatically smooth. For an explicit beatmix brief, seek useful audible overlap from both sources before resorting to a scene reset.
+
+## Translate events into controls
+
+Use only the moves needed for the course. A gradual fader reveal may cross a sharp bass swap; foreground clearance can occur later. Source-tone correction is a stable baseline; a transition filter/EQ gesture temporarily changes contribution and has an ending. Preserve intentional coloration rather than blindly forcing every channel to neutral, but ensure the next deck does not inherit accidental missing lows or FX.
+
+Check the actual recipe/timeline at entry, internal changes, handover and clearance. Some recipes automatically restore unity EQ and a full incoming fader; accept those endpoints only if they fit the intended continuation. Set fallback policy deliberately: a shorter exchange with the same entry may change the musical relationship. One timing owner and supported native execution belong to control.
+
+After launch, repair from the actual advancing positions. An earlier launch is an advance-planning alternative, not a repair available after it has passed. A seek or loop changes the relationship; recount before replacing scheduled events. Preserve the original finish time.
+
+## Judge the realized arrangement
+
+Compare planned and executed source events, band trajectories and controls. Did support last to the intended replacement? Was the withdrawal intentional and resolved at the expected return? Did the next unit deliver the purpose? Keep listening/user feedback alongside these measurements. Treat emergency continuity recovery separately from a successful designed blend.

@@ -1,37 +1,25 @@
-# Check a selected linear timeline
+# Check a selected linear timeline offline
 
-The existing [phrase_check.py](../scripts/phrase_check.py) is a read-only coordinate checker. It uses status and track inspection; it never loads, seeks, plays, changes controls or edits metadata. Its output scope is `clock_coordinates_only`, with `audible_overlap:not_evaluated`. A pass cannot identify a phrase or certify a blend.
+[phrase_check.py](../scripts/phrase_check.py) reads captured MCP tool JSON only. It checks chosen clock coordinates, effective meter/bar relationships and prepared transport strategy; it never calls PulseDeck or certifies musical phrasing/audibility. Its scope remains `clock_coordinates_only` with `audible_overlap:not_evaluated`.
 
-## When it applies
+Choose the musical relationship first using [phrasing and arrangement](phrasing-and-arrangement.md). Capture complete bounded `track_inspect` packets for both passages and a `status` packet after inspection. An optional status capture before inspection lets the helper reject intervening source/grid/seek changes. Retain actual source/revision identity and exact event timestamps.
 
-Use it for selected effective beat-event anchors on a same-meter, linear custom handover. Choose the musical relationship first using [phrasing and arrangement](phrasing-and-arrangement.md). Inspect the complete intervals and retain exact source timestamps. The checker also examines ready grids, incoming paused state, future launch, outgoing playback and the sustained timing strategy.
+For a same-meter linear blend, prepare the final incoming entry and an outgoing-master/incoming-Sync-follower strategy or matched uniform clocks. The checker inspects that prepared strategy; native `performance_validate` still owns executable feasibility and `performance_commit` owns execution.
 
-For `blend`, establish the incoming final entry and a supported outgoing-master/incoming-Sync-follower relationship, or genuinely matched uniform clocks, through control. The helper checks prepared timing strategy; the execution plan still has to place B at its intended entry and open it appropriately.
-
-Set `DJ_ART_SKILL` to the directory containing this skill's SKILL.md and `PD` to the intended CLI executable. Set the four timestamps from observed effective events in **source seconds**, and optionally choose an evidence output file:
+Run the offline helper on those saved responses:
 
 ```sh
 python3 "$DJ_ART_SKILL/scripts/phrase_check.py" \
-  --cli "$PD" --outgoing A --incoming B \
-  --launch "$A_LAUNCH" --handover "$A_HANDOVER" \
-  --entry "$B_ENTRY" --arrival "$B_ARRIVAL" \
-  --technique blend --save "$task_phrase_evidence"
+  --state status-after.json --before-state status-before.json \
+  --outgoing-packet outgoing-window.json --incoming-packet incoming-window.json \
+  --outgoing A --incoming B --launch "$A_LAUNCH" --handover "$A_HANDOVER" \
+  --entry "$B_ENTRY" --arrival "$B_ARRIVAL" --technique blend --save phrase-check.json
 ```
 
-Reverse deck arguments when their roles reverse. No extra JSON flag is needed. `--save` is optional and saves the check, raw selected inspection packets and compact state. Reuse the intended running instance.
+The files may contain direct structured data, an MCP tool result with `structuredContent`, or a captured JSON-RPC response. No app connection is made by this script. Reverse deck roles when appropriate. Four timestamps are selected exact source seconds, not rounded display labels.
 
-Exit 0 reports a timing pass, exit 1 a failed relation/preparation, and exit 2 unusable input/evidence. Read the errors, both exact interval counts, meter and anchor evidence. A 66-beat B approach does not fit a 64-beat A window; find another complete entry or another handover rather than rounding. Missing manual cues alone do not fail the checker.
+Exit 0 means the selected coordinate relation passes, 1 means it failed, and 2 means unusable input/evidence. Read the exact interval counts and bar evidence: a 66-beat approach cannot replace 64 beats by rounding. Missing manual cues alone do not fail a coordinate check.
 
-`--technique cut` describes a direct joint arrival with zero lead on both decks. Use it for an actual cut that serves the brief. It cannot validate an unequal-tempo multi-second fade or excuse missing blend preparation.
+With both decks prepared and paused, `--preflight` allows the outgoing source to be paused and returns `execution_ready:false`. While the outgoing source plays, use the normal check. `--technique cut` means a true joint arrival with zero leads; it is not validation of an unequal-tempo fade.
 
-## Paused preparation and live verification
-
-With both sources paused and prepared before the opener, add `--preflight`. It applies the coordinate and timing-strategy checks while allowing A to be paused. It returns `preflight:true` and `execution_ready:false`; it has not performed anything. Preflight requires a future A launch after its current position. On a playing A, use the normal live check.
-
-Control owns batch validation, source guards and arming the full sequence. Do not spend the opener's available musical runway debugging a plan that could have been checked while paused. After launch, compare simultaneous native beat/bar positions and remaining intervals to the actual arrivals. If a rehearsal or launch failed, reconcile the real timeline before opening B.
-
-## Scope ends before musical judgment
-
-Active loops, offbeat pickups without event anchors, beatless bridges, different meters and other nonlinear arrangements need a separately counted plan and a supported execution path. The helper cannot certify vocal completion, tonal fit, first audibility, bass ownership, fader curves, post-arrival pacing or effects.
-
-Do not remove a pickup or alter a library grid to fit this checker. Do correct genuine unequal leads, stale identities and unintended bar offsets. A checker limitation and a wrong musical count are different findings. Keep the explicit manual audit and uncertainty when performing a valid plan outside its scope.
+Loops, unclocked pickups, beatless bridges, different meters and other nonlinear arrangements need their own counted construction and supported native score. Do not alter a source grid or remove a pickup to satisfy this helper. A timing pass says nothing about vocals, tonal fit, first audibility, role ownership, control curves, subsequent development or listening quality.

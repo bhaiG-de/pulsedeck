@@ -4,6 +4,9 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+pub mod commands;
+pub mod performance;
+pub mod forecast;
 pub mod selection;
 #[derive(
     Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
@@ -29,7 +32,12 @@ impl EnergyDirection {
 pub const VERSION: u32 = 1;
 pub const MAX_FRAME: usize = 4 * 1024 * 1024;
 pub fn catalog() -> Vec<Value> {
-    serde_json::from_str(include_str!("catalog.json")).expect("checked-in catalog")
+    {
+        let mut entries: Vec<Value> =
+            serde_json::from_str(include_str!("catalog.json")).expect("checked-in catalog");
+        entries.extend(performance::descriptors());
+        entries
+    }
 }
 pub fn suggestions(input: &str, candidates: impl IntoIterator<Item = String>) -> Vec<String> {
     fn distance(a: &str, b: &str) -> usize {
@@ -222,6 +230,8 @@ pub struct Request {
     pub timeout_ms: u64,
     #[serde(default)]
     pub expected_load_revision: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_state: Option<commands::DirectStateGuard>,
     #[serde(default)]
     pub no_wait: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -255,12 +265,24 @@ impl Request {
             args,
             timeout_ms: timeout(),
             expected_load_revision: None,
+            expected_state: None,
             no_wait: false,
             fields: None,
             view: None,
         }
     }
     pub fn validate(&self) -> Result<(), ControlError> {
+        if let Some(guard) = self.expected_state {
+            guard
+                .validate()
+                .map_err(|e| ControlError::new("invalid_arguments", e))?;
+            if self.command != "engine.command" || self.no_wait {
+                return Err(ControlError::new(
+                    "invalid_arguments",
+                    "expected_state requires a waiting direct engine.command",
+                ));
+            }
+        }
         selection::validate(self)?;
         if self.protocol_version != VERSION {
             return Err(ControlError::new(

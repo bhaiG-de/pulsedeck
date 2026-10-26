@@ -15,6 +15,37 @@ fn print(response: &Response, json: bool) {
 }
 fn main() {
     let tokens: Vec<String> = std::env::args().skip(1).collect();
+    if tokens.first().is_some_and(|s| s == "mcp") {
+        let mut socket = control_protocol::socket_path();
+        let mut index = 1;
+        while index < tokens.len() {
+            match tokens[index].as_str() {
+                "--stdio" => {}
+                "--socket" => {
+                    index += 1;
+                    let Some(path) = tokens.get(index) else {
+                        eprintln!("--socket requires a path");
+                        std::process::exit(2)
+                    };
+                    socket = path.into();
+                }
+                _ => {
+                    eprintln!("Use pulsedeckctl mcp --stdio [--socket PATH]");
+                    std::process::exit(2)
+                }
+            }
+            index += 1;
+        }
+        if let Err(error) = pulsedeck_cli::mcp::serve(
+            std::io::stdin().lock(),
+            std::io::stdout().lock(),
+            |request| control_protocol::ipc::call(&socket, &request),
+        ) {
+            eprintln!("MCP transport: {error}");
+            std::process::exit(3)
+        }
+        return;
+    }
     if tokens.is_empty() || tokens.iter().any(|t| matches!(t.as_str(), "--help" | "-h")) {
         print!("{}", pulsedeck_cli::HELP);
         return;

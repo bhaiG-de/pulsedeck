@@ -35,6 +35,52 @@ export interface SuccessorQueue {
     max_skips: number;
   };
 }
+export function queueStartArgs(settings: {
+  mode: "ordered" | "collection";
+  collection: string;
+  sources: string[];
+  direction: string;
+  technique: string;
+  minutes: string;
+  stretch: string;
+  replace: boolean;
+}): Record<string, unknown> {
+  const stretch = Number(settings.stretch);
+  const seconds = settings.minutes.trim()
+    ? Number(settings.minutes) * 60
+    : null;
+  if (
+    !settings.stretch.trim() ||
+    !Number.isFinite(stretch) ||
+    stretch < 0 ||
+    stretch > 100
+  )
+    throw new Error("Choose a maximum tempo change between 0 and 100%.");
+  if (
+    seconds !== null &&
+    (!Number.isFinite(seconds) || seconds < 1 || seconds > 86400)
+  )
+    throw new Error(
+      "Choose a duration between 1 second and 24 hours, or leave it blank.",
+    );
+  if (settings.mode === "ordered" && !settings.sources.length)
+    throw new Error("Add tracks to your order, or choose a collection.");
+  return {
+    ...(settings.mode === "ordered"
+      ? { sources: settings.sources }
+      : settings.collection === "liked"
+        ? { playlist: "spotify:liked", provider: "spotify" }
+        : { provider: "local" }),
+    energy_direction: settings.direction,
+    max_stretch_percent: stretch,
+    ...(settings.technique !== "all"
+      ? { techniques: [settings.technique] }
+      : {}),
+    replace_prepared: settings.replace,
+    max_skips: 0,
+    ...(seconds !== null ? { duration_seconds: seconds } : {}),
+  };
+}
 export function mergeQueue(
   previous: SuccessorQueue | null,
   next: SuccessorQueue | null,

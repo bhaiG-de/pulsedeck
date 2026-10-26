@@ -36,6 +36,6 @@ Native events are available to background integrations. An event subscription al
 ## Skills and workflow references
 
 - [All three skills](../.agents/skills/README.md)
-- [Continuous sets](../.agents/skills/pulsedeck-control/references/continuous-sets.md)
+- [Continuous sets](../.agents/skills/pulsedeck-control/references/session.md)
 - [Collections, tags and playlists](../.agents/skills/pulsedeck-library/references/collections.md)
 - [Saved cues and beatgrids](../.agents/skills/pulsedeck-library/references/track-knowledge.md)

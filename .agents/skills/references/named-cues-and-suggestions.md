@@ -1,38 +1,17 @@
-# Manual cues, cached suggestions and analysis
+# Source anchors and scoped candidates
 
-Use [CLI](cli.md) for the running endpoint and guards, and [timed execution](timed-execution.md) for scheduled performance. Discover only unfamiliar commands.
+Use the [connected MCP tools](mcp.md) and actual returned fields. PulseDeck supplies tempo, beat/downbeat events, key and waveform features; it does not automatically create cues or classify song sections. An unannotated track is not a failed analysis.
 
-## Human-authored source knowledge
+## Human-authored knowledge
 
-PulseDeck does not generate cues or classify song sections. BPM, beat/downbeat events, key and waveform bands remain available. A track with no saved cues has no annotated musical boundaries; do not diagnose that as failed analysis or request reanalysis to obtain drop/outro labels.
+`cues_get` returns a revision and nested `cues` object containing canonical `points` and `bindings`. A point has stable `id`, source start/end, name/role, manual/imported origin, modification and confirmation. Main, hot and memory slots bind to those points. A saved cue is evidence about a source, not a universally correct mix entry.
 
-`cues.get` returns a revision and nested `cues` object with durable `points` and `bindings`. A point contains stable `id`, `start_seconds`, optional `end_seconds`, `name`, optional human-assigned `role`, `origin` (`manual` or `imported`), `modified` and `confirmed`. Main, hot and memory slots bind to those points. A saved cue records source knowledge, not a universally correct entry or exit for every successor.
+Use `cues_get` arguments `{"deck":"A"}` or `{"source":"OBSERVED_SOURCE"}`, exactly one target. Compare surrounding `track_inspect` observations and provenance. Cue times are source seconds; playback tempo does not rewrite them. Labels do not establish vocal absence or the best relationship for this pair.
 
-```sh
-pd call cues.get --args '{"deck":"A"}'
-pd call track.inspect --args '{"deck":"A","start_seconds":8,"end_seconds":32,"points":128}'
-```
+Arbitrary named-point creation/editing/deletion and binding changes require a metadata-write tool that is not exposed by the current server. Report that missing capability. Explicit loaded-deck slot setters such as `set_hot_cue_point` are available through `deck_control` when the request covers that edit. Use current `expected_load_revision`, preserve unrelated slots, and verify the canonical result with `cues_get`. A cue trigger starts playback; it is not a metadata edit. JSON hot indices are 0–7 and memory indices 0–9; memory projections sort chronologically.
 
-Replace ranges from observation. Cue endpoints are source times; changing playback rate does not rewrite them. Inspect neighboring waveform changes and effective events, and listen when available. Human labels do not prove vocal absence or the best musical relationship for this pair.
+## Candidates remain choices
 
-Use `cues.set` only for an authorized edit. `point` creates/edits a named point (include `id` to edit), `delete_id` deletes it, and `bind:{kind,index,id}` binds an existing point. Use one form per request, current `expected_revision`, and a loaded target's `expected_load_revision` when applicable. Preserve unrelated points and bindings. Permanent cue creation is not an automatic side effect of planning or performing a set.
+Use `library_suggest_next` with the requested scope and observed deck state. `mix_openers`/`mix_options` can supply alternative source/passage proposals. Cached suggestions do not analyse new audio, identify phrases or select the transition. Inspect actual playing rate, key confidence, pulse/meter, availability and exclusions. A half/double relationship needs musical review rather than just a ratio.
 
-## Scoped candidates
-
-```sh
-pd library suggest --deck A --energy keep
-pd call library.suggest_next --args '{"deck":"A","playlist":"spotify:liked","max_stretch_percent":3,"allow_half_double":false,"limit":20}'
-```
-
-Directions are `keep`, `raise`, `lower`; friendly `up`/`down` normalize to those values. Honor collection membership and requested order. Missing scoped cache does not authorize searching the whole collection. Browse early and bound the shortlist before a live deadline.
-
-Suggestions use cached tempo/key/waveform features. They do not start analysis, detect phrases or choose the transition. Inspect actual playing tempo, source identity, stretch, key confidence, meter, availability and exclusion reasons. Unknown data stays unknown. Half/double relationships require musical pulse and phrase review. Do not clear played history merely to obtain more candidates.
-
-## Reuse and refresh
-
-```sh
-pd library analysis update --no-wait
-pd library analysis cancel
-```
-
-Updates require the user's analysis intent. Passive reads/loads reuse compatible persisted BPM/rhythm, neural timing, key and waveform stages. Explicit reanalysis can retry a failed stage; it preserves manual grids and cues. Retain job identity and inspect terminal completion/errors. Cancellation does not undo completed writes. Provider preparation may require its own `deck.load.cancel`.
+Preserve scope and played history. Missing collection cache calls for `mix_index_scope` or provider collection reads; it does not authorize widening repertoire. Passive reads and compatible loads reuse saved analysis. Bulk refresh/cancellation is not exposed through this MCP connection; a provider load has its own `deck_load_cancel` and actual source-job result.

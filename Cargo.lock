@@ -946,6 +946,7 @@ version = "0.1.0"
 dependencies = [
  "audio-analysis",
  "cc",
+ "control-protocol",
  "cpal",
  "lofty",
  "rtrb",
@@ -3861,6 +3862,7 @@ name = "pulsedeck-cli"
 version = "0.1.0"
 dependencies = [
  "control-protocol",
+ "schemars 0.8.22",
  "serde_json",
 ]
 

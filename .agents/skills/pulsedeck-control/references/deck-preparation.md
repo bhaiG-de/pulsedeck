@@ -1,73 +1,44 @@
-# Prepare an incoming deck
+# Prepare the chosen source and playing relationship
 
-Read the [CLI](../../references/cli.md) for endpoint binding and control stages. Obtain the musical entry, playing tempo/key strategy and intended later arrival from `$djing-art`. Preparation-only work leaves the deck paused and queues no launch. An audition request can start its transport only after appropriate isolation and monitoring are verified.
+Obtain the entry, playing pulse/key strategy and intended later arrival from `$djing-art`. Use the [connected MCP tools](../../references/mcp.md). Preparation alone leaves the target paused; an audition additionally needs verified master isolation and monitoring.
 
-## Inspect availability and deadlines
+## Establish one ready isolated source
 
-Use a compact snapshot to establish both sources/load revisions, playing/position and position revisions, rate/Sync/master, loops, faders/EQ/filter/FX, cue selection, crossfader/global levels, routing and active ramps/source jobs. Compare remaining live audio with observed preparation latency and a fallback boundary.
+1. Read `status` or `performance_observe`. Protect the audible carrier and any deliberately prepared destination. Preserve master level, crossfader and output routing.
+2. Isolate only the available incoming channel using `deck_control` with `{"type":"set_channel_fader","deck":"B","value":0,"expected_load_revision":OBSERVED_REVISION}`.
+3. Call `deck_load` with the exact observed source: a `uri` for Spotify, `path` for local audio or returned `track` identity. Bind `expected_load_revision` to the destination's old source and retain `request_id`. Ordinary replacement of a contributing deck is not preparation.
+4. Obtain actual readiness and the new load revision before further controls. A normal synchronous load reaches `ready`; an uncertain response requires checking the same request/job rather than another load. `engine_wait` with `{"deck":"B","expected_load_revision":NEW_REVISION}` verifies the loaded deck's preparation. Compare the returned source and identity with the chosen version.
+5. Prepare the exact entry, then its tempo, key lock and intended loop/FX/filter/EQ baseline through `deck_control`. Bind each direct action to the new revision. Sequence position-dependent setup rather than putting seek and its local-tempo calculation in one atomic gesture.
+6. If using continuing Sync, establish the outgoing master and enable the distinct incoming follower last. Set explicit native Sync rate limits from the acceptable source-relative playing range. Verify both roles, limits, playing targets and actual rates. Then obtain the fresh `performance_observe` generation for the score.
 
-Respect the explicit destination. A paused deck may contain the user's next track, audition or pending load. Two contributing decks are not available to replace. Never use `--replace-playing` for ordinary preparation; source guards do not protect against every concurrent manual control change.
+Useful native objects for `deck_control` are:
 
-## Isolate, load and prepare
+```json
+{"type":"seek","deck":"B","seconds":32.125,"expected_load_revision":7,"expected_state":{"playing":false,"launch_pending":false,"channel_fader_max":0.002},"request_id":"entry-B-7"}
+```
 
-1. Close the incoming channel only, using its observed source guard. Native control smoothing settles across rendered frames; an `applied` target is not instantaneous isolation. Keep the live channel, crossfader, master gain, routing and role intact.
-2. Load the selected real source. A synchronous result reaches `ready` with a new `load_revision`; asynchronous acceptance requires observing its job/readiness. Capture the new revision before subsequent guarded controls. In a persistent queue, dependency completion captures actual guards; do not guess a future revision. Use the [loaded-source readiness check](#loaded-source-readiness) before treating preparation as failed.
-3. Disable stale incoming loops and apply the intended clean starting filter/EQ/FX, key lock, tempo/Sync and final entry under that source guard. Preserve permanent cues unless their edit was requested. An ordinary seek preserves play state; a hotcue trigger starts transport.
-4. Check loaded-source readiness (`preparation_pending:false`), intended paused position, rate/Sync/key lock, loop state and closed fader. A current bounded native processor does not require a whole-track pitch-worker job; do not keep waiting for a nonexistent worker.
-5. Enable the requested cue selection, verify actual discrete route and suitable cue mix/gain. Do not silently alter global cue controls or device routing. Start headphone preview only if requested and isolated. On a two-channel device with no distinct cue route, report cue-enabled status separately from headphone readiness.
+```json
+{"type":"set_playback_bpm","deck":"B","bpm":124,"expected_load_revision":7}
+```
 
-If Smart CFX couples filter and FX, inspect resulting incoming FX after a filter reset. Moving the crossfader with Smart Fader may alter both decks' tempo/effects; do not use it as an isolation shortcut.
+```json
+{"type":"set_keylock","deck":"B","enabled":true,"expected_load_revision":7}
+```
+
+Replace illustrative seconds, BPM and revision with the musical choice and current evidence. Source-event handles preserve full precision; a rounded display timestamp can select the next beat. Use `set_loop` with `beats:null` only when releasing an unintended old loop; keep a loop or effect that belongs to the arrangement.
+
+For preparation, `expected_state` expresses the state in which the gesture makes sense. The native callback rechecks playing, pending launch and both target/settled fader values before changing the deck. A failed expectation returns its cause and actual state; recompose from that state. Intentional live seeking/juggling remains available without the isolated-preparation expectations. A load revision identifies the source, not whether that source has started contributing.
 
 ## Loaded-source readiness
 
-After load completion, read the current deck in `status`: `source_state:ready`, `track.path` matching the selected source and `engine.load_revisions[deck]` identify ready material. `metadata.tracks[deck]` supplies the same compact identity. `preparing` means the source is loaded but processor preparation remains pending; `metadata_pending` means the transport and metadata epochs have not converged yet. Re-read those transient states instead of declaring a provider failure. `empty` with `track:null` means no current source.
+A source job is the latest provider request, which can differ from a previous track still on the deck. `preparing:false` and `resolved_uri` alone do not establish readiness. Match actual source, title/artist, duration and current load revision; inspect `preparation_pending`, explicit readiness and `engine_wait` result. A provider-relinked release may have a different arrangement, so refresh its passage evidence.
 
-Then `pd deck B wait --expected-load-revision "$B_REV" --timeout 30s` verifies preparation and returns the current `source` and `load_revision`; an empty deck fails. Verify that returned source against the intended URI/path. A source job describes the latest provider request, which can differ from a previous source still on the deck. Its `preparing:false` alone is not proof of readiness. Its `resolved_uri` is the actual provider release, including the requested URI when no relinking happened; it is not an audio-health flag. Respect an actual load error or source mismatch.
+Spotify's `account:null`, `dj_streaming_available:false` or collection `playable_in_deck:false` can be placeholders in this experimental runtime. `spotify_native_status` with settled restoration, `connected:true` and `playback_permission:true` supports an ordinary authorized isolated load. Its actual result establishes availability. Respect a concrete refusal or cooldown; repeated account consent is not a demonstrated remedy.
 
-Once the intended loaded source passes readiness and audio rendering is running, an authorized set can proceed with its prepared opener or incoming launch. A paused deck has zero meters until played; Connect device discovery is unrelated to whether native PulseDeck audio is loaded. Do not abandon a ready source based on account placeholders or optional provider fields. Check advancing playhead and output meters after the authorized Play to establish software playback.
+## Playing tempo, Sync and bars
 
-## Playback tempo and Sync
+`set_playback_bpm` computes source-relative tempo from the local grid at application. `set_tempo` sets source-relative percent. Both take manual tempo ownership and disable follower Sync. They leave saved source BPM/grid intact. `set_bpm` and `set_beatgrid` are persistent metadata corrections, not matching controls.
 
-Use `deck B tempo set --bpm TARGET` for a chosen absolute entry tempo. It derives rate from the current local four-beat fit at execution, preserves source analysis/grid and takes manual ownership by disabling follower Sync. `--percent` sets absolute source-relative rate percent, not an increment. Check `target_playback_bpm` and `actual_playback_bpm` separately; source `bpm` is metadata. One entry setting does not lock a variable-tempo track's future BPM.
+`set_sync` can arm a paused distinct follower on credible loaded grids. A playing follower requires a playing master with jog released. Native Sync adapts local tempo and fractional phase while preserving position; it does not establish whole-bar or phrase identity. Check both fractional and bar telemetry when origins/meter are known. Use score `alignment` for the entry relationship and `maintain:true` across the action carrying a sustained rhythmic overlap and its clearance. The latter makes ongoing bounded Sync part of the executable score.
 
-For natural-speed playback use `--percent 0` after the final entry seek, not `--bpm` equal to the whole-track metadata. If metadata says 90 but the entry's local fit is 100, setting 90 requests about −10%; it does not mean natural speed. Confirm `actual_playback_rate`/`tempo_percent` after preparation and role changes before opening the incoming fader. Master promotion preserves the effective audible rate; it intentionally does not return it to natural speed. Clear inherited Sync/rate state on the isolated source for the chosen strategy, rather than trying to repair it with a sudden audible reset.
-
-`deck B bpm set` is instead a persistent grid correction; do not use it for matching. Inspect local pulse, ambiguity, key-lock/pitch state and relevant actual events. Choose ordinary small stretch from a suitable successor before compensating for a poor pair. Suggestion defaults near 3%, or a deliberate wider choice, are preparation heuristics rather than guarantees of sound quality.
-
-For ongoing local synchronization, establish a loaded master and a distinct loaded follower on credible grids. Both can be paused during first-pair preparation: `pd deck B sync on` / `{"type":"set_sync","deck":"B","enabled":true}` arms the paused follower. A playing follower requires its master to be playing with jog released. Seek the final entry before setting its entry tempo; tempo setting disables Sync, so enable Sync last and verify roles before launch. Use `pd commands describe engine.command --action set_sync` for the exact action schema. Sync preserves position and adapts smoothed local tempo and beat phase. It does not establish bar or phrase identity. Keep the chosen strategy stable through launch rather than repeatedly toggling Sync or chasing local BPM readings.
-
-Preserve the current live master unless the performance plan calls for handoff. Loading/unloading the master can promote a healthy playing other deck; pausing it alone does not. Inspect actual roles after a source change. Sync-off/promotion folds the current effective rate into nominal control for continuity; re-read the resulting target rather than assuming the old number.
-
-## Bounded standalone example
-
-Only after B is available, A is protected, `B_OLD_REV` is observed, and `TRACK_SOURCE` (an observed `local:ID`), `ENTRY_TIME` and `TARGET_BPM` are selected. Provider loads instead use the discovered URI form; this example is for a local record:
-
-```sh
-set -e
-task_prep_dir=$(mktemp -d)
-pd deck B fader set 0 --expected-load-revision "$B_OLD_REV"
-pd deck B load --track "$TRACK_SOURCE" --expected-load-revision "$B_OLD_REV" > "$task_prep_dir/load.json"
-B_REV=$(python3 - "$task_prep_dir/load.json" <<'PY'
-import json, sys
-r = json.load(open(sys.argv[1]))
-assert r['ok'] and r['stage'] == 'ready', r
-print(r['result']['load_revision'])
-PY
-)
-pd deck B seek --at "$ENTRY_TIME" --expected-load-revision "$B_REV"
-pd deck B tempo set --bpm "$TARGET_BPM" --expected-load-revision "$B_REV"
-pd deck B keylock on --expected-load-revision "$B_REV"
-pd deck B loop off --expected-load-revision "$B_REV"
-pd deck B wait --expected-load-revision "$B_REV" --timeout 30s
-pd status --view compact
-```
-
-Check every response and stop on failure. This example uses manual entry tempo, not follower Sync, and leaves playback paused. In a running set, queue these known actions through the existing persistent process with load/readiness dependencies; do not invoke a new CLI process for each timed gesture.
-
-## Verify and recover
-
-Compare source/revision, entry, paused/play state, readiness, loop, tempo/Sync/key lock, isolation and cue state to the plan. Verify A's source and position revision are preserved, position advances normally and protected controls/global routing remain unchanged. Cue selection alone cannot verify headphone sound.
-
-On failed load, keep B isolated, preserve A, inspect whether the previous B source survived and use a supported alternate before the live deadline. On timeout inspect jobs/state before retrying. Job cancellation may not stop an active provider load; use `deck B load cancel` when required and verify actual source-job completion. Do not restore cached controls over an unexplained manual change.
-
-Queue preparation as dependent steps: entry seek → tempo setter → Sync enable. Seek and the absolute BPM setter conflict in a simultaneous group because BPM reads the current source position. Disjoint fader and EQ ramps may share a group, including on the same deck. Generic `set_eq` needs all three `low`, `mid`, `high` values; the friendly `deck B eq set --low` command provides separate partial-band semantics.
+Bounded follower-event/deadline coverage can require explicit native `set_sync_rate_limits`. Derive suitable bounds from the selected playing relationship and source evidence; discover its exact schema with `commands_describe` arguments `{"name":"engine.command","action":"set_sync_rate_limits"}`. Do not chase every local BPM fluctuation or alter the library grid to force the pair.

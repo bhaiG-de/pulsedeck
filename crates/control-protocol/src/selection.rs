@@ -4,7 +4,10 @@ use serde_json::{json, Value};
 pub fn is_read(command: &str) -> bool {
     matches!(
         command,
-        "status"
+        "performance.observe"
+            | "performance.validate"
+            | "performance.receipts"
+            | "status"
             | "state.get"
             | "engine.transport"
             | "engine.snapshot"
