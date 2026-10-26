@@ -456,7 +456,9 @@ pub async fn options(
     request: OptionsRequest,
 ) -> Result<OptionsList, String> {
     let start = Instant::now();
-    let stretch = request.max_stretch_percent.unwrap_or(DEFAULT_MAX_STRETCH_PERCENT);
+    let stretch = request
+        .max_stretch_percent
+        .unwrap_or(DEFAULT_MAX_STRETCH_PERCENT);
     if !stretch.is_finite() || !(0. ..=100.).contains(&stretch) {
         return Err("max_stretch_percent must be finite and 0..100".into());
     }
@@ -1369,10 +1371,26 @@ mod tests {
     fn wide_tempo_and_expired_windows_abstain_instead_of_forcing_a_match() {
         let (s, b) = pair(130.);
         assert!(generate(&s, 0, &b, EnergyDirection::Keep, 2., None).is_empty());
-        assert!(generate(&s, 0, &b, EnergyDirection::Keep, DEFAULT_MAX_STRETCH_PERCENT, None).is_empty());
+        assert!(generate(
+            &s,
+            0,
+            &b,
+            EnergyDirection::Keep,
+            DEFAULT_MAX_STRETCH_PERCENT,
+            None
+        )
+        .is_empty());
         assert!(!generate(&s, 0, &b, EnergyDirection::Keep, 100., None).is_empty());
         let (s, b) = pair(122.);
-        assert!(!generate(&s, 0, &b, EnergyDirection::Keep, DEFAULT_MAX_STRETCH_PERCENT, None).is_empty());
+        assert!(!generate(
+            &s,
+            0,
+            &b,
+            EnergyDirection::Keep,
+            DEFAULT_MAX_STRETCH_PERCENT,
+            None
+        )
+        .is_empty());
         let (mut s, b) = pair(121.);
         s.decks[0].position_seconds = 290.;
         assert!(generate(&s, 0, &b, EnergyDirection::Keep, 2., None).is_empty());

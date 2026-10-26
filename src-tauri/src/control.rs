@@ -291,13 +291,7 @@ pub fn prepare_exit(app: &tauri::AppHandle) -> Result<()> {
     Ok(())
 }
 
-pub fn execute(app: &tauri::AppHandle, request: Request) -> Response {
-    if let Err(e) = request.validate() {
-        return Response::failure(request.request_id, e);
-    }
-    if let Err(e) = control_protocol::validate_arguments(&request) {
-        return Response::failure(request.request_id, e);
-    }
+fn request_fingerprint(request: &Request) -> String {
     let mut identity = json!([
         request.from_ui,
         request.command,
@@ -314,7 +308,25 @@ pub fn execute(app: &tauri::AppHandle, request: Request) -> Response {
     if let Some(view) = &request.view {
         identity.as_array_mut().unwrap().push(json!({"view": view}));
     }
-    let fingerprint = identity.to_string();
+    if request.command == "ytmusic.configure" {
+        // Retry identity is journaled; keep the OAuth client secret out of it.
+        use sha2::{Digest, Sha256};
+        return format!(
+            "sha256:{:x}",
+            Sha256::digest(identity.to_string().as_bytes())
+        );
+    }
+    identity.to_string()
+}
+
+pub fn execute(app: &tauri::AppHandle, request: Request) -> Response {
+    if let Err(e) = request.validate() {
+        return Response::failure(request.request_id, e);
+    }
+    if let Err(e) = control_protocol::validate_arguments(&request) {
+        return Response::failure(request.request_id, e);
+    }
+    let fingerprint = request_fingerprint(&request);
     let control = app.state::<Control>();
     let mutation = request.command != "batch.validate"
         && !control_protocol::selection::is_read(&request.command);
@@ -736,7 +748,7 @@ fn apply_with_control_guard(
         }
         error
     };
-    let fence = state.engine.fence().map_err(&acknowledge_error)?;
+    let fence = state.engine.fence().map_err(acknowledge_error)?;
     state
         .engine
         .wait_for_fence(fence, Duration::from_millis(request.timeout_ms))
@@ -872,6 +884,30 @@ fn persist_deck(app: &tauri::AppHandle, d: usize, expected: Option<u64>) -> Resu
     }
     Ok(Some(revision))
 }
+/// Provider pages the UI links to. The webview ignores target=_blank, so the
+/// app opens these in the default browser and nothing else.
+fn external_url(raw: &str) -> Result<url::Url> {
+    const HOSTS: &[&str] = &[
+        "console.cloud.google.com",
+        "music.youtube.com",
+        "developer.spotify.com",
+    ];
+    url::Url::parse(raw)
+        .ok()
+        .filter(|u| {
+            u.scheme() == "https"
+                && u.username().is_empty()
+                && u.password().is_none()
+                && u.port().is_none()
+                && u.host_str().is_some_and(|host| HOSTS.contains(&host))
+        })
+        .ok_or_else(|| {
+            ControlError::new(
+                "invalid_arguments",
+                "Only https links to Google Cloud, YouTube Music and Spotify developer pages can be opened",
+            )
+        })
+}
 fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, Value)> {
     let a = &request.args;
     let state = app.state::<AppState>();
@@ -928,6 +964,13 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
         "mix.queue.stop" => return stop_successor_queue(app, request),
         "app.show" => {
             show_main_window(app)?;
+            Value::Null
+        }
+        "app.open_url" => {
+            let url = external_url(&arg::<String>(a, "url")?)?;
+            open::that(url.as_str()).map_err(|_| {
+                ControlError::new("open_failed", "Could not open the default browser")
+            })?;
             Value::Null
         }
         "skills.welcome" => {
@@ -1932,6 +1975,30 @@ fn dispatch(app: &tauri::AppHandle, request: &Request) -> Result<(&'static str, 
             crate::spotify_analysis::cancel_spotify_analysis(app.clone());
             Value::Null
         }
+        "ytmusic.status" => asynchronous!(crate::youtube_music::ytmusic_status(app.clone())),
+        "ytmusic.configure" => asynchronous!(crate::youtube_music::ytmusic_configure(
+            app.clone(),
+            arg(a, "client_id")?,
+            arg(a, "client_secret")?
+        )),
+        "ytmusic.login" => asynchronous!(crate::youtube_music::ytmusic_begin_login(app.clone())),
+        "ytmusic.disconnect" => {
+            asynchronous!(crate::youtube_music::ytmusic_disconnect(app.clone()))
+        }
+        "ytmusic.playlists" => asynchronous!(crate::youtube_music::ytmusic_playlists(
+            app.clone(),
+            optional(a, "page_token")?
+        )),
+        "ytmusic.tracks" => asynchronous!(crate::youtube_music::ytmusic_tracks(
+            app.clone(),
+            arg(a, "playlist_id")?,
+            optional(a, "page_token")?
+        )),
+        "ytmusic.match" => asynchronous!(crate::youtube_music::ytmusic_match(
+            app.clone(),
+            arg(a, "video_ids")?,
+            optional(a, "force")?.unwrap_or(false)
+        )),
         "ui.state" => serialized(&*app.state::<Control>().ui.lock().map_err(failure)?)?,
         "ui.call" => {
             let target: String = arg(a, "target")?;
@@ -2645,6 +2712,18 @@ fn catalog() -> Vec<Value> {
         entry["input_schema"]["properties"]["steps"]["items"] =
             json!({"anyOf":[schema,command_step_schema()]});
     }
+    let request_schema = serde_json::to_value(schemars::schema_for!(Request)).unwrap();
+    for entry in catalog.iter_mut().filter(|entry| {
+        matches!(
+            entry["command"].as_str(),
+            Some("batch.run" | "batch.validate" | "batch.append")
+        )
+    }) {
+        entry["input_schema"]["definitions"]
+            .as_object_mut()
+            .unwrap()
+            .extend(request_schema["definitions"].as_object().unwrap().clone());
+    }
     catalog
 }
 fn engine_catalog() -> Value {
@@ -2867,6 +2946,18 @@ include!("control_command_queue.rs");
 mod request_reservation_tests {
     use super::*;
     #[test]
+    fn youtube_config_retry_identity_does_not_expose_the_client_secret() {
+        let mut request = Request::new(
+            "ytmusic.configure",
+            json!({"client_id":"example.apps.googleusercontent.com", "client_secret":"GOCSPX-private"}),
+        );
+        let fingerprint = request_fingerprint(&request);
+        assert!(!fingerprint.contains("GOCSPX-private"));
+        assert_eq!(fingerprint, request_fingerprint(&request));
+        request.args["client_secret"] = json!("GOCSPX-changed");
+        assert_ne!(fingerprint, request_fingerprint(&request));
+    }
+    #[test]
     fn post_login_source_failure_does_not_request_another_login() {
         let error = failure("Spotify track loading failed after native sign-in: the provider rejected or could not complete the playback key request. No partial audio was loaded.");
         assert_eq!(error.code, "source_unavailable");
@@ -2881,6 +2972,27 @@ mod request_reservation_tests {
             failure("Sign in to the native player separately").code,
             "auth_required"
         );
+    }
+    #[test]
+    fn only_https_provider_pages_open_in_the_browser() {
+        for url in [
+            "https://console.cloud.google.com/apis/library/youtube.googleapis.com",
+            "https://music.youtube.com/watch?v=dQw4w9WgXcQ",
+            "https://developer.spotify.com/dashboard",
+        ] {
+            assert!(external_url(url).is_ok(), "{url}");
+        }
+        for url in [
+            "http://music.youtube.com/watch?v=dQw4w9WgXcQ",
+            "https://music.youtube.com.example.com/",
+            "https://user@music.youtube.com/",
+            "https://music.youtube.com:8443/",
+            "file:///etc/passwd",
+            "https://example.com/",
+            "not a url",
+        ] {
+            assert!(external_url(url).is_err(), "{url}");
+        }
     }
     #[test]
     fn compact_sources_distinguish_ready_empty_pending_and_replaced_epochs() {

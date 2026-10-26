@@ -22,6 +22,7 @@ The current MCP surface exposes these tools:
 | Current state and source evidence | `status`, `engine_transport`, `engine_metadata`, `track_inspect`, `cues_get` |
 | Library reads and proposals | `library_tracks`, `library_track`, `library_suggest_next`, `mix_index_scope`, `mix_openers`, `mix_options` |
 | Spotify collections/readiness | `spotify_liked`, `spotify_playlists`, `spotify_playlist_tracks`, `spotify_album_tracks`, `spotify_native_status` |
+| YouTube Music collections/matching | `ytmusic_status`, `ytmusic_playlists`, `ytmusic_tracks`, `ytmusic_match` |
 | Fixed endpoint and explicitly chosen emergency successor | `mix_session_start`, `mix_session_status`, `mix_session_stop`, `mix_session_successor` |
 | Lifecycle and owned automation | `jobs_get`, `jobs_list`, `events_get`, `automation_stop` |
 | Sampler and smart mixer controls | `sampler_load`, `sampler_state`, `mixer_smart_modes` |

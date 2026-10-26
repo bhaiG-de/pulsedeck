@@ -64,12 +64,18 @@ jobs:
           python3 tools/check-control-coverage.py
           python3 tools/validate-dj-skills.py
           python3 tools/test-dj-skill-packaging.py
+          python3 tools/test-agent-plugin.py
+          python3 tools/test-dj-offline-evidence.py
       # Shared runners cannot enforce a machine-specific wall-clock budget.
       - name: Report large-library latency
         continue-on-error: true
         run: cargo test -p pulsedeck library::tests::browser_pages_filter_and_sort_in_sql_without_reading_large_analysis_or_cues -- --test-threads=1
       - name: Build Apple Silicon app ZIP
         run: npm run package:macos
+      - name: Package the agent plugin and marketplace
+        run: |
+          python3 tools/package-agent-plugin.py --output target/agent-plugin-release
+          cp target/agent-plugin-release/*.zip target/release/bundle/zip/
       - name: Verify bundle and checksum
         run: |
           codesign --verify --deep --strict target/release/bundle/macos/PulseDeck.app
@@ -80,7 +86,7 @@ jobs:
         run: |
           python3 - <<'PYTHON'
           import pathlib, subprocess, tempfile
-          archive = next(pathlib.Path('target/release/bundle/zip').glob('*.zip')).resolve()
+          archive = next(pathlib.Path('target/release/bundle/zip').glob('PulseDeck_*.zip')).resolve()
           with tempfile.TemporaryDirectory(prefix='pulsedeck-zip-test-') as temporary:
               extracted = pathlib.Path(temporary).resolve()
               subprocess.run(['ditto', '-x', '-k', str(archive), str(extracted)], check=True)

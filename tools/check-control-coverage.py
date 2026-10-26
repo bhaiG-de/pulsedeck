@@ -17,7 +17,7 @@ frontend = root / "frontend/src"
 assert not any(re.search(r"\bnative[<(]", p.read_text()) for p in frontend.glob("*.tsx")), "UI business calls must use control()"
 for p in frontend.glob("*.tsx"):
     for method in re.findall(r'"([a-z_]+(?:\.[a-z_]+)+)"', p.read_text()):
-        if method in names or not method.startswith(("engine.","deck.","library.","playlist.","spotify.","audio.","midi.","recording.","sampler.","controller.","analysis.")):
+        if method in names or not method.startswith(("engine.","deck.","library.","playlist.","spotify.","ytmusic.","audio.","midi.","recording.","sampler.","controller.","analysis.")):
             continue
         raise AssertionError(f"UI method missing from unified catalog: {method} ({p.name})")
 control = (root / "src-tauri/src/control.rs").read_text()
@@ -27,7 +27,7 @@ for line in dispatch.splitlines():
     if re.match(r'^        "', line):
         implemented.update(re.findall(r'"([a-z_]+(?:\.[a-z_]+)*)"', line.split("=>", 1)[0]))
 assert names == implemented, f"Catalog/dispatcher drift: missing={implemented - names}, obsolete={names - implemented}"
-model = (root / "crates/deck-engine/src/model.rs").read_text().split("pub enum EngineCommand {", 1)[1].split("\n}", 1)[0]
+model = (root / "crates/control-protocol/src/commands.rs").read_text().split("pub enum EngineCommand {", 1)[1].split("\n}", 1)[0]
 variants = re.findall(r"^    ([A-Z]\w*)\s*(?:\{|,)", model, re.M)
 serde_names = {re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower() for name in variants}
 examples = json.loads((root / "src-tauri/src/engine-catalog.json").read_text())

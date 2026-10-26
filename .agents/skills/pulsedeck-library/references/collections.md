@@ -16,6 +16,12 @@ Use `spotify_liked`, `spotify_playlists`, `spotify_playlist_tracks` or `spotify_
 
 A collection read does not prove native deck eligibility. Inspect `spotify_native_status` and an actual authorized isolated `deck_load`. Null account profiles and false placeholder availability flags can coexist with native `connected:true`/`playback_permission:true`. A real source refusal/cooldown remains authoritative; stop bulk retries and preserve the carrier. Do not start login from those placeholder fields.
 
+## YouTube Music collections
+
+After the user configures and signs in through Settings → YouTube Music, use `ytmusic_status`, `ytmusic_playlists` and `ytmusic_tracks` with returned IDs and `next_page_token`. Use `playlist_id:"liked"` for Liked videos. `ytmusic_match` takes at most 50 `video_ids` and caches local/Spotify matches; inspect partial errors and cancellation before continuing.
+
+Load only a returned match's `source` through `deck_load`. A YouTube video ID or URL is not playable audio. Matches identify candidate recordings, not analysed or phrase-ready decks. Unmatched rows cannot play, and YouTube collections are not Suggest or automatic queue scopes.
+
 ## A shortlist for the next musical role
 
 `library_suggest_next` can use actual deck tempo/ownership and scope:

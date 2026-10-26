@@ -26,6 +26,7 @@ import {
   Pause,
   Play,
   Plus,
+  ListMusic,
   Radio,
   Search,
   Settings2,
@@ -92,6 +93,7 @@ import {
 } from "./engine-state";
 import { BAND_COLORS, HOT_CUE_COLORS, displayCuePoints } from "./waveform-data";
 import SpotifyPanel, { type SpotifyTrack } from "./SpotifyPanel";
+import YouTubeMusicPanel from "./YouTubeMusicPanel";
 import SpotifyLogo from "./SpotifyLogo";
 import SuggestPanel from "./SuggestPanel";
 import {
@@ -1724,11 +1726,14 @@ export default function App() {
     null,
   ]);
   const [librarySource, setLibrarySource] = useState<
-    "local" | "spotify" | "next"
+    "local" | "spotify" | "ytmusic" | "next"
   >("local");
   const [spotifyCollectionHost, setSpotifyCollectionHost] =
     useState<HTMLDivElement | null>(null);
   const activateSpotify = useCallback(() => setLibrarySource("spotify"), []);
+  const [ytmusicCollectionHost, setYtmusicCollectionHost] =
+    useState<HTMLDivElement | null>(null);
+  const activateYtmusic = useCallback(() => setLibrarySource("ytmusic"), []);
   const [drawerOpen, updateDrawerOpen] = useState(false);
   const drawerOpenRef = useRef(false);
   const [browserNavigation, updateBrowserNavigation] =
@@ -1934,6 +1939,7 @@ export default function App() {
   );
   const spotifyBrowser = useRef<ControllerBrowserHandle | null>(null);
   const nextBrowser = useRef<ControllerBrowserHandle | null>(null);
+  const ytmusicBrowser = useRef<ControllerBrowserHandle | null>(null);
   const controllerHandler = useRef<
     (action: ControllerBrowserAction) => void | Promise<void>
   >(() => {});
@@ -1950,6 +1956,12 @@ export default function App() {
   const registerNextBrowser = useCallback(
     (handle: ControllerBrowserHandle | null) => {
       nextBrowser.current = handle;
+    },
+    [],
+  );
+  const registerYtmusicBrowser = useCallback(
+    (handle: ControllerBrowserHandle | null) => {
+      ytmusicBrowser.current = handle;
     },
     [],
   );
@@ -2548,7 +2560,11 @@ export default function App() {
       setLocalCollectionFocus(next.layer === "playlists", false);
       if (librarySource !== "local") {
         const browser =
-          librarySource === "spotify" ? spotifyBrowser : nextBrowser;
+          librarySource === "spotify"
+            ? spotifyBrowser
+            : librarySource === "ytmusic"
+              ? ytmusicBrowser
+              : nextBrowser;
         await browser.current?.handle({
           ...action,
           button: next.layer === "playlists" ? "browse_back" : "browse_press",
@@ -2568,7 +2584,12 @@ export default function App() {
       navigate("rotate");
       if (wasClose) {
         setLocalCollectionFocus(true, false);
-        const browser = librarySource === "next" ? nextBrowser : spotifyBrowser;
+        const browser =
+          librarySource === "next"
+            ? nextBrowser
+            : librarySource === "ytmusic"
+              ? ytmusicBrowser
+              : spotifyBrowser;
         await browser.current?.handle({
           type: "global_button",
           button: "browse_back",
@@ -2630,6 +2651,14 @@ export default function App() {
     }
     if (librarySource === "next") {
       await nextBrowser.current?.handle(action);
+      return;
+    }
+    if (librarySource === "ytmusic") {
+      if (ytmusicBrowser.current) await ytmusicBrowser.current.handle(action);
+      else
+        announce(
+          "Opening the YouTube Music browser. Select a playlist once it loads.",
+        );
       return;
     }
     if (librarySource === "spotify") {
@@ -3015,7 +3044,8 @@ export default function App() {
     {
       theme: (v) =>
         setTheme(controlEnum(v, ["aluminium", "ivory", "graphite"])),
-      source: (v) => setLibrarySource(controlEnum(v, ["local", "spotify"])),
+      source: (v) =>
+        setLibrarySource(controlEnum(v, ["local", "spotify", "ytmusic"])),
       browser: (v) => setDrawerOpen(controlBoolean(v)),
       "browser-toggle": () => setDrawerOpen((v) => !v),
       search: (v) => setSearch(controlString(v)),
@@ -3093,6 +3123,7 @@ export default function App() {
             "midi",
             "library",
             "spotify",
+            "ytmusic",
             "skills",
             "roadmap",
           ]),
@@ -3671,6 +3702,17 @@ export default function App() {
                 className="spotify-collection-host"
                 ref={setSpotifyCollectionHost}
               />
+              <div className="browser-pane-heading">YOUTUBE MUSIC</div>
+              <button
+                className="spotify-library-home"
+                onClick={activateYtmusic}
+              >
+                <ListMusic size={13} /> YouTube Music overview
+              </button>
+              <div
+                className="ytmusic-collection-host"
+                ref={setYtmusicCollectionHost}
+              />
             </aside>
             <div className="library-content">
               <div
@@ -3686,6 +3728,26 @@ export default function App() {
                   registerControllerBrowser={registerSpotifyBrowser}
                   controllerLayer={
                     librarySource === "spotify"
+                      ? browserNavigation.layer
+                      : "home"
+                  }
+                  onBrowserPaneChange={navigate}
+                />
+              </div>
+              <div
+                className="library-source-view"
+                hidden={librarySource !== "ytmusic"}
+              >
+                <YouTubeMusicPanel
+                  active={drawerOpen && librarySource === "ytmusic"}
+                  collectionHost={ytmusicCollectionHost}
+                  onActivate={activateYtmusic}
+                  onLoadSpotify={loadSpotify}
+                  onLoadLocal={load}
+                  deckJobs={sourceJobs}
+                  registerControllerBrowser={registerYtmusicBrowser}
+                  controllerLayer={
+                    librarySource === "ytmusic"
                       ? browserNavigation.layer
                       : "home"
                   }
@@ -4005,6 +4067,7 @@ export default function App() {
                 "midi",
                 "library",
                 "spotify",
+                "ytmusic",
                 "skills",
                 "roadmap",
               ].map((t) => (
@@ -4017,7 +4080,9 @@ export default function App() {
                     ? "Agent skills"
                     : t === "midi"
                       ? "Controller"
-                      : t[0].toUpperCase() + t.slice(1)}
+                      : t === "ytmusic"
+                        ? "YouTube Music"
+                        : t[0].toUpperCase() + t.slice(1)}
                 </button>
               ))}
             </div>
@@ -4569,6 +4634,7 @@ export default function App() {
                 </>
               )}
               {settingsTab === "spotify" && <SpotifyPanel settingsOnly />}
+              {settingsTab === "ytmusic" && <YouTubeMusicPanel settingsOnly />}
               {settingsTab === "roadmap" && (
                 <>
                   <div className="settings-section-title">

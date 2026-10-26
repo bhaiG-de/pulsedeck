@@ -147,18 +147,18 @@ pub struct SpotifyDevice {
 fn lock_error() -> String {
     "Spotify state is unavailable; restart the application".into()
 }
-fn now_seconds() -> u64 {
+pub(crate) fn now_seconds() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
 }
-fn random_secret() -> String {
+pub(crate) fn random_secret() -> String {
     let mut bytes = [0u8; 32];
     OsRng.fill_bytes(&mut bytes);
     URL_SAFE_NO_PAD.encode(bytes)
 }
-fn challenge(verifier: &str) -> String {
+pub(crate) fn challenge(verifier: &str) -> String {
     URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
 }
 fn valid_id(id: &str) -> bool {
@@ -220,6 +220,10 @@ impl SpotifyService {
             Self::new_mode(config_path, false, Some(vault.clone()))?,
             NativeSpotifyService(Self::new_mode(native_path, true, Some(vault))?),
         ))
+    }
+    /// The one Keychain bundle, shared so other sign-ins add no extra prompt.
+    pub(crate) fn vault(&self) -> Arc<crate::spotify_vault::Vault> {
+        self.vault.clone()
     }
     fn credential_account(&self, id: &str) -> String {
         if self.native_playback {
@@ -331,7 +335,9 @@ impl SpotifyService {
             .into(),
             playback_mode: "spotify_connect_and_native_experiment".into(),
             dj_streaming_available: self.native_playback
-                && !inner.rate_limited_until.is_some_and(|until| until > Instant::now())
+                && !inner
+                    .rate_limited_until
+                    .is_some_and(|until| until > Instant::now())
                 && inner
                     .token
                     .as_ref()
@@ -772,7 +778,9 @@ impl SpotifyService {
                 inner.last_error = Some("Spotify refused or timed out supplying a playback key after native sign-in. Loads are paused for 60 seconds; your sign-in is retained. Retry later. Repeated authorization is not a demonstrated remedy.".into());
             } else if error.is_none() {
                 inner.rate_limited_until = None;
-                if inner.last_error.as_deref().is_some_and(|e| e.starts_with("Spotify refused or timed out supplying a playback key")) {
+                if inner.last_error.as_deref().is_some_and(|e| {
+                    e.starts_with("Spotify refused or timed out supplying a playback key")
+                }) {
                     inner.last_error = None;
                 }
             }
@@ -952,6 +960,25 @@ impl SpotifyService {
             .collect();
         Ok(page(&raw, items, offset))
     }
+    /// Catalog search, used to match songs imported from other services.
+    pub fn search_tracks(&self, query: &str, limit: u64) -> Result<Vec<SpotifyTrack>, String> {
+        let raw = self.api(
+            Method::GET,
+            "search",
+            &[
+                ("q", query.into()),
+                ("type", "track".into()),
+                ("limit", limit.to_string()),
+            ],
+            None,
+        )?;
+        Ok(raw["tracks"]["items"]
+            .as_array()
+            .ok_or("Spotify did not return search results")?
+            .iter()
+            .filter_map(parse_track)
+            .collect())
+    }
     pub fn devices(&self) -> Result<Vec<SpotifyDevice>, String> {
         let raw = self.api(Method::GET, "me/player/devices", &[], None)?;
         let devices = raw["devices"]
@@ -1117,11 +1144,11 @@ fn http_error(status: u16, retry_after: Option<u64>, token: bool) -> String {
     format!("Spotify HTTP {status}: {message}")
 }
 #[derive(Debug, PartialEq)]
-enum CallbackError {
+pub(crate) enum CallbackError {
     Invalid,
     Denied,
 }
-fn validate_callback(
+pub(crate) fn validate_callback(
     target: &str,
     redirect: &str,
     expected_state: &str,
@@ -1162,7 +1189,7 @@ fn validate_callback(
     }
     Ok(Some(codes[0].into()))
 }
-fn read_request(stream: &mut TcpStream, expected_host: &str) -> Result<String, String> {
+pub(crate) fn read_request(stream: &mut TcpStream, expected_host: &str) -> Result<String, String> {
     stream
         .set_read_timeout(Some(Duration::from_secs(1)))
         .map_err(|_| lock_error())?;
@@ -1206,7 +1233,7 @@ fn read_request(stream: &mut TcpStream, expected_host: &str) -> Result<String, S
     }
     Ok(target.into())
 }
-fn respond(stream: &mut TcpStream, code: u16, message: &str) {
+pub(crate) fn respond(stream: &mut TcpStream, code: u16, message: &str) {
     let _ = stream.set_write_timeout(Some(Duration::from_secs(1)));
     let reason = match code {
         200 => "OK",
@@ -1434,20 +1461,32 @@ mod tests {
     use super::*;
     #[test]
     fn key_refusal_cools_down_without_discarding_native_sign_in() {
-        let mut service = SpotifyService::new(std::env::temp_dir().join(format!("pd-key-cooldown-{}.json", random_secret()))).unwrap();
+        let mut service = SpotifyService::new(
+            std::env::temp_dir().join(format!("pd-key-cooldown-{}.json", random_secret())),
+        )
+        .unwrap();
         service.native_playback = true;
         {
             let mut inner = service.inner.lock().unwrap();
             inner.config.client_id = Some(spotify_playback::native_client_id());
-            inner.token = Some(Token { access_token: "fixture-token".into(), refresh_token: "fixture-refresh".into(), scope: "streaming".into(), expires_at: now_seconds() + 3600 });
+            inner.token = Some(Token {
+                access_token: "fixture-token".into(),
+                refresh_token: "fixture-refresh".into(),
+                scope: "streaming".into(),
+                expires_at: now_seconds() + 3600,
+            });
         }
         service.playback_preparation_finished(Some("Spotify track loading failed after native sign-in: the provider rejected or could not complete the playback key request. No partial audio was loaded."));
         let status = service.status().unwrap();
         assert!(status.connected && status.playback_permission);
         assert!(!status.dj_streaming_available);
         assert!(status.last_error.unwrap().contains("sign-in is retained"));
-        assert!(service.playback_credentials().unwrap_err().starts_with("Spotify native playback is cooling down"));
-        service.inner.lock().unwrap().rate_limited_until = Some(Instant::now() - Duration::from_secs(1));
+        assert!(service
+            .playback_credentials()
+            .unwrap_err()
+            .starts_with("Spotify native playback is cooling down"));
+        service.inner.lock().unwrap().rate_limited_until =
+            Some(Instant::now() - Duration::from_secs(1));
         assert_eq!(service.playback_credentials().unwrap().1, "fixture-token");
         service.playback_preparation_finished(None);
         assert!(service.status().unwrap().dj_streaming_available);

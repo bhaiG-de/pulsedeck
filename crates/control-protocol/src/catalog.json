@@ -1498,6 +1498,149 @@
     "example_cli": "pulsedeckctl call spotify.analysis.cancel --args '{}' --json"
   },
   {
+    "command": "ytmusic.status",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "ytmusic status: Google sign-in state and whether Spotify matching is available",
+    "example_cli": "pulsedeckctl call ytmusic.status --args '{}' --json"
+  },
+  {
+    "command": "ytmusic.configure",
+    "example_args": {
+      "client_id": "000000000000-example.apps.googleusercontent.com",
+      "client_secret": "GOCSPX-example"
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "client_id": {
+          "type": "string"
+        },
+        "client_secret": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "client_id",
+        "client_secret"
+      ]
+    },
+    "description": "ytmusic configure: save your own Google Cloud Desktop app OAuth client",
+    "example_cli": "pulsedeckctl call ytmusic.configure --args '{\"client_id\":\"000000000000-example.apps.googleusercontent.com\",\"client_secret\":\"GOCSPX-example\"}' --json"
+  },
+  {
+    "command": "ytmusic.login",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "ytmusic login: open Google sign-in for read-only YouTube access",
+    "example_cli": "pulsedeckctl call ytmusic.login --args '{}' --json"
+  },
+  {
+    "command": "ytmusic.disconnect",
+    "example_args": {},
+    "input_schema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "ytmusic disconnect",
+    "example_cli": "pulsedeckctl call ytmusic.disconnect --args '{}' --json"
+  },
+  {
+    "command": "ytmusic.playlists",
+    "example_args": {
+      "page_token": null
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "page_token": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "next_page_token from the previous page; omit for the first page"
+        }
+      },
+      "additionalProperties": false,
+      "required": []
+    },
+    "description": "ytmusic playlists: your YouTube Music playlists, 50 per page",
+    "example_cli": "pulsedeckctl call ytmusic.playlists --args '{\"page_token\":null}' --json"
+  },
+  {
+    "command": "ytmusic.tracks",
+    "example_args": {
+      "playlist_id": "liked",
+      "page_token": null
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "playlist_id": {
+          "type": "string",
+          "description": "A playlist ID, or liked for liked videos and songs"
+        },
+        "page_token": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "next_page_token from the previous page; omit for the first page"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "playlist_id"
+      ]
+    },
+    "description": "ytmusic tracks: songs with their cached local or Spotify match, 50 per page",
+    "example_cli": "pulsedeckctl call ytmusic.tracks --args '{\"playlist_id\":\"liked\",\"page_token\":null}' --json"
+  },
+  {
+    "command": "ytmusic.match",
+    "example_args": {
+      "video_ids": [
+        "dQw4w9WgXcQ"
+      ],
+      "force": false
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "video_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 50
+        },
+        "force": {
+          "type": "boolean",
+          "description": "Search again instead of reusing saved results"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "video_ids"
+      ]
+    },
+    "description": "ytmusic match: find each song in local files, then the Spotify catalog; results are saved",
+    "example_cli": "pulsedeckctl call ytmusic.match --args '{\"video_ids\":[\"dQw4w9WgXcQ\"],\"force\":false}' --json"
+  },
+  {
     "command": "ui.state",
     "example_args": {},
     "input_schema": {
@@ -2030,6 +2173,26 @@
       "required": []
     },
     "example_cli": "pulsedeckctl call app.show --args '{}' --json"
+  },
+  {
+    "command": "app.open_url",
+    "description": "Open a Google Cloud, YouTube Music or Spotify developer https page in the default browser",
+    "example_args": {
+      "url": "https://music.youtube.com/watch?v=dQw4w9WgXcQ"
+    },
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "url"
+      ]
+    },
+    "example_cli": "pulsedeckctl call app.open_url --args '{\"url\":\"https://music.youtube.com/watch?v=dQw4w9WgXcQ\"}' --json"
   },
   {
     "command": "app.hide",

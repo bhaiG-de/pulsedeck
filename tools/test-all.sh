@@ -16,3 +16,5 @@ npm --prefix frontend run build
 python3 tools/check-control-coverage.py
 python3 tools/validate-dj-skills.py
 python3 tools/test-dj-skill-packaging.py
+python3 tools/test-agent-plugin.py
+python3 tools/test-dj-offline-evidence.py

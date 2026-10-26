@@ -1228,13 +1228,17 @@
   border: 0;
   border-radius: 0;
 }
-.unified-library .spotify-collection-host .controller-playlists-pane {
+.unified-library
+  :is(.spotify-collection-host, .ytmusic-collection-host)
+  .controller-playlists-pane {
   overflow: visible;
   border: 0;
   padding: 0;
   background: transparent;
 }
-.unified-library .spotify-collection-host .browser-pane-heading {
+.unified-library
+  :is(.spotify-collection-host, .ytmusic-collection-host)
+  .browser-pane-heading {
   position: static;
 }
 .unified-library > .controller-playlists-pane {
@@ -1247,8 +1251,11 @@
   gap: 8px;
 }
 
-.unified-library[data-source="local"]
+.unified-library:not([data-source="spotify"])
   .spotify-collection-host
+  .controller-selected,
+.unified-library:not([data-source="ytmusic"])
+  .ytmusic-collection-host
   .controller-selected {
   background: transparent;
   color: var(--ink-2);
@@ -1262,6 +1269,7 @@
 .track-table :is(td,th) { min-width: 0; align-content: center; }
 .virtual-track-body { position: relative; }
 .spotify-tracks .track-table { --track-columns: 42px 34% minmax(0,1fr) 78px 60px 56px 98px; }
+.ytmusic-tracks .track-table { --track-columns: 42px minmax(0,1fr) minmax(0,1fr) 56px 136px; }
 @media (max-width:1100px) { .local-track-table { --track-columns:42px minmax(0,1fr) 70px 70px 84px minmax(0,1fr); } }
 
 .library-tools { flex: none; }
@@ -1294,3 +1302,57 @@
 .metadata-dialog [role=alert],.library-tools [role=alert] { color:var(--danger,#b82424); }
 @media(max-width:700px) { .metadata-form { grid-template-columns:1fr; } }
 .metadata-dialog input[type=color] { width:48px; height:28px; padding:2px; }
+
+/* YouTube Music: each song shows the local or Spotify track it plays as. */
+.ytmusic-match {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--ink-2);
+}
+.ytmusic-match > span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.ytmusic-match.missing,
+.ytmusic-match.pending {
+  color: var(--ink-4);
+}
+.ytmusic-provider {
+  flex-shrink: 0;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-style: normal;
+  letter-spacing: 0.04em;
+  background: color-mix(in srgb, var(--signal) 14%, transparent);
+  color: var(--ink);
+}
+.ytmusic-provider.local {
+  background: color-mix(in srgb, var(--ok) 18%, transparent);
+}
+.ytmusic-unmatched .track-cell {
+  opacity: 0.6;
+}
+.ytmusic-rematch,
+.ytmusic-open {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  padding: 0 !important;
+  vertical-align: middle;
+}
+.ytmusic-open {
+  height: 24px;
+  margin-left: 4px;
+  border-radius: 6px;
+  color: var(--ink-3);
+}
+.ytmusic-open:hover {
+  color: var(--ink);
+}

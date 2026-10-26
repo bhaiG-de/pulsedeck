@@ -2,7 +2,7 @@
 
 **Your music. One instrument.**
 
-A native, two-deck DJ app for macOS. Mix local music and Spotify, shape your sound, and plan your next move—or let your agent help with the music and the preparation.
+A native, two-deck DJ app for macOS. Mix local music and Spotify, bring in your YouTube Music playlists, shape your sound, and plan your next move—or let your agent help with the music and the preparation.
 
 [**Download for macOS**](https://github.com/bhaiG-de/pulsedeck/releases/latest) · [Features](#features) · [Install](#how-to-install) · [Library](#library-setup-and-support) · [Controllers](#controller-support) · [Agents](#agent-workflows)
 
@@ -47,7 +47,7 @@ Use the **Successor queue** to run an ordered set or a collection with tempo, en
 
 Requires **Apple Silicon and macOS 12 or newer**.
 
-1. Download **PulseDeck_0.2.2_aarch64.zip** from [the latest release](https://github.com/bhaiG-de/pulsedeck/releases/latest).
+1. Download **PulseDeck_0.2.8_aarch64.zip** from [the latest release](https://github.com/bhaiG-de/pulsedeck/releases/latest).
 2. Double-click the ZIP to extract **PulseDeck.app**, then move it to **Applications** and open it. No installer or build tools are needed; the audio engine, analysis models, control CLI and DJ skills are bundled.
 3. If macOS blocks the first launch, dismiss the warning, open **System Settings → Privacy & Security**, scroll to **Security**, choose **Open Anyway** for **PulseDeck.app**, and confirm **Open**. This download is not Apple-notarized, so the ZIP still requires approval.
 
@@ -88,6 +88,16 @@ Library access and deck playback are separate sign-ins. Connect plays on a Spoti
 
 **Spotify deck playback is experimental** and depends on provider availability and account eligibility. Playback audio is held in bounded memory, not saved as an audio library cache. Credentials stay in macOS Keychain/app-private configuration.
 
+### YouTube Music
+
+YouTube Music has no DJ playback API, so PulseDeck imports your playlists and plays each song through a matching **local file** or **Spotify** track. YouTube audio is never downloaded or streamed into the decks.
+
+1. In the Google Cloud console, enable **YouTube Data API v3**, set the OAuth consent screen to External in Testing, and add your Google account as a test user.
+2. Create an OAuth client of type **Desktop app**. Paste its Client ID and secret in **Settings → YouTube Music**, then choose **Sign in with Google**. Access is read-only.
+3. Open **Library → YouTube Music** for Liked videos and your playlists.
+
+Each song shows what it plays as: a local file first, then a Spotify match when the Spotify library account is connected. Loading a Spotify match needs the control player sign-in. Matching compares title, artists and duration; remix, live and extended versions don't count as the original. Results are saved per song, and a row's re-match button searches again. Google ends Testing-mode sign-ins after 7 days. The refresh token stays in macOS Keychain and the client secret in app-private `youtube-music.json`.
+
 For connection, audio or analysis issues, use the [setup and recovery guide](.agents/skills/pulsedeck-control/references/setup-and-recovery.md). Please include the app version and error message in [an issue](https://github.com/bhaiG-de/pulsedeck/issues), with credentials and private paths removed.
 
 ## Controller support
@@ -112,28 +122,27 @@ Use **Codex or Claude Code** to work with PulseDeck through three bundled skills
 
 ### Connect your agent
 
-1. On first launch, choose **Codex**, **Claude Code**, or both in the welcome screen and click **Install skills**. You can also use **Settings → Agent skills** anytime. Existing PulseDeck skill packages are backed up outside the agent’s skills folder before updates; unrelated skills stay in place.
-2. Restart the selected agent to discover the skills. Keep PulseDeck open and set up your local library or Spotify account.
-3. Ask the agent to **use the PulseDeck skills**, then describe the workflow you want. No separate MCP server is required; the app includes its CLI.
+1. Install the current app at `/Applications/PulseDeck.app`, open it and set up your local library or provider sign-ins.
+2. Download **pulsedeck-marketplace-0.2.8.zip** from [the latest release](https://github.com/bhaiG-de/pulsedeck/releases/latest), extract it and follow the [Codex or Claude Code plugin setup](docs/AGENT_PLUGIN.md#install-locally). The plugin connects the bundled MCP control client and all three DJ skills.
+3. Start a fresh agent session and confirm `performance_observe`, `deck_control` and `track_inspect` are available. Ask the agent to use the PulseDeck skills and describe your musical intent.
 
-Setup installs into `~/.codex/skills/` or `~/.claude/skills/`, respecting `CODEX_HOME` and `CLAUDE_CONFIG_DIR` when configured. For manual installation, copy the three folders from `/Applications/PulseDeck.app/Contents/Resources/dj-skills/` into the agent’s skills folder, first backing up older PulseDeck skills outside that folder.
+The first-launch welcome and **Settings → Agent skills** can also copy personal skill folders, with backups of older PulseDeck packages. Live deck and library work requires the MCP connection. After verifying the plugin, remove duplicate personal copies or manually registered servers using the [plugin guide](docs/AGENT_PLUGIN.md). Keep an active performer's integration in place until its session ends.
 
-For a source checkout, install the skills with `python3 tools/install-dj-skills.py --destination PATH_TO_AGENT_SKILLS` into a destination without existing PulseDeck skill folders. See [skill installation](.agents/skills/README.md#discovery-and-installation).
+For source development, build the app and CLI, then run `python3 tools/package-agent-plugin.py` to create the local marketplace. See [skill installation](.agents/skills/README.md#discovery-and-installation).
 
 ### Things to ask
 
 | Workflow | Example prompt |
 |---|---|
 | Explore | “Use the PulseDeck skills to find local tracks between 120 and 126 BPM with my warm-up tag.” |
-| Tag music | “Add the tag ‘warm-up’ to these selected local tracks. Keep their existing tags.” |
-| Prepare cues | “Set a hot cue named ‘Mix in’ at 00:32 on [track]. Preserve its other cues and leave playback unchanged.” |
+| Inspect cues | “Read the saved cues for [track] and suggest a mix-in passage without changing playback.” |
 | Prepare a set | “Plan a one-hour progressive house set from my local playlist. Show the order and transition ideas without starting playback.” |
-| Maintain the library | “Check these tracks for missing analysis, update it, and preserve my saved cues and beatgrids.” |
+| Inspect the library | “Check these tracks for missing analysis and show what preparation is needed.” |
 | Play a mix | “DJ a smooth one-hour mix from my Spotify Liked Songs. Choose the phrases and techniques yourself.” |
-| Record | “Record a 30-minute mix from this local playlist and save the WAV.” |
+| YouTube Music | “Find matches for this YouTube Music playlist and plan a set from its playable tracks.” |
 
 You can invoke `$pulsedeck-library`, `$djing-art` or `$pulsedeck-control` in Codex, and `/pulsedeck-library`, `/djing-art` or `/pulsedeck-control` in Claude Code.
 
-An agent can DJ successive moves and direct controls itself or choose the optional app-owned successor queue. With the queue, PulseDeck chooses subsequent transitions; `--wait-ready` verifies the first armed successor before an optional handoff. Collection queues prepare unanalysed candidates as needed; indexing alone does not establish mix readiness. Tags and cue edits use explicit instructions; automatic cue generation and verified vocal/phrase classification are not built in.
+The MCP plugin exposes artist-authored performance scores, guarded deck controls and native forecasts/receipts. Account login, recording setup, imports and playlist/tag writes stay in the app or other explicitly available controls. The app also offers its own successor queue. With the queue, PulseDeck chooses subsequent transitions; `--wait-ready` verifies the first armed successor before an optional handoff. Collection queues prepare unanalysed candidates as needed; indexing alone does not establish mix readiness. Tags and cue edits use explicit instructions; automatic cue generation and verified vocal/phrase classification are not built in.
 
 [CLI examples and execution details](docs/CLI.md) · [Skill reference](.agents/skills/README.md) · [Known limits](docs/DEVELOPMENT.md#current-limits) · [Image notes](docs/images/README.md) · [Licenses](NOTICE.md)

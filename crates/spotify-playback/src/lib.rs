@@ -866,7 +866,9 @@ mod tests {
         assert!(is_playback_key_failure("Spotify track loading failed after native sign-in: the provider rejected or could not complete the playback key request. No partial audio was loaded."));
         assert!(is_playback_key_failure("Spotify track loading failed after native sign-in: the playback key response timed out after a retry. No partial audio was loaded."));
         assert!(!is_playback_key_failure("Spotify track loading failed after native sign-in: this catalog version is unavailable for the account or market. No partial audio was loaded."));
-        assert!(!is_playback_key_failure("Native Spotify session sign-in failed"));
+        assert!(!is_playback_key_failure(
+            "Native Spotify session sign-in failed"
+        ));
     }
     use std::io::Cursor;
     fn request(duration: u64) -> PrepareRequest {

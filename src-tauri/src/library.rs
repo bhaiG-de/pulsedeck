@@ -173,6 +173,7 @@ impl Library {
           CREATE TABLE IF NOT EXISTS suggestion_scope_pages(scope TEXT NOT NULL,offset INTEGER NOT NULL,end_offset INTEGER NOT NULL,terminal INTEGER NOT NULL,PRIMARY KEY(scope,offset));
           CREATE TABLE IF NOT EXISTS suggestion_source_metadata(source TEXT PRIMARY KEY,title TEXT NOT NULL,artist TEXT NOT NULL,duration_seconds REAL NOT NULL);
           CREATE TABLE IF NOT EXISTS spotify_analysis(uri TEXT PRIMARY KEY, version INTEGER NOT NULL, metadata TEXT NOT NULL, updated_at INTEGER NOT NULL);
+          CREATE TABLE IF NOT EXISTS ytmusic_matches(video_id TEXT PRIMARY KEY, result TEXT, spotify_searched INTEGER NOT NULL, checked_at INTEGER NOT NULL);
           CREATE TABLE IF NOT EXISTS playlists(id INTEGER PRIMARY KEY,name TEXT NOT NULL UNIQUE);
           CREATE TABLE IF NOT EXISTS playlist_tracks(playlist_id INTEGER REFERENCES playlists(id) ON DELETE CASCADE,
             track_id INTEGER REFERENCES tracks(id) ON DELETE CASCADE, position INTEGER NOT NULL,
@@ -675,6 +676,68 @@ impl Library {
             TrackFeatures::unusable(analysis.path.clone())
         }])?;
         Ok(true)
+    }
+
+    /// Cached YouTube Music lookups by video ID: the match JSON, or none when
+    /// nothing matched, and whether Spotify was searched for it.
+    pub fn ytmusic_matches(
+        &self,
+        ids: &[String],
+    ) -> Result<HashMap<String, (Option<String>, bool)>, String> {
+        let mut query = self
+            .db
+            .prepare_cached("SELECT result,spotify_searched FROM ytmusic_matches WHERE video_id=?1")
+            .map_err(|e| e.to_string())?;
+        let mut found = HashMap::new();
+        for id in ids {
+            if let Some(row) = query
+                .query_row([id], |row| Ok((row.get(0)?, row.get(1)?)))
+                .optional()
+                .map_err(|e| e.to_string())?
+            {
+                found.insert(id.clone(), row);
+            }
+        }
+        Ok(found)
+    }
+    pub fn save_ytmusic_match(
+        &self,
+        id: &str,
+        result: Option<&str>,
+        spotify_searched: bool,
+    ) -> Result<(), String> {
+        self.db
+            .execute(
+                "INSERT INTO ytmusic_matches(video_id,result,spotify_searched,checked_at) VALUES(?1,?2,?3,unixepoch())
+                 ON CONFLICT(video_id) DO UPDATE SET result=excluded.result,spotify_searched=excluded.spotify_searched,checked_at=excluded.checked_at",
+                params![id, result, spotify_searched],
+            )
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+    /// Local files as (path, title, artist, duration seconds), for matching
+    /// songs imported from streaming services.
+    pub fn match_candidates(&self) -> Result<Vec<(String, String, String, f64)>, String> {
+        let mut query = self
+            .db
+            .prepare_cached("SELECT path,title,artist,duration_seconds FROM tracks WHERE path NOT LIKE 'spotify:%'")
+            .map_err(|e| e.to_string())?;
+        let rows = query
+            .query_map([], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })
+            .map_err(|e| e.to_string())?;
+        rows.collect::<rusqlite::Result<_>>()
+            .map_err(|e| e.to_string())
+    }
+    pub fn has_track_path(&self, path: &str) -> Result<bool, String> {
+        self.db
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM tracks WHERE path=?1)",
+                [path],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())
     }
 
     /// Store suggestion features, replacing older ones for the same source.

@@ -31,7 +31,7 @@ def verify(app):
         asset = manifest.parent / filename
         assert asset.stat().st_size == item['bytes'], f'Asset size: {filename}'
         assert hashlib.sha256(asset.read_bytes()).hexdigest() == item['sha256'], f'Asset hash: {filename}'
-    banned = {'spotify.json', 'spotify-native.json', 'library.sqlite', 'control-journal.json', 'audio.json', '.env'}
+    banned = {'spotify.json', 'spotify-native.json', 'youtube-music.json', 'library.sqlite', 'control-journal.json', 'audio.json', '.env'}
     assert not any(p.name in banned or p.suffix in {'.db', '.sqlite', '.sock', '.pem', '.key'} for p in app.rglob('*')), 'Runtime profile or credentials in app'
     binary = app / 'Contents/MacOS' / info['CFBundleExecutable']
     assert binary.is_file()

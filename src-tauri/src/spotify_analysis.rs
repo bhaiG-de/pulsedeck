@@ -223,7 +223,9 @@ fn run_page(app: &tauri::AppHandle, queue: Vec<String>, cancel: Arc<AtomicBool>)
                     },
                     current.clone(),
                 );
-                app.state::<NativeSpotifyService>().0.playback_preparation_finished(source.as_ref().err().map(String::as_str));
+                app.state::<NativeSpotifyService>()
+                    .0
+                    .playback_preparation_finished(source.as_ref().err().map(String::as_str));
                 let source = source?;
                 if current.load(Ordering::Acquire) {
                     return Err("Analysis interrupted".into());

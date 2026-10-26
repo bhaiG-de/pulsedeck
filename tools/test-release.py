@@ -107,6 +107,14 @@ def main():
         call('ui.call', {'target': 'app', 'action': 'settings-tab', 'value': 'skills'})
         call('ui.call', {'target': 'app', 'action': 'settings', 'value': False})
         print('PASS first-launch setup, both agents, backups, partial failure and Settings tab', flush=True)
+        youtube = call('ytmusic.status')
+        assert not youtube['configured'] and not youtube['connected'], youtube
+        call('ui.call', {'target': 'app', 'action': 'settings', 'value': True})
+        call('ui.call', {'target': 'app', 'action': 'settings-tab', 'value': 'ytmusic'})
+        call('ui.call', {'target': 'app', 'action': 'settings', 'value': False})
+        call('ui.call', {'target': 'app', 'action': 'source', 'value': 'ytmusic'})
+        call('ui.call', {'target': 'app', 'action': 'source', 'value': 'local'})
+        print('PASS YouTube Music status, settings tab and library source controls', flush=True)
         first_instance = call('status')['instance']
         # Another binary copy must exit before it creates a profile or restores a journal.
         duplicate_profile = work / 'must-not-create'
@@ -143,11 +151,15 @@ def main():
         stop()
         damaged = '{damaged Spotify settings'
         (profile / 'spotify.json').write_text(damaged)
+        (profile / 'youtube-music.json').write_text(damaged)
         launch('damaged-settings')
         spotify = call('spotify.status')
         assert not spotify['configured'] and spotify['last_error'], spotify
         assert (profile / 'spotify.json').read_text() == damaged
-        print('PASS damaged optional Spotify settings preserve the file and leave local controls available', flush=True)
+        youtube = call('ytmusic.status')
+        assert not youtube['configured'] and youtube['last_error'], youtube
+        assert (profile / 'youtube-music.json').read_text() == damaged
+        print('PASS damaged optional Spotify and YouTube settings preserve the files and leave local controls available', flush=True)
         stop()
     finally:
         try:

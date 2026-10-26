@@ -18,6 +18,7 @@ artifacts/
 *token*.json
 spotify.json
 spotify-native.json
+youtube-music.json
 audio.json
 *.sqlite*
 *.db

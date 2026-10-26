@@ -430,7 +430,7 @@ fn all_tool_pages_remain_inside_dj_scope_and_are_typed() {
         );
     }
     let mut requests = vec![init(1, PROTOCOL_VERSION)];
-    for start in [0, 11, 27] {
+    for start in std::iter::once(0).chain((11..TOOLS.len()).step_by(16)) {
         requests.push(json!({"jsonrpc":"2.0","id":start+2,"method":"tools/list","params":{"cursor":start.to_string()}}));
     }
     let responses = run(&requests, no_call);
@@ -441,6 +441,14 @@ fn all_tool_pages_remain_inside_dj_scope_and_are_typed() {
         .collect::<Vec<_>>();
     assert_eq!(names.len(), TOOLS.len());
     assert!(names.contains(&"deck_control") && names.contains(&"performance_commit"));
+    for name in [
+        "ytmusic_status",
+        "ytmusic_playlists",
+        "ytmusic_tracks",
+        "ytmusic_match",
+    ] {
+        assert!(names.contains(&name));
+    }
 }
 
 #[test]
@@ -699,4 +707,40 @@ fn reviewed_ticket_commit_is_small_and_preserves_retry_identity() {
             "same-job"
         );
     }
+}
+
+#[test]
+fn youtube_collection_and_match_tools_reach_the_shared_dispatcher() {
+    let responses = run(
+        &[
+            init(1, PROTOCOL_VERSION),
+            tool(2, "ytmusic_tracks", json!({"playlist_id":"liked"})),
+            tool(3, "ytmusic_match", json!({"video_ids":["dQw4w9WgXcQ"]})),
+        ],
+        |request| {
+            assert!(matches!(
+                request.command.as_str(),
+                "ytmusic.tracks" | "ytmusic.match"
+            ));
+            Ok(Response::success(&request, "applied", json!({"items":[]})))
+        },
+    );
+    assert_eq!(responses[1]["result"]["isError"], false);
+    assert_eq!(responses[2]["result"]["isError"], false);
+    assert!(descriptor(
+        &tool_entries()
+            .into_iter()
+            .find(|e| e["command"] == "ytmusic.tracks")
+            .unwrap()
+    )["annotations"]["readOnlyHint"]
+        .as_bool()
+        .unwrap());
+    assert!(!descriptor(
+        &tool_entries()
+            .into_iter()
+            .find(|e| e["command"] == "ytmusic.match")
+            .unwrap()
+    )["annotations"]["readOnlyHint"]
+        .as_bool()
+        .unwrap());
 }

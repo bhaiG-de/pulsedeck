@@ -27,6 +27,8 @@ python3 tools/test-release.py target/release/bundle/macos/PulseDeck.app
 python3 tools/test-release.py target/release/bundle/macos/PulseDeck.app --audio
 ```
 
+The release workflow also packages the agent plugin and installable Codex/Claude marketplace ZIPs with the matching version; see [agent plugin setup](AGENT_PLUGIN.md).
+
 Build outputs live under `target/release/bundle/macos` and `target/release/bundle/zip`. Local configuration, credentials, databases, audio, captures and validation artifacts are excluded by `.gitignore`.
 
 <details>
@@ -48,7 +50,11 @@ npm --prefix frontend run build
 python3 tools/check-control-coverage.py
 python3 tools/validate-dj-skills.py
 python3 tools/test-dj-skill-packaging.py
+python3 tools/test-agent-plugin.py
+python3 tools/test-dj-offline-evidence.py
 ```
+
+The 0.2.8 integration passed **597 Rust tests**, **75 frontend tests**, strict Clippy, control-catalog coverage, and 22 Python skill/plugin/evidence tests (11 opt-in Rust tests ignored). The separate 100,000-row latency test missed its 100 ms cold-query budget locally, measuring 123 ms; its functional regression coverage passed and the timing limit remains unchanged. Live Google OAuth and Spotify catalog matching still require account-based validation.
 
 The 0.2.2 reopen-fix regression run passed **478 Rust tests**, **73 frontend tests**, strict Clippy, control-catalog coverage and **7 skill-packaging tests** (11 opt-in Rust tests ignored; the machine-specific timing test excluded). Run the 100,000-row timing gate without concurrent release compilation; its wall-clock limits are sensitive to host load. CI reports this benchmark separately without blocking publication on shared-runner speed; functional regressions and extracted-ZIP launch/UI/library/restart checks remain blocking. ZIP round-trip checks verify the app signature, executable permissions, bundled models, CLI and skills. A clean ZIP installation on Apple Silicon/macOS 26.7.1 also verified native Finder reopen from hidden/minimised states with the same process, native Quit/restart and no new crash reports.
 
@@ -64,6 +70,7 @@ Only the workflow's scoped GitHub token is needed for publishing; no credentials
 
 - Tracks decode into RAM; very large sources and concurrent analysis require memory headroom.
 - Spotify deck playback is experimental and depends on native authorization and provider availability.
+- YouTube Music songs play only through a local or Spotify match; unmatched songs cannot be loaded, and matches are automatic (title, artists and duration), not hand-picked.
 - Physical headphone routing, hardware latency, device-loss/sleep stress and listening-quality comparisons need further validation.
 - Beat/downbeat/key estimates remain fallible. Phrase/vocal certainty and commercial-software parity are not claimed.
 - No general stems mixer, DVS, proprietary player/USB export, Pro DJ Link, cloud sync or complete commercial FX parity.

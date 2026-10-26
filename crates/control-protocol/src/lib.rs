@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub mod commands;
-pub mod performance;
 pub mod forecast;
+pub mod performance;
 pub mod selection;
 #[derive(
     Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,

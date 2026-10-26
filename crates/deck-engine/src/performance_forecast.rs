@@ -537,21 +537,21 @@ pub(super) fn build(plan: &Plan, s: &EngineSnapshot, members: &[Member]) -> Tran
         }
         let mut decks = std::array::from_fn(|d| contribution(s, d, members, times));
         let mut anomaly = false;
-        for deck in 0..2 {
-            if decks[deck].playing {
-                if let Some(evidence) = decks[deck]
+        for (deck, contribution) in decks.iter_mut().enumerate() {
+            if contribution.playing {
+                if let Some(evidence) = contribution
                     .source_seconds
                     .and_then(|p| grid_anomaly(s, deck, p))
                 {
                     anomaly = true;
-                    decks[deck]
+                    contribution
                         .uncertainty
                         .push("effective_grid_interval_anomaly".into());
                     findings.push(finding(
                         "grid_interval_anomaly",
                         times,
                         Some(deck),
-                        decks[deck].source_seconds,
+                        contribution.source_seconds,
                         evidence,
                     ));
                 }

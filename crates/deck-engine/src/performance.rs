@@ -999,7 +999,7 @@ fn event_start(
         match &m.command{
             EngineCommand::Play{..}|EngineCommand::PlayQuantized{..}=>playing=true,
             EngineCommand::Pause{..}=>playing=false,
-            EngineCommand::Seek{seconds,..}=>position=*seconds,
+            EngineCommand::Seek{seconds,..}=>position= *seconds,
             EngineCommand::SetTempo{percent,..}=>rate=1.+percent/100.,
             EngineCommand::SetLoop{beats,..}=>looped=beats.is_some(),
             command if changes_clock(command,event.deck)=>return Err(invalid("event_timing_unproven","A source event crosses an unmodelled position/rate edit; prepare it first or use a completion-relative gesture")),
@@ -1136,7 +1136,7 @@ fn closing_coverage(
         match &m.command {
             EngineCommand::Play{..}|EngineCommand::PlayQuantized{..}=>playing=true,
             EngineCommand::Pause{..}=>playing=false,
-            EngineCommand::Seek{seconds,..}=>position=*seconds,
+            EngineCommand::Seek{seconds,..}=>position= *seconds,
             EngineCommand::SetTempo{percent,..}=>rate=1.+percent/100.,
             EngineCommand::SetLoop{beats,..}=>{
                 if looped{position=loop_end.ok_or_else(||invalid("coverage_unproven","Active loop has no known source endpoint"))?;}

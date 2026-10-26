@@ -3831,7 +3831,7 @@ dependencies = [
 
 [[package]]
 name = "pulsedeck"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "audio-analysis",
  "base64 0.22.1",
